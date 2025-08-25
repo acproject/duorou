@@ -142,3 +142,4 @@ config.local
 pid.file
 *.pid
 *.sock
+.cache

@@ -1,0 +1,381 @@
+#include "workflow_engine.h"
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+#include <random>
+
+namespace duorou {
+namespace core {
+
+// BaseTask实现
+BaseTask::BaseTask(const std::string& id, const std::string& name, TaskPriority priority)
+    : id_(id)
+    , name_(name)
+    , priority_(priority)
+    , status_(TaskStatus::PENDING)
+    , cancelled_(false)
+    , created_time_(std::chrono::system_clock::now()) {
+}
+
+void BaseTask::cancel() {
+    cancelled_.store(true);
+    status_ = TaskStatus::CANCELLED;
+}
+
+// WorkflowEngine实现
+WorkflowEngine::WorkflowEngine()
+    : worker_count_(0)
+    , running_(false)
+    , stop_requested_(false)
+    , running_task_count_(0)
+    , completed_task_count_(0)
+    , initialized_(false) {
+}
+
+WorkflowEngine::~WorkflowEngine() {
+    stop();
+}
+
+bool WorkflowEngine::initialize(size_t worker_count) {
+    if (initialized_) {
+        return true;
+    }
+    
+    // 如果未指定工作线程数，使用CPU核心数
+    if (worker_count == 0) {
+        worker_count_ = std::thread::hardware_concurrency();
+        if (worker_count_ == 0) {
+            worker_count_ = 4; // 默认4个线程
+        }
+    } else {
+        worker_count_ = worker_count;
+    }
+    
+    initialized_ = true;
+    std::cout << "WorkflowEngine initialized with " << worker_count_ << " worker threads" << std::endl;
+    return true;
+}
+
+bool WorkflowEngine::start() {
+    if (!initialized_) {
+        std::cerr << "WorkflowEngine not initialized" << std::endl;
+        return false;
+    }
+    
+    if (running_.load()) {
+        std::cout << "WorkflowEngine already running" << std::endl;
+        return true;
+    }
+    
+    running_.store(true);
+    stop_requested_.store(false);
+    
+    // 创建工作线程
+    worker_threads_.reserve(worker_count_);
+    for (size_t i = 0; i < worker_count_; ++i) {
+        worker_threads_.emplace_back(&WorkflowEngine::workerThread, this);
+    }
+    
+    std::cout << "WorkflowEngine started with " << worker_count_ << " worker threads" << std::endl;
+    return true;
+}
+
+void WorkflowEngine::stop() {
+    if (!running_.load()) {
+        return;
+    }
+    
+    std::cout << "Stopping WorkflowEngine..." << std::endl;
+    
+    // 请求停止
+    stop_requested_.store(true);
+    running_.store(false);
+    
+    // 唤醒所有等待的工作线程
+    queue_condition_.notify_all();
+    
+    // 等待所有工作线程结束
+    for (auto& thread : worker_threads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    
+    worker_threads_.clear();
+    
+    // 取消所有等待中的任务
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    while (!task_queue_.empty()) {
+        auto task = task_queue_.top();
+        task_queue_.pop();
+        task->cancel();
+    }
+    
+    std::cout << "WorkflowEngine stopped" << std::endl;
+}
+
+bool WorkflowEngine::submitTask(std::shared_ptr<BaseTask> task) {
+    if (!task) {
+        std::cerr << "Cannot submit null task" << std::endl;
+        return false;
+    }
+    
+    if (!running_.load()) {
+        std::cerr << "WorkflowEngine not running" << std::endl;
+        return false;
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        
+        // 检查任务ID是否已存在
+        if (all_tasks_.find(task->getId()) != all_tasks_.end()) {
+            std::cerr << "Task with ID already exists: " << task->getId() << std::endl;
+            return false;
+        }
+        
+        // 添加到队列和映射表
+        task_queue_.push(task);
+        all_tasks_[task->getId()] = task;
+    }
+    
+    // 唤醒一个工作线程
+    queue_condition_.notify_one();
+    
+    std::cout << "Task submitted: " << task->getId() << " (" << task->getName() << ")" << std::endl;
+    return true;
+}
+
+bool WorkflowEngine::cancelTask(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    
+    auto it = all_tasks_.find(task_id);
+    if (it == all_tasks_.end()) {
+        std::cerr << "Task not found: " << task_id << std::endl;
+        return false;
+    }
+    
+    auto task = it->second;
+    if (task->getStatus() == TaskStatus::PENDING) {
+        task->cancel();
+        std::cout << "Task cancelled: " << task_id << std::endl;
+        return true;
+    } else if (task->getStatus() == TaskStatus::RUNNING) {
+        // 对于正在运行的任务，设置取消标志
+        task->cancel();
+        std::cout << "Cancel signal sent to running task: " << task_id << std::endl;
+        return true;
+    } else {
+        std::cout << "Task cannot be cancelled (status: " << static_cast<int>(task->getStatus()) << "): " << task_id << std::endl;
+        return false;
+    }
+}
+
+TaskResult WorkflowEngine::waitForTask(const std::string& task_id, int timeout_ms) {
+    auto start_time = std::chrono::steady_clock::now();
+    
+    while (true) {
+        // 检查任务结果
+        {
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            auto it = task_results_.find(task_id);
+            if (it != task_results_.end()) {
+                return it->second;
+            }
+        }
+        
+        // 检查超时
+        if (timeout_ms > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start_time).count();
+            if (elapsed >= timeout_ms) {
+                TaskResult timeout_result;
+                timeout_result.success = false;
+                timeout_result.message = "Task wait timeout";
+                return timeout_result;
+            }
+        }
+        
+        // 短暂休眠
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+TaskStatus WorkflowEngine::getTaskStatus(const std::string& task_id) const {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    
+    auto it = all_tasks_.find(task_id);
+    if (it != all_tasks_.end()) {
+        return it->second->getStatus();
+    }
+    
+    return TaskStatus::PENDING; // 默认状态
+}
+
+TaskResult WorkflowEngine::getTaskResult(const std::string& task_id) const {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    
+    auto it = task_results_.find(task_id);
+    if (it != task_results_.end()) {
+        return it->second;
+    }
+    
+    return TaskResult(); // 返回空结果
+}
+
+size_t WorkflowEngine::getPendingTaskCount() const {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    return task_queue_.size();
+}
+
+size_t WorkflowEngine::getRunningTaskCount() const {
+    return running_task_count_.load();
+}
+
+size_t WorkflowEngine::getCompletedTaskCount() const {
+    return completed_task_count_.load();
+}
+
+void WorkflowEngine::cleanupCompletedTasks() {
+    std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+    std::lock_guard<std::mutex> results_lock(results_mutex_);
+    
+    // 清理已完成的任务
+    auto it = all_tasks_.begin();
+    while (it != all_tasks_.end()) {
+        auto status = it->second->getStatus();
+        if (status == TaskStatus::COMPLETED || 
+            status == TaskStatus::FAILED || 
+            status == TaskStatus::CANCELLED) {
+            
+            // 保留结果，删除任务引用
+            it = all_tasks_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    std::cout << "Completed tasks cleaned up" << std::endl;
+}
+
+void WorkflowEngine::setTaskCompletionCallback(std::function<void(const std::string&, const TaskResult&)> callback) {
+    completion_callback_ = std::move(callback);
+}
+
+void WorkflowEngine::workerThread() {
+    while (running_.load()) {
+        std::shared_ptr<BaseTask> task;
+        
+        // 获取任务
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            
+            // 等待任务或停止信号
+            queue_condition_.wait(lock, [this] {
+                return !task_queue_.empty() || stop_requested_.load();
+            });
+            
+            // 检查是否需要停止
+            if (stop_requested_.load()) {
+                break;
+            }
+            
+            // 获取任务
+            if (!task_queue_.empty()) {
+                task = task_queue_.top();
+                task_queue_.pop();
+            }
+        }
+        
+        // 执行任务
+        if (task) {
+            executeTask(task);
+        }
+    }
+}
+
+void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
+    if (!task || task->isCancelled()) {
+        return;
+    }
+    
+    // 更新任务状态
+    task->setStatus(TaskStatus::RUNNING);
+    running_task_count_.fetch_add(1);
+    
+    std::cout << "Executing task: " << task->getId() << " (" << task->getName() << ")" << std::endl;
+    
+    // 记录开始时间
+    auto start_time = std::chrono::steady_clock::now();
+    
+    // 执行任务
+    TaskResult result;
+    try {
+        result = task->execute();
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.message = std::string("Exception: ") + e.what();
+        std::cerr << "Task execution failed with exception: " << e.what() << std::endl;
+    } catch (...) {
+        result.success = false;
+        result.message = "Unknown exception";
+        std::cerr << "Task execution failed with unknown exception" << std::endl;
+    }
+    
+    // 计算执行时间
+    auto end_time = std::chrono::steady_clock::now();
+    result.duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    
+    // 更新任务状态
+    if (task->isCancelled()) {
+        task->setStatus(TaskStatus::CANCELLED);
+        result.success = false;
+        result.message = "Task was cancelled";
+    } else if (result.success) {
+        task->setStatus(TaskStatus::COMPLETED);
+    } else {
+        task->setStatus(TaskStatus::FAILED);
+    }
+    
+    // 保存结果
+    {
+        std::lock_guard<std::mutex> lock(results_mutex_);
+        task_results_[task->getId()] = result;
+    }
+    
+    // 更新计数器
+    running_task_count_.fetch_sub(1);
+    completed_task_count_.fetch_add(1);
+    
+    // 调用完成回调
+    if (completion_callback_) {
+        try {
+            completion_callback_(task->getId(), result);
+        } catch (const std::exception& e) {
+            std::cerr << "Exception in completion callback: " << e.what() << std::endl;
+        }
+    }
+    
+    std::cout << "Task completed: " << task->getId() 
+              << " (success: " << (result.success ? "true" : "false")
+              << ", duration: " << result.duration.count() << "ms)" << std::endl;
+}
+
+std::string WorkflowEngine::generateTaskId() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    
+    std::stringstream ss;
+    ss << "task_";
+    
+    // 生成简单的随机ID
+    for (int i = 0; i < 8; ++i) {
+        ss << std::hex << dis(gen);
+    }
+    
+    return ss.str();
+}
+
+} // namespace core
+} // namespace duorou

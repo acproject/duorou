@@ -42,7 +42,7 @@ duorou/
    - [x] Git仓库初始化
    - [x] 子模块集成 (llama.cpp, stable-diffusion.cpp)
    - [x] 基础目录结构
-   - [ ] CMake配置文件
+   - [x] CMake配置文件
 
 2. **核心模块设计**
    - [ ] 模型管理器 (ModelManager)

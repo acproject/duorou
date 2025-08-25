@@ -186,48 +186,69 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/models)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/utils)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
 
-# 源文件（当前为空，待后续开发时添加）
-set(DUOROU_SOURCES
-    # src/main.cpp
-    # src/core/application.cpp
-    # src/core/config_manager.cpp
-    # src/core/logger.cpp
-    # src/core/model_manager.cpp
-    # src/core/workflow_engine.cpp
-    # src/models/llama_wrapper.cpp
-    # src/models/stable_diffusion_wrapper.cpp
-    # src/gui/main_window.cpp
-    # src/gui/chat_view.cpp
-    # src/gui/image_view.cpp
-    # src/gui/settings_dialog.cpp
-    # src/gui/system_tray.cpp
-    # src/utils/file_utils.cpp
-    # src/utils/string_utils.cpp
-    # src/utils/image_utils.cpp
+# 源文件列表（当前为空，待后续开发时添加）
+# 取消注释以下源文件并创建对应的.cpp文件来构建可执行文件
+set(DUOROU_SOURCES_LIST
+    src/main.cpp
+    src/core/application.cpp
+    src/core/config_manager.cpp
+    src/core/logger.cpp
+    src/core/model_manager.cpp
+    src/core/workflow_engine.cpp
+    src/models/llama_wrapper.cpp
+    src/models/stable_diffusion_wrapper.cpp
+    src/gui/main_window.cpp
+    src/gui/chat_view.cpp
+    src/gui/image_view.cpp
+    src/gui/settings_dialog.cpp
+    src/gui/system_tray.cpp
+    src/utils/file_utils.cpp
+    src/utils/string_utils.cpp
+    src/utils/image_utils.cpp
+    src/api/api_server.cpp
 )
 
-# 头文件（当前为空，待后续开发时添加）
-set(DUOROU_HEADERS
-    # src/core/application.h
-    # src/core/config_manager.h
-    # src/core/logger.h
-    # src/core/model_manager.h
-    # src/core/workflow_engine.h
-    # src/models/llama_wrapper.h
-    # src/models/stable_diffusion_wrapper.h
-    # src/gui/main_window.h
-    # src/gui/chat_view.h
-    # src/gui/image_view.h
-    # src/gui/settings_dialog.h
-    # src/gui/system_tray.h
-    # src/utils/file_utils.h
-    # src/utils/string_utils.h
-    # src/utils/image_utils.h
+# 头文件列表（当前为空，待后续开发时添加）
+set(DUOROU_HEADERS_LIST
+    src/core/application.h
+    src/core/config_manager.h
+    src/core/logger.h
+    src/core/model_manager.h
+    src/core/workflow_engine.h
+    src/models/llama_wrapper.h
+    src/models/stable_diffusion_wrapper.h
+    src/gui/main_window.h
+    src/gui/chat_view.h
+    src/gui/image_view.h
+    src/gui/settings_dialog.h
+    src/gui/system_tray.h
+    src/utils/file_utils.h
+    src/utils/string_utils.h
+    src/utils/image_utils.h
+    src/api/api_server.h
 )
 
-# 检查是否有源文件存在，如果没有则跳过可执行文件构建
+# 检查实际存在的源文件
+set(DUOROU_SOURCES)
+set(DUOROU_HEADERS)
+foreach(source_file ${DUOROU_SOURCES_LIST})
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${source_file}")
+        list(APPEND DUOROU_SOURCES "${source_file}")
+    endif()
+endforeach()
+
+foreach(header_file ${DUOROU_HEADERS_LIST})
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${header_file}")
+        list(APPEND DUOROU_HEADERS "${header_file}")
+    endif()
+endforeach()
+
+# 只有当存在源文件时才构建可执行文件
 if(DUOROU_SOURCES)
+    message(STATUS "Found ${CMAKE_CURRENT_LIST_LENGTH} source files, building executable...")
+    
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
@@ -273,7 +294,8 @@ if(DUOROU_SOURCES)
     )
 else()
     message(STATUS "No source files found. Skipping executable build.")
-    message(STATUS "To build the executable, uncomment source files in CMakeLists.txt and create the corresponding .cpp files.")
+    message(STATUS "To build the executable, create the source files listed in DUOROU_SOURCES_LIST.")
+    message(STATUS "Start with creating src/main.cpp as the entry point.")
 endif()
 
 # 注意：链接库配置已移动到上面的条件块中
