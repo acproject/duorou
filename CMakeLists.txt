@@ -33,6 +33,25 @@ if(APPLE)
     set(DUOROU_PLATFORM "macos")
 elseif(WIN32)
     set(DUOROU_PLATFORM "windows")
+    
+    # Windows vcpkg 支持
+    if(DEFINED ENV{VCPKG_ROOT})
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        message(STATUS "Using vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        message(STATUS "Using local vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+    else()
+        message(WARNING "vcpkg not found. Please install vcpkg or set VCPKG_ROOT environment variable.")
+        message(STATUS "To install vcpkg:")
+        message(STATUS "  git clone https://github.com/Microsoft/vcpkg.git")
+        message(STATUS "  cd vcpkg && .\\bootstrap-vcpkg.bat")
+        message(STATUS "  Set VCPKG_ROOT environment variable to vcpkg directory")
+    endif()
+    
+    # Windows 特定的 vcpkg 包配置
+    set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg target triplet")
+    
 elseif(UNIX)
     set(DUOROU_PLATFORM "linux")
 else()
@@ -59,7 +78,31 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 # GTK4 依赖
-pkg_check_modules(GTK4 REQUIRED gtk4)
+if(WIN32)
+    # Windows 平台使用 vcpkg 查找 GTK4
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(GTK4 gtk4)
+    endif()
+    
+    if(NOT GTK4_FOUND)
+        # 尝试使用 vcpkg 安装的 GTK4
+        find_package(gtk QUIET)
+        if(gtk_FOUND)
+            set(GTK4_FOUND TRUE)
+            set(GTK4_LIBRARIES gtk::gtk)
+            set(GTK4_INCLUDE_DIRS ${gtk_INCLUDE_DIRS})
+            message(STATUS "Found GTK4 via vcpkg")
+        else()
+            message(WARNING "GTK4 not found via vcpkg. Please install with: vcpkg install gtk:x64-windows")
+            message(STATUS "Alternative: install MSYS2 and use: pacman -S mingw-w64-x86_64-gtk4")
+        endif()
+    endif()
+else()
+    # 非 Windows 平台使用 pkg-config
+    pkg_check_modules(GTK4 REQUIRED gtk4)
+endif()
+
 if(GTK4_FOUND)
     message(STATUS "Found GTK4: ${GTK4_VERSION}")
 else()
@@ -138,94 +181,102 @@ endif()
 add_subdirectory(third_party/llama.cpp)
 add_subdirectory(third_party/stable-diffusion.cpp)
 
-# 源文件
-set(DUOROU_SOURCES
-    src/main.cpp
-    src/core/application.cpp
-    src/core/config_manager.cpp
-    src/core/logger.cpp
-    src/core/model_manager.cpp
-    src/core/workflow_engine.cpp
-    src/models/llama_wrapper.cpp
-    src/models/stable_diffusion_wrapper.cpp
-    src/gui/main_window.cpp
-    src/gui/chat_view.cpp
-    src/gui/image_view.cpp
-    src/gui/settings_dialog.cpp
-    src/gui/system_tray.cpp
-    src/utils/file_utils.cpp
-    src/utils/string_utils.cpp
-    src/utils/image_utils.cpp
-)
-
-# 头文件
-set(DUOROU_HEADERS
-    src/core/application.h
-    src/core/config_manager.h
-    src/core/logger.h
-    src/core/model_manager.h
-    src/core/workflow_engine.h
-    src/models/llama_wrapper.h
-    src/models/stable_diffusion_wrapper.h
-    src/gui/main_window.h
-    src/gui/chat_view.h
-    src/gui/image_view.h
-    src/gui/settings_dialog.h
-    src/gui/system_tray.h
-    src/utils/file_utils.h
-    src/utils/string_utils.h
-    src/utils/image_utils.h
-)
-
 # 创建源文件目录（如果不存在）
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/models)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/utils)
 
-# 主可执行文件
-add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
-
-# 链接库
-target_link_libraries(duorou
-    llama
-    stable-diffusion
-    ${GTK4_LIBRARIES}
-    Threads::Threads
+# 源文件（当前为空，待后续开发时添加）
+set(DUOROU_SOURCES
+    # src/main.cpp
+    # src/core/application.cpp
+    # src/core/config_manager.cpp
+    # src/core/logger.cpp
+    # src/core/model_manager.cpp
+    # src/core/workflow_engine.cpp
+    # src/models/llama_wrapper.cpp
+    # src/models/stable_diffusion_wrapper.cpp
+    # src/gui/main_window.cpp
+    # src/gui/chat_view.cpp
+    # src/gui/image_view.cpp
+    # src/gui/settings_dialog.cpp
+    # src/gui/system_tray.cpp
+    # src/utils/file_utils.cpp
+    # src/utils/string_utils.cpp
+    # src/utils/image_utils.cpp
 )
 
-# 平台特定链接
-if(APPLE)
-    target_link_libraries(duorou
-        "-framework Foundation"
-        "-framework AppKit"
-    )
-elseif(WIN32)
-    target_link_libraries(duorou
-        user32
-        shell32
-        ole32
-    )
-elseif(UNIX)
-    target_link_libraries(duorou
-        dl
-        m
-    )
-endif()
-
-# 编译器特定链接选项
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_options(duorou PRIVATE
-        $<$<CONFIG:Debug>:-rdynamic>
-    )
-endif()
-
-# 安装配置
-install(TARGETS duorou
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
+# 头文件（当前为空，待后续开发时添加）
+set(DUOROU_HEADERS
+    # src/core/application.h
+    # src/core/config_manager.h
+    # src/core/logger.h
+    # src/core/model_manager.h
+    # src/core/workflow_engine.h
+    # src/models/llama_wrapper.h
+    # src/models/stable_diffusion_wrapper.h
+    # src/gui/main_window.h
+    # src/gui/chat_view.h
+    # src/gui/image_view.h
+    # src/gui/settings_dialog.h
+    # src/gui/system_tray.h
+    # src/utils/file_utils.h
+    # src/utils/string_utils.h
+    # src/utils/image_utils.h
 )
+
+# 检查是否有源文件存在，如果没有则跳过可执行文件构建
+if(DUOROU_SOURCES)
+    # 主可执行文件
+    add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
+    
+    # 链接库
+    target_link_libraries(duorou
+        llama
+        stable-diffusion
+        ${GTK4_LIBRARIES}
+        Threads::Threads
+    )
+    
+    # 平台特定链接
+    if(APPLE)
+        target_link_libraries(duorou
+            "-framework Foundation"
+            "-framework AppKit"
+        )
+    elseif(WIN32)
+        target_link_libraries(duorou
+            user32
+            shell32
+            ole32
+        )
+    elseif(UNIX)
+        target_link_libraries(duorou
+            dl
+            m
+        )
+    endif()
+    
+    # 编译器特定链接选项
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_link_options(duorou PRIVATE
+            $<$<CONFIG:Debug>:-rdynamic>
+        )
+    endif()
+    
+    # 安装配置
+    install(TARGETS duorou
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+    )
+else()
+    message(STATUS "No source files found. Skipping executable build.")
+    message(STATUS "To build the executable, uncomment source files in CMakeLists.txt and create the corresponding .cpp files.")
+endif()
+
+# 注意：链接库配置已移动到上面的条件块中
 
 # 安装资源文件
 install(DIRECTORY resources/
