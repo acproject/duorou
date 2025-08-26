@@ -128,6 +128,72 @@ else()
     message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
 endif()
 
+# 视频和音频处理库
+# FFmpeg 支持
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG QUIET
+    libavcodec
+    libavformat
+    libavutil
+    libavdevice
+    libswscale
+    libswresample
+)
+
+if(FFMPEG_FOUND)
+    message(STATUS "Found FFmpeg libraries")
+    set(HAVE_FFMPEG TRUE)
+else()
+    message(WARNING "FFmpeg not found. Video recording features will be limited.")
+    message(STATUS "To install FFmpeg on macOS: brew install ffmpeg")
+    message(STATUS "To install FFmpeg on Ubuntu: sudo apt install libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libswscale-dev libswresample-dev")
+    set(HAVE_FFMPEG FALSE)
+endif()
+
+# GStreamer 支持 (备选视频处理库)
+pkg_check_modules(GSTREAMER QUIET
+    gstreamer-1.0
+    gstreamer-app-1.0
+    gstreamer-video-1.0
+    gstreamer-audio-1.0
+)
+
+if(GSTREAMER_FOUND)
+    message(STATUS "Found GStreamer: ${GSTREAMER_VERSION}")
+    set(HAVE_GSTREAMER TRUE)
+else()
+    message(WARNING "GStreamer not found. Alternative video processing will be unavailable.")
+    message(STATUS "To install GStreamer on macOS: brew install gstreamer gst-plugins-base gst-plugins-good")
+    message(STATUS "To install GStreamer on Ubuntu: sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev")
+    set(HAVE_GSTREAMER FALSE)
+endif()
+
+# PortAudio 支持 (音频处理)
+pkg_check_modules(PORTAUDIO QUIET portaudio-2.0)
+
+if(PORTAUDIO_FOUND)
+    message(STATUS "Found PortAudio: ${PORTAUDIO_VERSION}")
+    set(HAVE_PORTAUDIO TRUE)
+else()
+    message(WARNING "PortAudio not found. Audio recording features will be limited.")
+    message(STATUS "To install PortAudio on macOS: brew install portaudio")
+    message(STATUS "To install PortAudio on Ubuntu: sudo apt install portaudio19-dev")
+    set(HAVE_PORTAUDIO FALSE)
+endif()
+
+# OpenCV 支持 (图像和视频处理)
+find_package(OpenCV QUIET COMPONENTS core imgproc imgcodecs videoio)
+
+if(OpenCV_FOUND)
+    message(STATUS "Found OpenCV: ${OpenCV_VERSION}")
+    set(HAVE_OPENCV TRUE)
+else()
+    message(WARNING "OpenCV not found. Advanced image/video processing will be unavailable.")
+    message(STATUS "To install OpenCV on macOS: brew install opencv")
+    message(STATUS "To install OpenCV on Ubuntu: sudo apt install libopencv-dev")
+    set(HAVE_OPENCV FALSE)
+endif()
+
 # 包含目录
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -136,10 +202,40 @@ include_directories(
     ${GTK4_INCLUDE_DIRS}
 )
 
+# 添加视频音频库的包含目录
+if(FFMPEG_FOUND)
+    include_directories(${FFMPEG_INCLUDE_DIRS})
+endif()
+
+if(GSTREAMER_FOUND)
+    include_directories(${GSTREAMER_INCLUDE_DIRS})
+endif()
+
+if(PORTAUDIO_FOUND)
+    include_directories(${PORTAUDIO_INCLUDE_DIRS})
+endif()
+
+if(OpenCV_FOUND)
+    include_directories(${OpenCV_INCLUDE_DIRS})
+endif()
+
 # 链接目录
 link_directories(
     ${GTK4_LIBRARY_DIRS}
 )
+
+# 添加视频音频库的链接目录
+if(FFMPEG_FOUND)
+    link_directories(${FFMPEG_LIBRARY_DIRS})
+endif()
+
+if(GSTREAMER_FOUND)
+    link_directories(${GSTREAMER_LIBRARY_DIRS})
+endif()
+
+if(PORTAUDIO_FOUND)
+    link_directories(${PORTAUDIO_LIBRARY_DIRS})
+endif()
 
 # 编译定义
 add_definitions(
@@ -148,6 +244,23 @@ add_definitions(
     -DDUOROU_PLATFORM="${DUOROU_PLATFORM}"
     -DHAVE_GTK
 )
+
+# 添加视频音频库的编译定义
+if(FFMPEG_FOUND)
+    add_definitions(-DHAVE_FFMPEG ${FFMPEG_CFLAGS_OTHER})
+endif()
+
+if(GSTREAMER_FOUND)
+    add_definitions(-DHAVE_GSTREAMER ${GSTREAMER_CFLAGS_OTHER})
+endif()
+
+if(PORTAUDIO_FOUND)
+    add_definitions(-DHAVE_PORTAUDIO ${PORTAUDIO_CFLAGS_OTHER})
+endif()
+
+if(OpenCV_FOUND)
+    add_definitions(-DHAVE_OPENCV)
+endif()
 
 # llama.cpp 子项目配置
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -227,6 +340,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/system_tray.cpp
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
+    src/gui/video_display_window.cpp
     src/utils/file_utils.cpp
     src/utils/string_utils.cpp
     src/utils/image_utils.cpp
@@ -234,6 +348,8 @@ set(DUOROU_SOURCES_LIST
     src/invokeai/core/invokeai_engine.cpp
     src/invokeai/models/model_manager.cpp
     src/invokeai/pipeline/image_pipeline.cpp
+    src/media/video_capture.cpp
+    src/media/audio_capture.cpp
 )
 
 # macOS平台特定源文件
@@ -257,6 +373,7 @@ set(DUOROU_HEADERS_LIST
     src/gui/system_tray.h
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
+    src/gui/video_display_window.h
     src/utils/file_utils.h
     src/utils/string_utils.h
     src/utils/image_utils.h
@@ -317,6 +434,27 @@ if(DUOROU_SOURCES)
         Threads::Threads
         nlohmann_json::nlohmann_json
     )
+    
+    # 链接视频音频处理库
+    if(FFMPEG_FOUND)
+        target_link_libraries(duorou ${FFMPEG_LIBRARIES})
+        message(STATUS "Linking FFmpeg libraries: ${FFMPEG_LIBRARIES}")
+    endif()
+    
+    if(GSTREAMER_FOUND)
+        target_link_libraries(duorou ${GSTREAMER_LIBRARIES})
+        message(STATUS "Linking GStreamer libraries: ${GSTREAMER_LIBRARIES}")
+    endif()
+    
+    if(PORTAUDIO_FOUND)
+        target_link_libraries(duorou ${PORTAUDIO_LIBRARIES})
+        message(STATUS "Linking PortAudio libraries: ${PORTAUDIO_LIBRARIES}")
+    endif()
+    
+    if(OpenCV_FOUND)
+        target_link_libraries(duorou ${OpenCV_LIBS})
+        message(STATUS "Linking OpenCV libraries: ${OpenCV_LIBS}")
+    endif()
     
     # 平台特定链接
     if(APPLE)

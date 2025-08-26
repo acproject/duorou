@@ -4,6 +4,16 @@
 #include <gtk/gtk.h>
 #include <string>
 #include <vector>
+#include <memory>
+#include "video_display_window.h"
+
+// 前向声明
+namespace duorou {
+namespace media {
+    class VideoCapture;
+    class AudioCapture;
+}
+}
 
 namespace duorou {
 namespace gui {
@@ -68,6 +78,16 @@ private:
     GtkWidget* input_container_;     // 输入框容器
     
     bool welcome_cleared_;           // 标记是否已清除欢迎界面
+    
+    // 媒体捕获相关
+    std::unique_ptr<media::VideoCapture> video_capture_;
+    std::unique_ptr<media::AudioCapture> audio_capture_;
+    std::unique_ptr<VideoDisplayWindow> video_display_window_;
+    bool is_recording_;              // 录制状态标记
+    
+    // 录制按钮图标
+    GtkWidget* video_off_image_;     // 录制关闭图标
+    GtkWidget* video_on_image_;      // 录制开启图标
 
     /**
      * 创建聊天显示区域
@@ -106,6 +126,7 @@ private:
     // 视频捕获方法
     void start_desktop_capture();
     void start_camera_capture();
+    void stop_recording();
 };
 
 } // namespace gui
