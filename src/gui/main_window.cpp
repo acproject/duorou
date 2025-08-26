@@ -3,6 +3,7 @@
 #include "image_view.h"
 #include "settings_dialog.h"
 #include "chat_session_manager.h"
+#include "system_tray.h"
 #include "../core/logger.h"
 
 #include <iostream>
@@ -92,6 +93,47 @@ bool MainWindow::initialize() {
 
     // 默认显示聊天界面
     switch_to_chat();
+
+    // 初始化系统托盘
+#ifdef __APPLE__
+    // macOS系统托盘功能已实现但暂时禁用以调试其他组件的段错误问题
+    std::cout << "macOS system tray feature temporarily disabled for debugging" << std::endl;
+    // if (macos_tray_->initialize()) {
+    //     std::cout << "macOS system tray initialized successfully" << std::endl;
+    //     
+    //     // 设置托盘图标（花朵emoji）
+    //     macos_tray_->setIcon("🌸");
+    //     
+    //     // 添加菜单项
+    //     macos_tray_->addMenuItem("Show Window", [this]() {
+    //         gtk_window_present(GTK_WINDOW(window_));
+    //     });
+    //     
+    //     macos_tray_->addMenuItem("New Chat", [this]() {
+    //         // 触发新建聊天
+    //         if (chat_view_) {
+    //             // 这里可以添加新建聊天的逻辑
+    //             std::cout << "New chat requested from tray" << std::endl;
+    //         }
+    //     });
+    //     
+    //     macos_tray_->addMenuItem("Settings", [this]() {
+    //         // 打开设置窗口
+    //         std::cout << "Settings requested from tray" << std::endl;
+    //     });
+    //     
+    //     macos_tray_->addMenuItem("Quit", [this]() {
+    //         gtk_window_close(GTK_WINDOW(window_));
+    //     });
+    //     
+    //     macos_tray_->show();
+    // } else {
+    //     std::cerr << "Failed to initialize macOS system tray" << std::endl;
+    // }
+#else
+    // 在其他平台上使用GTK系统托盘（如果支持）
+    std::cout << "System tray feature not implemented for this platform" << std::endl;
+#endif
 
     // 加载现有会话并更新聊天历史列表
     if (session_manager_) {

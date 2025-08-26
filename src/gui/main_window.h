@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __APPLE__
+#include "../platform/macos_tray.h"
+#endif
+
 namespace duorou {
 namespace gui {
 
@@ -13,6 +17,7 @@ class ChatView;
 class ImageView;
 class SettingsDialog;
 class ChatSessionManager;
+class SystemTray;
 
 /**
  * 主窗口类 - 管理整个应用程序的主界面
@@ -101,13 +106,18 @@ private:
     GtkWidget* settings_button_;     // 设置按钮
     GtkWidget* chat_history_box_;    // 聊天历史容器
 
-    // 子视图
+    // UI组件
     std::unique_ptr<ChatView> chat_view_;
     std::unique_ptr<ImageView> image_view_;
     std::unique_ptr<SettingsDialog> settings_dialog_;
     std::unique_ptr<ChatSessionManager> session_manager_;
+    std::unique_ptr<SystemTray> system_tray_;
+    
+#ifdef __APPLE__
+    std::unique_ptr<MacOSTray> macos_tray_;
+#endif
 
-    // 当前活动视图
+    // 当前视图状态
     std::string current_view_;
 
     /**

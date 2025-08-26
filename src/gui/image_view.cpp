@@ -241,21 +241,23 @@ void ImageView::create_placeholder_image() {
 void ImageView::on_generate_button_clicked(GtkWidget* widget, gpointer user_data) {
     ImageView* image_view = static_cast<ImageView*>(user_data);
     
-    // 获取提示词
-    const char* prompt_text = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(image_view->prompt_entry_)));
-    std::string prompt = prompt_text ? prompt_text : "";
+    // 获取提示词 - 立即创建拷贝避免指针失效
+    GtkEntryBuffer* buffer = gtk_entry_get_buffer(GTK_ENTRY(image_view->prompt_entry_));
+    const char* prompt_text_ptr = gtk_entry_buffer_get_text(buffer);
+    std::string prompt_copy = prompt_text_ptr ? std::string(prompt_text_ptr) : "";
     
-    image_view->generate_image(prompt);
+    image_view->generate_image(prompt_copy);
 }
 
 void ImageView::on_prompt_entry_activate(GtkWidget* widget, gpointer user_data) {
     ImageView* image_view = static_cast<ImageView*>(user_data);
     
-    // 获取提示词
-    const char* prompt_text = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(widget)));
-    std::string prompt = prompt_text ? prompt_text : "";
+    // 获取提示词 - 立即创建拷贝避免指针失效
+    GtkEntryBuffer* buffer = gtk_entry_get_buffer(GTK_ENTRY(widget));
+    const char* prompt_text_ptr = gtk_entry_buffer_get_text(buffer);
+    std::string prompt_copy = prompt_text_ptr ? std::string(prompt_text_ptr) : "";
     
-    image_view->generate_image(prompt);
+    image_view->generate_image(prompt_copy);
 }
 
 void ImageView::on_clear_button_clicked(GtkWidget* widget, gpointer user_data) {

@@ -274,10 +274,12 @@ bool Application::initializeComponents() {
         }
         
         // 初始化系统托盘（仅在非服务模式下）
-        // 注意：系统托盘在macOS环境下存在兼容性问题，暂时禁用
+        // 暂时禁用系统托盘以调试其他组件的段错误问题
         if (!service_mode_) {
-            logger_->info("System tray initialization skipped due to macOS compatibility issues");
-            // TODO: 修复macOS下系统托盘的兼容性问题
+            logger_->info("System tray initialization temporarily disabled for debugging");
+            // if (!initializeSystemTray()) {
+            //     logger_->warning("Failed to initialize system tray, continuing without it");
+            // }
         }
         
         logger_->info("All core components initialized successfully");

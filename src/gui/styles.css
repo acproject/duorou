@@ -2,7 +2,10 @@
 
 /* Welcome Screen Styles */
 .welcome-icon {
-    font-size: 48px;
+    min-width: 40px;
+    min-height: 40px;
+    width: 300px;
+    height: 300px;
     margin-bottom: 20px;
 }
 
@@ -141,9 +144,76 @@
     background: #c53030;
 }
 
-/* Message Styles */
+/* Message Styles - 气泡效果 */
+.user-message {
+    margin: 8px 0;
+    padding: 0;
+}
+
+/* 使用frame容器作为气泡 - GTK4兼容样式 */
+.user-bubble {
+    background: #48bb78; /* 绿色气泡 */
+    color: white;
+    border-radius: 18px;
+    padding: 12px 16px;
+    margin: 4px;
+    border: none;
+}
+
+.assistant-bubble {
+    background: #bee3f8; /* 浅蓝色气泡 */
+    color: #2d3748;
+    border: 1px solid #90cdf4;
+    border-radius: 18px;
+    padding: 12px 16px;
+    margin: 4px;
+}
+
+/* frame内的label样式 */
+.user-bubble label {
+    color: white;
+    background: transparent;
+}
+
+.assistant-bubble label {
+    color: #2d3748;
+    background: transparent;
+}
+
+/* 保留CSS类选择器作为备用 */
+label.user-message {
+    background: #48bb78;
+    color: white;
+    border-radius: 18px;
+    padding: 12px 16px;
+    margin: 4px;
+}
+
+label.assistant-message {
+    background: #bee3f8;
+    color: #2d3748;
+    border: 1px solid #90cdf4;
+    border-radius: 18px;
+    padding: 12px 16px;
+    margin: 4px;
+}
+
+/* 消息容器样式 */
+.user-message-container {
+    display: flex;
+    justify-content: flex-end;
+    margin: 8px 0;
+}
+
+.assistant-message-container {
+    display: flex;
+    justify-content: flex-start;
+    margin: 8px 0;
+}
+
+/* 旧的消息样式保持兼容性 */
 .message-user {
-    background: #4299e1;
+    background: #48bb78;
     color: white;
     border-radius: 18px 18px 4px 18px;
     padding: 12px 16px;
@@ -151,9 +221,9 @@
 }
 
 .message-assistant {
-    background: #f7fafc;
+    background: #bee3f8;
     color: #2d3748;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #90cdf4;
     border-radius: 18px 18px 18px 4px;
     padding: 12px 16px;
     margin: 8px 0;

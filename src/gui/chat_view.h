@@ -60,6 +60,8 @@ private:
     GtkWidget* clear_button_;        // 清空按钮
     GtkWidget* model_selector_;      // 模型选择器
     GtkWidget* input_container_;     // 输入框容器
+    
+    bool welcome_cleared_;           // 标记是否已清除欢迎界面
 
     /**
      * 创建聊天显示区域

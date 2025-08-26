@@ -236,6 +236,11 @@ set(DUOROU_SOURCES_LIST
     src/invokeai/pipeline/image_pipeline.cpp
 )
 
+# macOS平台特定源文件
+if(APPLE)
+    list(APPEND DUOROU_SOURCES_LIST src/platform/macos_tray.mm)
+endif()
+
 # 头文件列表（当前为空，待后续开发时添加）
 set(DUOROU_HEADERS_LIST
     src/core/application.h
@@ -260,6 +265,11 @@ set(DUOROU_HEADERS_LIST
     src/invokeai/models/model_manager.h
     src/invokeai/pipeline/image_pipeline.h
 )
+
+# macOS平台特定头文件
+if(APPLE)
+    list(APPEND DUOROU_HEADERS_LIST src/platform/macos_tray.h)
+endif()
 
 # 检查实际存在的源文件
 set(DUOROU_SOURCES)
@@ -313,6 +323,7 @@ if(DUOROU_SOURCES)
         target_link_libraries(duorou
             "-framework Foundation"
             "-framework AppKit"
+            "-framework Cocoa"
         )
     elseif(WIN32)
         target_link_libraries(duorou
