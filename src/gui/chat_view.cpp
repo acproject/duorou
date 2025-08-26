@@ -4,6 +4,8 @@
 #include "../media/audio_capture.h"
 
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 namespace duorou {
 namespace gui {
@@ -23,6 +25,28 @@ ChatView::ChatView()
     is_recording_(false) {}
 
 ChatView::~ChatView() {
+  // 确保停止录制并清理媒体资源
+  if (is_recording_) {
+    stop_recording();
+  }
+  
+  // 显式清理音频和视频捕获对象
+  if (audio_capture_) {
+    audio_capture_->stop_capture();
+    audio_capture_.reset();
+  }
+  
+  if (video_capture_) {
+    video_capture_->stop_capture();
+    video_capture_.reset();
+  }
+  
+  // 清理视频显示窗口
+  if (video_display_window_) {
+    video_display_window_->hide();
+    video_display_window_.reset();
+  }
+  
   // GTK4会自动清理子组件
 }
 
@@ -240,9 +264,22 @@ void ChatView::create_input_area() {
   gtk_widget_set_size_request(upload_file_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_file_button_, "Upload File (MD, DOC, Excel, PPT, PDF)");
 
-  // 创建录制视频按钮图标
-  video_off_image_ = gtk_picture_new_for_filename("/Users/acproject/workspace/cpp_projects/duorou/src/gui/video-off.png");
-  video_on_image_ = gtk_picture_new_for_filename("/Users/acproject/workspace/cpp_projects/duorou/src/gui/video-on.png");
+  // 创建录制视频按钮图标 - 使用相对路径
+  std::string icon_path_base = "src/gui/";
+  video_off_image_ = gtk_picture_new_for_filename((icon_path_base + "video-off.png").c_str());
+  video_on_image_ = gtk_picture_new_for_filename((icon_path_base + "video-on.png").c_str());
+  
+  // 检查图标是否加载成功
+  if (!video_off_image_ || !video_on_image_) {
+    std::cout << "警告: 无法加载录制按钮图标，使用文本替代" << std::endl;
+    // 如果图标加载失败，创建文本标签作为替代
+    if (!video_off_image_) {
+      video_off_image_ = gtk_label_new("⏹");
+    }
+    if (!video_on_image_) {
+      video_on_image_ = gtk_label_new("⏺");
+    }
+  }
   
   // 设置图标大小
   gtk_widget_set_size_request(video_off_image_, 24, 24);
@@ -605,15 +642,21 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
       return;
     }
     
-    // 初始化视频捕获
-    if (!video_capture_) {
-      video_capture_ = std::make_unique<media::VideoCapture>();
+    // 确保之前的资源已经清理
+    if (video_capture_) {
+      video_capture_->stop_capture();
+      video_capture_.reset();
+    }
+    if (audio_capture_) {
+      audio_capture_->stop_capture();
+      audio_capture_.reset();
     }
     
+    // 初始化视频捕获
+    video_capture_ = std::make_unique<media::VideoCapture>();
+    
     // 初始化音频捕获
-    if (!audio_capture_) {
-      audio_capture_ = std::make_unique<media::AudioCapture>();
-    }
+    audio_capture_ = std::make_unique<media::AudioCapture>();
     
     // 设置视频帧回调
     video_capture_->set_frame_callback([this](const media::VideoFrame& frame) {
@@ -631,17 +674,18 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
           ChatView* chat_view = data->first;
           auto frame_ptr = data->second;
           
-          if (chat_view->video_display_window_) {
-            std::cout << "更新视频显示窗口，帧大小: " << frame_ptr->width << "x" << frame_ptr->height << std::endl;
-            chat_view->video_display_window_->update_frame(*frame_ptr);
-            if (!chat_view->video_display_window_->is_visible()) {
-              std::cout << "显示视频窗口..." << std::endl;
-              chat_view->video_display_window_->show();
-            } else {
-              std::cout << "视频窗口已经可见" << std::endl;
+          // 检查ChatView对象是否仍然有效
+          if (chat_view && chat_view->video_display_window_) {
+            try {
+              chat_view->video_display_window_->update_frame(*frame_ptr);
+              
+              if (!chat_view->video_display_window_->is_visible()) {
+                std::cout << "显示视频窗口..." << std::endl;
+                chat_view->video_display_window_->show();
+              }
+            } catch (const std::exception& e) {
+              std::cout << "更新视频帧时出错: " << e.what() << std::endl;
             }
-          } else {
-            std::cout << "video_display_window_ 为空" << std::endl;
           }
           
           delete data;
@@ -666,14 +710,10 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
             is_recording_ = true;
             
             // 安全地切换按钮图标
-            GtkWidget* current_child = gtk_button_get_child(GTK_BUTTON(video_record_button_));
-            if (current_child) {
-              g_object_ref(current_child); // 增加引用计数
-              gtk_button_set_child(GTK_BUTTON(video_record_button_), NULL); // 先移除当前子组件
-              g_object_unref(current_child); // 减少引用计数
+            if (video_record_button_ && video_on_image_) {
+              gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+              gtk_widget_set_tooltip_text(video_record_button_, "停止录制");
             }
-            gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
-            gtk_widget_set_tooltip_text(video_record_button_, "停止录制");
             
             // 显示成功信息
             GtkWidget *dialog = gtk_message_dialog_new(
@@ -683,6 +723,9 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
               GTK_BUTTONS_OK,
               "桌面录制已开始\n\n正在捕获桌面视频和麦克风音频。");
             
+            // 确保对话框在最上层
+            gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+            gtk_window_present(GTK_WINDOW(dialog));
             gtk_widget_show(dialog);
             g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
           } else {
@@ -705,6 +748,9 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
         GTK_BUTTONS_OK,
         "桌面捕获初始化失败\n\n请检查系统权限设置。");
       
+      // 确保对话框在最上层
+      gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+      gtk_window_present(GTK_WINDOW(dialog));
       gtk_widget_show(dialog);
       g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
     }
@@ -732,6 +778,9 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
       gtk_dialog_add_button(GTK_DIALOG(dialog), "使用桌面捕获", GTK_RESPONSE_YES);
       gtk_dialog_add_button(GTK_DIALOG(dialog), "取消", GTK_RESPONSE_NO);
       
+      // 确保对话框在最上层
+      gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+      gtk_window_present(GTK_WINDOW(dialog));
       gtk_widget_show(dialog);
       g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog *dialog, gint response_id, gpointer user_data) {
         ChatView *chat_view = static_cast<ChatView *>(user_data);
@@ -745,15 +794,21 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
       return;
     }
     
-    // 初始化视频捕获
-    if (!video_capture_) {
-      video_capture_ = std::make_unique<media::VideoCapture>();
+    // 确保之前的资源已经清理
+    if (video_capture_) {
+      video_capture_->stop_capture();
+      video_capture_.reset();
+    }
+    if (audio_capture_) {
+      audio_capture_->stop_capture();
+      audio_capture_.reset();
     }
     
+    // 初始化视频捕获
+    video_capture_ = std::make_unique<media::VideoCapture>();
+    
     // 初始化音频捕获
-    if (!audio_capture_) {
-      audio_capture_ = std::make_unique<media::AudioCapture>();
-    }
+    audio_capture_ = std::make_unique<media::AudioCapture>();
     
     // 设置视频帧回调
     video_capture_->set_frame_callback([this](const media::VideoFrame& frame) {
@@ -772,17 +827,23 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
           auto frame_ptr = data->second;
           
           if (chat_view->video_display_window_) {
+            std::cout << "更新摄像头视频显示窗口，帧大小: " << frame_ptr->width << "x" << frame_ptr->height << std::endl;
             chat_view->video_display_window_->update_frame(*frame_ptr);
             if (!chat_view->video_display_window_->is_visible()) {
+              std::cout << "显示摄像头视频窗口..." << std::endl;
               chat_view->video_display_window_->show();
+            } else {
+              std::cout << "摄像头视频窗口已经可见" << std::endl;
             }
+          } else {
+            std::cout << "video_display_window_ 为空" << std::endl;
           }
           
           delete data;
           return G_SOURCE_REMOVE;
         }, new std::pair<ChatView*, std::shared_ptr<media::VideoFrame>>(this, frame_copy));
-       }
-     });
+      }
+    });
     
     // 设置音频帧回调
     audio_capture_->set_frame_callback([this](const media::AudioFrame& frame) {
@@ -800,14 +861,10 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
             is_recording_ = true;
             
             // 安全地切换按钮图标
-            GtkWidget* current_child = gtk_button_get_child(GTK_BUTTON(video_record_button_));
-            if (current_child) {
-              g_object_ref(current_child); // 增加引用计数
-              gtk_button_set_child(GTK_BUTTON(video_record_button_), NULL); // 先移除当前子组件
-              g_object_unref(current_child); // 减少引用计数
+            if (video_record_button_ && video_on_image_) {
+              gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+              gtk_widget_set_tooltip_text(video_record_button_, "停止录制");
             }
-            gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
-            gtk_widget_set_tooltip_text(video_record_button_, "停止录制");
             
             // 显示成功信息
             GtkWidget *dialog = gtk_message_dialog_new(
@@ -817,6 +874,9 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
               GTK_BUTTONS_OK,
               "摄像头录制已开始\n\n正在捕获摄像头视频和麦克风音频。");
             
+            // 确保对话框在最上层
+            gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+            gtk_window_present(GTK_WINDOW(dialog));
             gtk_widget_show(dialog);
             g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
           } else {
@@ -839,6 +899,9 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
         GTK_BUTTONS_OK,
         "摄像头捕获初始化失败\n\n请检查摄像头权限设置。");
       
+      // 确保对话框在最上层
+      gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+      gtk_window_present(GTK_WINDOW(dialog));
       gtk_widget_show(dialog);
       g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
     }
@@ -854,6 +917,8 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
     // 停止视频捕获
     if (video_capture_) {
       video_capture_->stop_capture();
+      // 等待一小段时间，确保所有待处理的回调完成
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
       video_capture_.reset(); // 重置视频捕获对象
     }
     
@@ -866,14 +931,11 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_d
     is_recording_ = false;
     
     // 安全地切换按钮图标
-    GtkWidget* current_child = gtk_button_get_child(GTK_BUTTON(video_record_button_));
-    if (current_child) {
-      g_object_ref(current_child); // 增加引用计数
-      gtk_button_set_child(GTK_BUTTON(video_record_button_), NULL); // 先移除当前子组件
-      g_object_unref(current_child); // 减少引用计数
+    if (video_record_button_ && video_off_image_) {
+      // 直接设置新的子组件，GTK4会自动处理旧组件的移除
+      gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+      gtk_widget_set_tooltip_text(video_record_button_, "开始录制视频/桌面捕获");
     }
-    gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
-    gtk_widget_set_tooltip_text(video_record_button_, "开始录制视频/桌面捕获");
     
     // 隐藏视频显示窗口
     if (video_display_window_) {

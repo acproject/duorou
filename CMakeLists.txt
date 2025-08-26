@@ -322,8 +322,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/models)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/pipeline)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/utils)
 
-# 源文件列表（当前为空，待后续开发时添加）
-# 取消注释以下源文件并创建对应的.cpp文件来构建可执行文件
+# 源文件列表（只包含实际存在的文件）
 set(DUOROU_SOURCES_LIST
     src/main.cpp
     src/core/application.cpp
@@ -331,8 +330,6 @@ set(DUOROU_SOURCES_LIST
     src/core/logger.cpp
     src/core/model_manager.cpp
     src/core/workflow_engine.cpp
-    src/models/llama_wrapper.cpp
-    src/models/stable_diffusion_wrapper.cpp
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
     src/gui/image_view.cpp
@@ -341,13 +338,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
     src/gui/video_display_window.cpp
-    src/utils/file_utils.cpp
-    src/utils/string_utils.cpp
-    src/utils/image_utils.cpp
     src/api/api_server.cpp
-    src/invokeai/core/invokeai_engine.cpp
-    src/invokeai/models/model_manager.cpp
-    src/invokeai/pipeline/image_pipeline.cpp
     src/media/video_capture.cpp
     src/media/audio_capture.cpp
 )
@@ -355,17 +346,16 @@ set(DUOROU_SOURCES_LIST
 # macOS平台特定源文件
 if(APPLE)
     list(APPEND DUOROU_SOURCES_LIST src/platform/macos_tray.mm)
+    list(APPEND DUOROU_SOURCES_LIST src/media/macos_screen_capture.mm)
 endif()
 
-# 头文件列表（当前为空，待后续开发时添加）
+# 头文件列表（只包含实际存在的文件）
 set(DUOROU_HEADERS_LIST
     src/core/application.h
     src/core/config_manager.h
     src/core/logger.h
     src/core/model_manager.h
     src/core/workflow_engine.h
-    src/models/llama_wrapper.h
-    src/models/stable_diffusion_wrapper.h
     src/gui/main_window.h
     src/gui/chat_view.h
     src/gui/image_view.h
@@ -374,18 +364,16 @@ set(DUOROU_HEADERS_LIST
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
     src/gui/video_display_window.h
-    src/utils/file_utils.h
-    src/utils/string_utils.h
-    src/utils/image_utils.h
     src/api/api_server.h
-    src/invokeai/core/invokeai_engine.h
-    src/invokeai/models/model_manager.h
-    src/invokeai/pipeline/image_pipeline.h
+    src/media/video_capture.h
+    src/media/audio_capture.h
+    src/media/video_frame.h
 )
 
 # macOS平台特定头文件
 if(APPLE)
     list(APPEND DUOROU_HEADERS_LIST src/platform/macos_tray.h)
+    list(APPEND DUOROU_HEADERS_LIST src/media/macos_screen_capture.h)
 endif()
 
 # 检查实际存在的源文件
@@ -462,6 +450,10 @@ if(DUOROU_SOURCES)
             "-framework Foundation"
             "-framework AppKit"
             "-framework Cocoa"
+            "-framework ScreenCaptureKit"
+            "-framework CoreGraphics"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
         )
     elseif(WIN32)
         target_link_libraries(duorou

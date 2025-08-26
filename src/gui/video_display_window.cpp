@@ -24,6 +24,14 @@ void VideoDisplayWindow::init_ui() {
     gtk_window_set_default_size(GTK_WINDOW(window_), 640, 480);
     gtk_window_set_resizable(GTK_WINDOW(window_), TRUE);
     
+    // 在GTK4中设置窗口层级，确保视频窗口在普通窗口之上但在模态对话框之下
+    gtk_window_set_modal(GTK_WINDOW(window_), FALSE);
+    gtk_window_set_transient_for(GTK_WINDOW(window_), nullptr);
+    
+    // 设置窗口类型提示，使其表现为工具窗口
+    gtk_window_set_decorated(GTK_WINDOW(window_), TRUE);
+    gtk_window_set_deletable(GTK_WINDOW(window_), TRUE);
+    
     // 创建主容器
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_margin_start(vbox, 10);
@@ -58,6 +66,7 @@ void VideoDisplayWindow::init_ui() {
 void VideoDisplayWindow::show() {
     if (window_) {
         gtk_widget_set_visible(window_, TRUE);
+        // 显示窗口但不强制获得焦点，避免干扰对话框
         gtk_window_present(GTK_WINDOW(window_));
     }
 }

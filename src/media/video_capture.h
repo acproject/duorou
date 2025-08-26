@@ -1,10 +1,12 @@
 #ifndef DUOROU_MEDIA_VIDEO_CAPTURE_H
 #define DUOROU_MEDIA_VIDEO_CAPTURE_H
 
+#ifdef __cplusplus
 #include <string>
 #include <functional>
 #include <memory>
 #include <vector>
+#include "video_frame.h"
 
 #ifdef HAVE_OPENCV
 #include <opencv2/opencv.hpp>
@@ -29,13 +31,7 @@ enum class VideoSource {
     NONE
 };
 
-struct VideoFrame {
-    std::vector<uint8_t> data;
-    int width;
-    int height;
-    int channels;
-    double timestamp;
-};
+
 
 class VideoCapture {
 public:
@@ -77,4 +73,5 @@ private:
 } // namespace media
 } // namespace duorou
 
+#endif // __cplusplus
 #endif // DUOROU_MEDIA_VIDEO_CAPTURE_H

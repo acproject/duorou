@@ -78,7 +78,16 @@ void SettingsDialog::show(GtkWidget* parent) {
         if (parent) {
             gtk_window_set_transient_for(GTK_WINDOW(dialog_), GTK_WINDOW(parent));
         }
+        
+        // 确保对话框在最顶层显示
+        gtk_window_set_modal(GTK_WINDOW(dialog_), TRUE);
+        
+        // 显示对话框并确保获得焦点
         gtk_widget_show(dialog_);
+        gtk_window_present(GTK_WINDOW(dialog_));
+        
+        // 强制获取焦点
+        gtk_widget_grab_focus(dialog_);
     }
 }
 

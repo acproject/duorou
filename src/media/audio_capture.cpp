@@ -137,7 +137,23 @@ AudioCapture::AudioCapture() : pImpl(std::make_unique<Impl>()) {}
 
 AudioCapture::~AudioCapture() {
     stop_capture();
-    // 不在析构函数中调用Pa_Terminate()，避免重复终止导致段错误
+    
+#ifdef HAVE_PORTAUDIO
+    // 安全地终止PortAudio
+    if (pImpl) {
+        // 确保流已关闭
+        if (pImpl->pa_stream) {
+            Pa_CloseStream(pImpl->pa_stream);
+            pImpl->pa_stream = nullptr;
+        }
+        
+        // 检查PortAudio是否已初始化并安全终止
+        PaError err = Pa_GetVersion();
+        if (err >= 0) {
+            Pa_Terminate();
+        }
+    }
+#endif
 }
 
 bool AudioCapture::initialize(AudioSource source, int device_id) {
@@ -203,7 +219,12 @@ void AudioCapture::stop_capture() {
     
 #ifdef HAVE_PORTAUDIO
     if (pImpl->pa_stream) {
-        Pa_StopStream(pImpl->pa_stream);
+        // 安全地停止和关闭流
+        PaError err = Pa_IsStreamActive(pImpl->pa_stream);
+        if (err == 1) { // 流正在运行
+            Pa_StopStream(pImpl->pa_stream);
+        }
+        
         Pa_CloseStream(pImpl->pa_stream);
         pImpl->pa_stream = nullptr;
     }

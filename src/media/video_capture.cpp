@@ -3,6 +3,15 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <algorithm>
+
+#ifdef __APPLE__
+#include "macos_screen_capture.h"
+#endif
+#ifdef __APPLE__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
 
 #ifdef HAVE_GSTREAMER
 #include <gst/gst.h>
@@ -175,6 +184,12 @@ public:
         // 回退到原始实现
         std::cout << "回退到简化实现" << std::endl;
 #ifdef __APPLE__
+        // 尝试使用 ScreenCaptureKit
+        if (duorou::media::initialize_macos_screen_capture()) {
+            std::cout << "ScreenCaptureKit 桌面捕获初始化成功" << std::endl;
+            return true;
+        }
+        std::cout << "ScreenCaptureKit 初始化失败，使用模拟数据" << std::endl;
         std::cout << "初始化 macOS 桌面捕获 (简化版本)" << std::endl;
         return true;
 #elif defined(__linux__)
@@ -328,19 +343,29 @@ public:
     
     bool capture_desktop_frame(VideoFrame& frame) {
 #ifdef __APPLE__
-        // macOS 桌面捕获实现 - 使用简化的方法
-        // 注意：在实际应用中应该使用 ScreenCaptureKit 替代已废弃的 CGDisplayCreateImage
-        // 这里暂时返回模拟数据
+        // macOS 桌面捕获实现 - 使用 ScreenCaptureKit
+        // 注意：这个函数在新的实现中不再直接使用，因为ScreenCaptureKit使用回调机制
+        // 保留作为后备方案，使用简化的测试图案
         frame.width = 1920;
         frame.height = 1080;
         frame.channels = 4; // RGBA
         frame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
         
-        // 简化实现：创建空白帧数据
+        // 创建简单的测试图案
         frame.data.resize(1920 * 1080 * 4);
-        std::fill(frame.data.begin(), frame.data.end(), 128); // 灰色填充
+        for (int y = 0; y < 1080; ++y) {
+            for (int x = 0; x < 1920; ++x) {
+                int index = (y * 1920 + x) * 4;
+                // 创建彩色渐变图案
+                frame.data[index] = static_cast<uint8_t>((x * 255) / 1920);     // R
+                frame.data[index + 1] = static_cast<uint8_t>((y * 255) / 1080); // G
+                frame.data[index + 2] = 128;                                    // B
+                frame.data[index + 3] = 255;                                    // A
+            }
+        }
         
+        std::cout << "使用后备桌面数据 (彩色测试图案)" << std::endl;
         return true;
 #elif defined(__linux__)
         // Linux X11 桌面截图实现
@@ -437,6 +462,19 @@ bool VideoCapture::start_capture() {
     }
 #endif
     
+#ifdef __APPLE__
+    // 如果是桌面捕获，总是尝试启动ScreenCaptureKit
+    if (pImpl->source == VideoSource::DESKTOP_CAPTURE) {
+        std::cout << "尝试启动 ScreenCaptureKit..." << std::endl;
+        if (duorou::media::start_macos_screen_capture(pImpl->frame_callback)) {
+            std::cout << "ScreenCaptureKit 已成功启动" << std::endl;
+        } else {
+            std::cout << "启动 ScreenCaptureKit 失败，将使用后备实现" << std::endl;
+            // 继续执行，使用后备的测试图案
+        }
+    }
+#endif
+    
     pImpl->capturing = true;
     pImpl->capture_thread = std::thread(&VideoCapture::Impl::capture_loop, pImpl.get());
     
@@ -448,7 +486,17 @@ void VideoCapture::stop_capture() {
     {
         std::lock_guard<std::mutex> lock(pImpl->mutex);
         pImpl->capturing = false;
+        // 清除回调函数，避免在对象销毁后被调用
+        pImpl->frame_callback = nullptr;
     }
+    
+#ifdef __APPLE__
+    // 停止 ScreenCaptureKit
+    if (pImpl->source == VideoSource::DESKTOP_CAPTURE) {
+        duorou::media::stop_macos_screen_capture();
+        std::cout << "ScreenCaptureKit 已停止" << std::endl;
+    }
+#endif
     
     if (pImpl->capture_thread.joinable()) {
         pImpl->capture_thread.join();
@@ -538,3 +586,7 @@ std::pair<int, int> VideoCapture::get_desktop_resolution() {
 
 } // namespace media
 } // namespace duorou
+
+#ifdef __APPLE__
+#pragma clang diagnostic pop
+#endif

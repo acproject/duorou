@@ -6,6 +6,9 @@
 #include "../api/api_server.h"
 #include "../gui/system_tray.h"
 #include "../gui/main_window.h"
+#ifdef __APPLE__
+#include "../media/macos_screen_capture.h"
+#endif
 
 #include <iostream>
 #include <thread>
@@ -302,6 +305,11 @@ void Application::cleanup() {
         api_server_.reset();
     }
     
+#ifdef __APPLE__
+    // 清理 ScreenCaptureKit 资源
+    duorou::media::cleanup_macos_screen_capture();
+#endif
+    
     // 清理GUI组件
     main_window_.reset();
     system_tray_.reset();
@@ -354,6 +362,11 @@ void Application::onShutdown(GtkApplication* app, gpointer user_data) {
         
         // 释放应用程序保持状态
         g_application_release(G_APPLICATION(app));
+        
+#ifdef __APPLE__
+        // 清理 ScreenCaptureKit 资源
+        duorou::media::cleanup_macos_screen_capture();
+#endif
         
         // 只清理非GTK资源，GTK资源由GTK自动管理
         if (application->api_server_) {
