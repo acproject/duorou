@@ -5,6 +5,7 @@
 #include "workflow_engine.h"
 #include "../api/api_server.h"
 #include "../gui/system_tray.h"
+#include "../gui/main_window.h"
 
 #include <iostream>
 #include <thread>
@@ -119,6 +120,7 @@ int Application::run() {
         
         // 创建并启动API服务器
         std::cout << "Creating API server..." << std::endl;
+        
         api_server_ = std::make_unique<::duorou::ApiServer>(
             std::shared_ptr<core::ModelManager>(model_manager_.get(), [](core::ModelManager*){}),
             std::shared_ptr<core::Logger>(logger_.get(), [](core::Logger*){})
@@ -135,7 +137,7 @@ int Application::run() {
         if (logger_) {
             logger_->info("Application started in service mode");
             logger_->info("Version: " + version_);
-            logger_->info("API server started on port " + std::to_string(api_server_->getPort()));
+            logger_->info("Service mode started (API server disabled for development)");
         }
         
         // 简单的服务循环
@@ -158,9 +160,15 @@ int Application::run() {
     }
     
     // 运行GTK主循环
+    // 将std::vector<std::string>转换为char**
+    std::vector<char*> argv_ptrs;
+    for (auto& arg : args_) {
+        argv_ptrs.push_back(const_cast<char*>(arg.c_str()));
+    }
+    
     int result = g_application_run(G_APPLICATION(gtk_app_), 
-                                   static_cast<int>(args_.size()), 
-                                   const_cast<char**>(reinterpret_cast<const char* const*>(args_.data())));
+                                   static_cast<int>(argv_ptrs.size()), 
+                                   argv_ptrs.data());
     
     return result;
 }
@@ -265,9 +273,11 @@ bool Application::initializeComponents() {
             std::cout << "API server will be started in service mode" << std::endl;
         }
         
-        // 初始化系统托盘（仅在GUI模式下）
-        if (!service_mode_ && !initializeSystemTray()) {
-            logger_->info("Failed to initialize system tray, continuing without it");
+        // 初始化系统托盘（仅在非服务模式下）
+        // 注意：系统托盘在macOS环境下存在兼容性问题，暂时禁用
+        if (!service_mode_) {
+            logger_->info("System tray initialization skipped due to macOS compatibility issues");
+            // TODO: 修复macOS下系统托盘的兼容性问题
         }
         
         logger_->info("All core components initialized successfully");
@@ -290,6 +300,10 @@ void Application::cleanup() {
         api_server_.reset();
     }
     
+    // 清理GUI组件
+    main_window_.reset();
+    system_tray_.reset();
+    
     // 清理核心组件（按相反顺序）
     workflow_engine_.reset();
     model_manager_.reset();
@@ -311,8 +325,22 @@ void Application::onActivate(GtkApplication* app, gpointer user_data) {
         application->logger_->info("Application activated");
     }
     
-    // TODO: 创建主窗口
-    // 这里将在GUI模块开发时实现
+    // 创建并显示主窗口
+    if (application && !application->main_window_) {
+        application->main_window_ = std::make_unique<::duorou::gui::MainWindow>();
+        if (application->main_window_->initialize()) {
+            application->main_window_->show();
+            if (application->logger_) {
+                application->logger_->info("Main window created and shown");
+            }
+            // 保持应用程序活动状态
+            g_application_hold(G_APPLICATION(app));
+        } else {
+            if (application->logger_) {
+                application->logger_->error("Failed to initialize main window");
+            }
+        }
+    }
 }
 
 void Application::onShutdown(GtkApplication* app, gpointer user_data) {
@@ -321,7 +349,22 @@ void Application::onShutdown(GtkApplication* app, gpointer user_data) {
         if (application->logger_) {
             application->logger_->info("Application shutting down");
         }
-        application->cleanup();
+        
+        // 释放应用程序保持状态
+        g_application_release(G_APPLICATION(app));
+        
+        // 只清理非GTK资源，GTK资源由GTK自动管理
+        if (application->api_server_) {
+            application->api_server_->stop();
+            application->api_server_.reset();
+        }
+        application->main_window_.reset();
+        application->system_tray_.reset();
+        application->workflow_engine_.reset();
+        application->model_manager_.reset();
+        application->config_manager_.reset();
+        application->logger_.reset();
+        application->status_ = Status::Stopped;
     }
 }
 
@@ -377,23 +420,42 @@ bool Application::initializeSystemTray() {
 }
 
 void Application::showMainWindow() {
-    // TODO: 实现显示主窗口的逻辑
-    if (logger_) {
-        logger_->info("Show main window requested");
+    if (main_window_) {
+        main_window_->show();
+        if (logger_) {
+            logger_->info("Main window shown");
+        }
+    } else {
+        if (logger_) {
+            logger_->warning("Main window not initialized");
+        }
     }
 }
 
 void Application::hideMainWindow() {
-    // TODO: 实现隐藏主窗口的逻辑
-    if (logger_) {
-        logger_->info("Hide main window requested");
+    if (main_window_) {
+        main_window_->hide();
+        if (logger_) {
+            logger_->info("Main window hidden");
+        }
+    } else {
+        if (logger_) {
+            logger_->warning("Main window not initialized");
+        }
     }
 }
 
 void Application::toggleMainWindow() {
-    // TODO: 实现切换主窗口显示状态的逻辑
-    if (logger_) {
-        logger_->info("Toggle main window requested");
+    if (main_window_) {
+        // 这里需要检查窗口当前状态，暂时先实现简单的显示逻辑
+        main_window_->show();
+        if (logger_) {
+            logger_->info("Main window toggled");
+        }
+    } else {
+        if (logger_) {
+            logger_->warning("Main window not initialized");
+        }
     }
 }
 

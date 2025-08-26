@@ -112,6 +112,22 @@ endif()
 # 线程支持
 find_package(Threads REQUIRED)
 
+# nlohmann_json 支持
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+    # 如果系统没有安装，使用 FetchContent 下载
+    include(FetchContent)
+    FetchContent_Declare(
+        nlohmann_json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+        URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+    message(STATUS "Downloaded nlohmann_json via FetchContent")
+else()
+    message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
+endif()
+
 # 包含目录
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -130,6 +146,7 @@ add_definitions(
     ${GTK4_CFLAGS_OTHER}
     -DDUOROU_VERSION="${PROJECT_VERSION}"
     -DDUOROU_PLATFORM="${DUOROU_PLATFORM}"
+    -DHAVE_GTK
 )
 
 # llama.cpp 子项目配置
@@ -208,6 +225,8 @@ set(DUOROU_SOURCES_LIST
     src/gui/image_view.cpp
     src/gui/settings_dialog.cpp
     src/gui/system_tray.cpp
+    src/gui/chat_session.cpp
+    src/gui/chat_session_manager.cpp
     src/utils/file_utils.cpp
     src/utils/string_utils.cpp
     src/utils/image_utils.cpp
@@ -231,6 +250,8 @@ set(DUOROU_HEADERS_LIST
     src/gui/image_view.h
     src/gui/settings_dialog.h
     src/gui/system_tray.h
+    src/gui/chat_session.h
+    src/gui/chat_session_manager.h
     src/utils/file_utils.h
     src/utils/string_utils.h
     src/utils/image_utils.h
@@ -244,20 +265,36 @@ set(DUOROU_HEADERS_LIST
 set(DUOROU_SOURCES)
 set(DUOROU_HEADERS)
 foreach(source_file ${DUOROU_SOURCES_LIST})
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${source_file}")
+    set(full_path "${CMAKE_CURRENT_SOURCE_DIR}/${source_file}")
+    if(EXISTS "${full_path}")
         list(APPEND DUOROU_SOURCES "${source_file}")
+        message(STATUS "Found source file: ${source_file}")
+    else()
+        message(WARNING "Source file not found: ${source_file} (checked: ${full_path})")
     endif()
 endforeach()
 
 foreach(header_file ${DUOROU_HEADERS_LIST})
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${header_file}")
+    set(full_path "${CMAKE_CURRENT_SOURCE_DIR}/${header_file}")
+    if(EXISTS "${full_path}")
         list(APPEND DUOROU_HEADERS "${header_file}")
+        message(STATUS "Found header file: ${header_file}")
+    else()
+        message(WARNING "Header file not found: ${header_file} (checked: ${full_path})")
     endif()
 endforeach()
 
+# 如果没有找到源文件，直接使用源文件列表
+if(NOT DUOROU_SOURCES)
+    message(WARNING "No source files found through file existence check, using full source list")
+    set(DUOROU_SOURCES ${DUOROU_SOURCES_LIST})
+    set(DUOROU_HEADERS ${DUOROU_HEADERS_LIST})
+endif()
+
 # 只有当存在源文件时才构建可执行文件
 if(DUOROU_SOURCES)
-    message(STATUS "Found ${CMAKE_CURRENT_LIST_LENGTH} source files, building executable...")
+    list(LENGTH DUOROU_SOURCES DUOROU_SOURCES_COUNT)
+    message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
@@ -268,6 +305,7 @@ if(DUOROU_SOURCES)
         stable-diffusion
         ${GTK4_LIBRARIES}
         Threads::Threads
+        nlohmann_json::nlohmann_json
     )
     
     # 平台特定链接

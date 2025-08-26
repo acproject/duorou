@@ -14,6 +14,8 @@ ChatView::ChatView()
     , input_entry_(nullptr)
     , send_button_(nullptr)
     , clear_button_(nullptr)
+    , model_selector_(nullptr)
+    , input_container_(nullptr)
 {
 }
 
@@ -110,6 +112,9 @@ void ChatView::create_chat_area() {
     chat_box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_valign(chat_box_, GTK_ALIGN_START);
     
+    // 创建欢迎界面
+    create_welcome_screen();
+    
     // 创建滚动窗口
     chat_scrolled_ = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(chat_scrolled_), 
@@ -125,32 +130,98 @@ void ChatView::create_chat_area() {
 }
 
 void ChatView::create_input_area() {
-    // 创建输入容器
-    input_box_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_widget_set_margin_start(input_box_, 10);
-    gtk_widget_set_margin_end(input_box_, 10);
-    gtk_widget_set_margin_bottom(input_box_, 10);
+    // 创建主输入容器
+    input_box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_start(input_box_, 20);
+    gtk_widget_set_margin_end(input_box_, 20);
+    gtk_widget_set_margin_bottom(input_box_, 20);
+    gtk_widget_set_margin_top(input_box_, 10);
+    
+    // 创建模型选择器容器
+    GtkWidget* model_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_halign(model_container, GTK_ALIGN_CENTER);
+    
+    // 创建模型选择器
+    model_selector_ = gtk_drop_down_new_from_strings((const char*[]){"gpt-3.5-turbo", "gpt-4", "claude-3", "llama2", NULL});
+    gtk_widget_add_css_class(model_selector_, "model-selector");
+    
+    // 创建模型标签
+    GtkWidget* model_label = gtk_label_new("Model:");
+    gtk_widget_add_css_class(model_label, "model-label");
+    
+    gtk_box_append(GTK_BOX(model_container), model_label);
+    gtk_box_append(GTK_BOX(model_container), model_selector_);
+    
+    // 创建输入框容器
+    input_container_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(input_container_, "input-container");
+    gtk_widget_set_hexpand(input_container_, TRUE);
     
     // 创建消息输入框
     input_entry_ = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(input_entry_), "Type your message here...");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(input_entry_), "Send a message...");
     gtk_widget_set_hexpand(input_entry_, TRUE);
+    gtk_widget_add_css_class(input_entry_, "message-input");
     
     // 创建发送按钮
-    send_button_ = gtk_button_new_with_label("Send");
-    gtk_widget_set_size_request(send_button_, 80, -1);
+    send_button_ = gtk_button_new_with_label("↑");
+    gtk_widget_add_css_class(send_button_, "send-button");
+    gtk_widget_set_size_request(send_button_, 40, 40);
     
     // 创建清空按钮
     clear_button_ = gtk_button_new_with_label("Clear");
-    gtk_widget_set_size_request(clear_button_, 80, -1);
+    gtk_widget_add_css_class(clear_button_, "clear-button");
     
     // 添加到输入容器
-    gtk_box_append(GTK_BOX(input_box_), input_entry_);
-    gtk_box_append(GTK_BOX(input_box_), send_button_);
-    gtk_box_append(GTK_BOX(input_box_), clear_button_);
+    gtk_box_append(GTK_BOX(input_container_), input_entry_);
+    gtk_box_append(GTK_BOX(input_container_), send_button_);
+    
+    // 创建按钮容器
+    GtkWidget* button_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_halign(button_container, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(button_container), clear_button_);
+    
+    // 添加到主输入容器
+    gtk_box_append(GTK_BOX(input_box_), model_container);
+    gtk_box_append(GTK_BOX(input_box_), input_container_);
+    gtk_box_append(GTK_BOX(input_box_), button_container);
     
     // 添加到主容器
     gtk_box_append(GTK_BOX(main_widget_), input_box_);
+}
+
+void ChatView::create_welcome_screen() {
+    // 创建欢迎界面容器
+    GtkWidget* welcome_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_widget_set_halign(welcome_container, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(welcome_container, GTK_ALIGN_CENTER);
+    gtk_widget_set_vexpand(welcome_container, TRUE);
+    gtk_widget_set_hexpand(welcome_container, TRUE);
+    
+    // 创建应用图标 (使用duorou01.png图片)
+    GtkWidget* icon_picture = gtk_picture_new_for_filename("../src/gui/duorou01.png");
+    gtk_picture_set_content_fit(GTK_PICTURE(icon_picture), GTK_CONTENT_FIT_SCALE_DOWN);
+    gtk_widget_set_size_request(icon_picture, 40, 40);  // 40x40 pixels for better fit
+    gtk_widget_add_css_class(icon_picture, "welcome-icon");
+    
+    // 创建欢迎文本
+    GtkWidget* welcome_title = gtk_label_new("Welcome to Duorou");
+    gtk_widget_add_css_class(welcome_title, "welcome-title");
+    
+    GtkWidget* welcome_subtitle = gtk_label_new("Your AI Desktop Assistant");
+    gtk_widget_add_css_class(welcome_subtitle, "welcome-subtitle");
+    
+    GtkWidget* welcome_hint = gtk_label_new("Start a conversation by typing a message below");
+    gtk_widget_add_css_class(welcome_hint, "welcome-hint");
+    
+    // 添加到容器
+    gtk_box_append(GTK_BOX(welcome_container), icon_picture);
+    gtk_box_append(GTK_BOX(welcome_container), welcome_title);
+    gtk_box_append(GTK_BOX(welcome_container), welcome_subtitle);
+    gtk_box_append(GTK_BOX(welcome_container), welcome_hint);
+    
+    // 添加到聊天容器
+    gtk_box_append(GTK_BOX(chat_box_), welcome_container);
 }
 
 void ChatView::connect_signals() {

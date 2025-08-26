@@ -4,6 +4,7 @@
 #include <gtk/gtk.h>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace duorou {
 namespace gui {
@@ -11,6 +12,7 @@ namespace gui {
 class ChatView;
 class ImageView;
 class SettingsDialog;
+class ChatSessionManager;
 
 /**
  * 主窗口类 - 管理整个应用程序的主界面
@@ -73,6 +75,17 @@ public:
      */
     void quit_application();
 
+    /**
+     * 创建新的聊天会话
+     */
+    void create_new_chat();
+
+    /**
+     * 切换到指定聊天会话
+     * @param session_id 会话ID
+     */
+    void switch_to_chat_session(const std::string& session_id);
+
 private:
     // GTK组件
     GtkWidget* window_;              // 主窗口
@@ -83,14 +96,16 @@ private:
     GtkWidget* status_bar_;          // 状态栏
 
     // 侧边栏按钮
-    GtkWidget* chat_button_;         // 聊天按钮
+    GtkWidget* new_chat_button_;     // 新建聊天按钮
     GtkWidget* image_button_;        // 图像生成按钮
     GtkWidget* settings_button_;     // 设置按钮
+    GtkWidget* chat_history_box_;    // 聊天历史容器
 
     // 子视图
     std::unique_ptr<ChatView> chat_view_;
     std::unique_ptr<ImageView> image_view_;
     std::unique_ptr<SettingsDialog> settings_dialog_;
+    std::unique_ptr<ChatSessionManager> session_manager_;
 
     // 当前活动视图
     std::string current_view_;
@@ -127,12 +142,29 @@ private:
 
     /**
      * 更新侧边栏按钮状态
-     * @param active_button 当前激活的按钮
+     * @param active_button 当前活动按钮
      */
     void update_sidebar_buttons(GtkWidget* active_button);
 
+    /**
+     * 更新聊天历史列表
+     */
+    void update_chat_history_list();
+
+    /**
+     * 会话变更回调
+     * @param session_id 新的会话ID
+     */
+    void on_session_changed(const std::string& session_id);
+
+    /**
+     * 会话列表变更回调
+     */
+    void on_session_list_changed();
+
     // 静态回调函数
-    static void on_chat_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_new_chat_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_chat_history_item_clicked(GtkWidget* widget, gpointer user_data);
     static void on_image_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_settings_button_clicked(GtkWidget* widget, gpointer user_data);
     static gboolean on_window_delete_event(GtkWindow* window, gpointer user_data);

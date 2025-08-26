@@ -28,6 +28,7 @@ class WorkflowEngine;
 // GUI相关前向声明
 namespace gui {
     class SystemTray;
+    class MainWindow;
 }
 
 namespace core {
@@ -233,6 +234,7 @@ private:
 
     // GUI组件
     std::unique_ptr<::duorou::gui::SystemTray> system_tray_;
+    std::unique_ptr<::duorou::gui::MainWindow> main_window_;
 
     // 退出回调函数列表
     std::vector<std::function<void()>> exit_callbacks_;

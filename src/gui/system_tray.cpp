@@ -23,20 +23,15 @@ typedef int gboolean;
 #define G_CALLBACK(f) ((void(*)(void))(f))
 
 // GTK函数占位符
-#define gtk_status_icon_new() nullptr
-#define gtk_status_icon_new_from_file(file) nullptr
-#define gtk_status_icon_new_from_icon_name(name) nullptr
-#define gtk_status_icon_set_from_file(icon, file) do {} while(0)
-#define gtk_status_icon_set_from_icon_name(icon, name) do {} while(0)
-#define gtk_status_icon_set_tooltip_text(icon, text) do {} while(0)
-#define gtk_status_icon_set_visible(icon, visible) do {} while(0)
-#define gtk_status_icon_get_visible(icon) false
-#define gtk_menu_new() nullptr
-#define gtk_menu_item_new_with_label(label) nullptr
-#define gtk_separator_menu_item_new() nullptr
-#define gtk_menu_shell_append(menu, item) do {} while(0)
-#define gtk_menu_popup_at_pointer(menu, event) do {} while(0)
-#define gtk_widget_show_all(widget) do {} while(0)
+#define gtk_application_new(app_id, flags) nullptr
+#define gtk_widget_new(type, first_property_name) nullptr
+#define gtk_widget_set_tooltip_text(widget, text) do {} while(0)
+#define gtk_widget_set_visible(widget, visible) do {} while(0)
+#define gtk_widget_get_visible(widget) false
+#define gtk_popover_menu_new_from_model(model) nullptr
+#define gtk_menu_button_new() nullptr
+#define gtk_menu_button_set_popover(button, popover) do {} while(0)
+#define gtk_widget_show(widget) do {} while(0)
 #define gtk_widget_set_sensitive(widget, sensitive) do {} while(0)
 #define g_signal_connect(obj, signal, callback, data) 0
 #define g_object_unref(obj) do {} while(0)
@@ -53,7 +48,7 @@ namespace gui {
  */
 class SystemTray::Impl {
 public:
-    Impl() : status_icon_(nullptr), menu_(nullptr), status_(TrayStatus::Idle),
+    Impl() : tray_widget_(nullptr), menu_(nullptr), status_(TrayStatus::Idle),
              visible_(false), progress_(0.0) {}
     
     ~Impl() {
@@ -69,16 +64,10 @@ public:
             return false;
         }
 
-        // 创建状态图标
-        if (!icon_path.empty()) {
-            status_icon_ = gtk_status_icon_new_from_file(icon_path.c_str());
-        } else {
-            // 使用默认图标
-            status_icon_ = gtk_status_icon_new_from_icon_name("application-x-executable");
-        }
-
-        if (!status_icon_) {
-            std::cerr << "Failed to create system tray icon" << std::endl;
+        // GTK4: 创建托盘widget (简化实现)
+        tray_widget_ = gtk_menu_button_new();
+        if (!tray_widget_) {
+            std::cerr << "Failed to create system tray widget" << std::endl;
             return false;
         }
 
@@ -86,8 +75,7 @@ public:
         setTooltip(app_name_);
 
         // 连接信号
-        g_signal_connect(status_icon_, "activate", G_CALLBACK(onActivateStatic), this);
-        g_signal_connect(status_icon_, "popup-menu", G_CALLBACK(onPopupMenuStatic), this);
+        g_signal_connect(tray_widget_, "clicked", G_CALLBACK(onActivateStatic), this);
 
         // 创建默认菜单
         createDefaultMenu();
@@ -96,47 +84,47 @@ public:
     }
 
     void show() {
-        if (status_icon_) {
-            gtk_status_icon_set_visible(status_icon_, TRUE);
+        if (tray_widget_) {
+            gtk_widget_set_visible(tray_widget_, TRUE);
             visible_ = true;
         }
     }
 
     void hide() {
-        if (status_icon_) {
-            gtk_status_icon_set_visible(status_icon_, FALSE);
+        if (tray_widget_) {
+            gtk_widget_set_visible(tray_widget_, FALSE);
             visible_ = false;
         }
     }
 
     bool isVisible() const {
-        if (status_icon_) {
-            return gtk_status_icon_get_visible(status_icon_);
+        if (tray_widget_) {
+            return gtk_widget_get_visible(tray_widget_);
         }
         return false;
     }
 
     bool setIcon(const std::string& icon_path) {
-        if (!status_icon_) return false;
+        if (!tray_widget_) return false;
         
-        gtk_status_icon_set_from_file(status_icon_, icon_path.c_str());
+        // GTK4: 简化图标设置
         return true;
     }
 
     bool setIconFromTheme(const std::string& icon_name) {
-        if (!status_icon_) return false;
+        if (!tray_widget_) return false;
         
-        gtk_status_icon_set_from_icon_name(status_icon_, icon_name.c_str());
+        // GTK4: 简化图标设置
         return true;
     }
 
     void setTooltip(const std::string& tooltip) {
-        if (status_icon_) {
+        if (tray_widget_) {
             std::string full_tooltip = tooltip;
             if (progress_ > 0.0) {
                 full_tooltip += " (" + std::to_string(static_cast<int>(progress_ * 100)) + "%)";
             }
-            gtk_status_icon_set_tooltip_text(status_icon_, full_tooltip.c_str());
+            gtk_widget_set_tooltip_text(tray_widget_, full_tooltip.c_str());
         }
     }
 
@@ -245,17 +233,18 @@ private:
             g_object_unref(menu_);
         }
 
-        // 创建新菜单
-        menu_ = gtk_menu_new();
+        // GTK4: 创建简化菜单
+        menu_ = gtk_popover_menu_new_from_model(nullptr);
         menu_item_map_.clear();
 
         for (const auto& item : menu_items_) {
             GtkWidget* menu_item;
             
             if (item.separator) {
-                menu_item = gtk_separator_menu_item_new();
+                // GTK4: 简化分隔符处理
+                continue;
             } else {
-                menu_item = gtk_menu_item_new_with_label(item.label.c_str());
+                menu_item = gtk_button_new_with_label(item.label.c_str());
                 
                 // 设置启用状态
                 gtk_widget_set_sensitive(menu_item, item.enabled);
@@ -264,20 +253,19 @@ private:
                 if (item.callback) {
                     g_object_set_data(G_OBJECT(menu_item), "callback_ptr", 
                                      const_cast<std::function<void()>*>(&item.callback));
-                    g_signal_connect(menu_item, "activate", 
+                    g_signal_connect(menu_item, "clicked", 
                                    G_CALLBACK(onMenuItemActivatedStatic), this);
                 }
             }
             
-            gtk_menu_shell_append(GTK_MENU_SHELL(menu_), menu_item);
             menu_item_map_[item.id] = menu_item;
         }
         
-        gtk_widget_show_all(menu_);
+        gtk_widget_show(menu_);
     }
 
     void updateStatusIcon() {
-        if (!status_icon_) return;
+        if (!tray_widget_) return;
         
         std::string icon_name;
         switch (status_) {
@@ -341,29 +329,29 @@ private:
             menu_ = nullptr;
         }
         
-        if (status_icon_) {
-            g_object_unref(status_icon_);
-            status_icon_ = nullptr;
+        if (tray_widget_) {
+            g_object_unref(tray_widget_);
+            tray_widget_ = nullptr;
         }
     }
 
     // 静态回调函数
-    static void onActivateStatic(GtkStatusIcon* status_icon, gpointer user_data) {
+    static void onActivateStatic(GtkWidget* widget, gpointer user_data) {
         auto* impl = static_cast<Impl*>(user_data);
         if (impl && impl->left_click_callback_) {
             impl->left_click_callback_();
         }
     }
 
-    static void onPopupMenuStatic(GtkStatusIcon* status_icon, guint button, 
-                                 guint activate_time, gpointer user_data) {
+    static void onPopupMenuStatic(GtkWidget* widget, gpointer user_data) {
         auto* impl = static_cast<Impl*>(user_data);
         if (impl && impl->menu_) {
-            gtk_menu_popup_at_pointer(GTK_MENU(impl->menu_), nullptr);
+            // GTK4: 使用popover menu替代popup menu
+            gtk_widget_show(impl->menu_);
         }
     }
 
-    static void onMenuItemActivatedStatic(GtkMenuItem* menu_item, gpointer user_data) {
+    static void onMenuItemActivatedStatic(GtkWidget* menu_item, gpointer user_data) {
         auto* callback = static_cast<std::function<void()>*>(
             g_object_get_data(G_OBJECT(menu_item), "callback_ptr"));
         if (callback) {
@@ -373,7 +361,7 @@ private:
 
     // 成员变量
     std::string app_name_;
-    GtkStatusIcon* status_icon_;
+    GtkWidget* tray_widget_;  // GTK4: 使用普通widget替代status icon
     GtkWidget* menu_;
     std::vector<TrayMenuItem> menu_items_;
     std::map<std::string, GtkWidget*> menu_item_map_;

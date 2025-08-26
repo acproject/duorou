@@ -58,6 +58,8 @@ private:
     GtkWidget* input_entry_;         // 输入框
     GtkWidget* send_button_;         // 发送按钮
     GtkWidget* clear_button_;        // 清空按钮
+    GtkWidget* model_selector_;      // 模型选择器
+    GtkWidget* input_container_;     // 输入框容器
 
     /**
      * 创建聊天显示区域
@@ -65,12 +67,17 @@ private:
     void create_chat_area();
 
     /**
+     * 创建欢迎界面
+     */
+    void create_welcome_screen();
+
+    /**
      * 创建输入区域
      */
     void create_input_area();
 
     /**
-     * 连接信号处理器
+     * 连接信号
      */
     void connect_signals();
 

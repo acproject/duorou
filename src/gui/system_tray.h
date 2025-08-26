@@ -9,12 +9,10 @@
 #include <gtk/gtk.h>
 #else
 // GTK类型的占位符定义
-typedef void* GtkStatusIcon;
 typedef void* GtkWidget;
 typedef void* GtkMenu;
-typedef void* GtkMenuItem;
+typedef void* GtkPopoverMenu;
 typedef void* GdkPixbuf;
-typedef void* GdkEventButton;
 typedef void* gpointer;
 typedef unsigned int guint;
 typedef int gboolean;
@@ -212,12 +210,10 @@ private:
     std::unique_ptr<Impl> pimpl_;
 
     // GTK回调函数
-    static void onActivate(GtkStatusIcon* status_icon, gpointer user_data);
-    static void onPopupMenu(GtkStatusIcon* status_icon, guint button, 
-                           guint activate_time, gpointer user_data);
-    static void onMenuItemActivated(GtkMenuItem* menu_item, gpointer user_data);
-    static gboolean onButtonPress(GtkWidget* widget, GdkEventButton* event, 
-                                 gpointer user_data);
+    static void onActivate(GtkWidget* widget, gpointer user_data);
+    static void onPopupMenu(GtkWidget* widget, gpointer user_data);
+    static void onMenuItemActivated(GtkWidget* menu_item, gpointer user_data);
+    static gboolean onButtonPress(GtkWidget* widget, gpointer user_data);
 };
 
 /**
