@@ -9,8 +9,12 @@ namespace gui {
 ChatView::ChatView()
     : main_widget_(nullptr), chat_scrolled_(nullptr), chat_box_(nullptr),
       input_box_(nullptr), input_entry_(nullptr), send_button_(nullptr),
-      clear_button_(nullptr), model_selector_(nullptr),
-      input_container_(nullptr), welcome_cleared_(false) {}
+      upload_image_button_(nullptr),
+    upload_file_button_(nullptr),
+    video_record_button_(nullptr),
+    selected_image_path_(""),
+    selected_file_path_(""),
+      model_selector_(nullptr), input_container_(nullptr), welcome_cleared_(false) {}
 
 ChatView::~ChatView() {
   // GTK4会自动清理子组件
@@ -218,28 +222,39 @@ void ChatView::create_input_area() {
   gtk_widget_set_can_focus(input_entry_, TRUE);
   gtk_widget_set_focusable(input_entry_, TRUE);
 
+  // 创建上传图片按钮
+  upload_image_button_ = gtk_button_new_with_label("🖼️");
+  gtk_widget_add_css_class(upload_image_button_, "upload-button");
+  gtk_widget_set_size_request(upload_image_button_, 40, 40);
+  gtk_widget_set_tooltip_text(upload_image_button_, "Upload Image");
+
+  // 创建上传文件按钮
+  upload_file_button_ = gtk_button_new_with_label("📎");
+  gtk_widget_add_css_class(upload_file_button_, "upload-button");
+  gtk_widget_set_size_request(upload_file_button_, 40, 40);
+  gtk_widget_set_tooltip_text(upload_file_button_, "Upload File (MD, DOC, Excel, PPT, PDF)");
+
+  // 创建录制视频按钮
+  video_record_button_ = gtk_button_new_with_label("🎥");
+  gtk_widget_add_css_class(video_record_button_, "upload-button");
+  gtk_widget_set_size_request(video_record_button_, 40, 40);
+  gtk_widget_set_tooltip_text(video_record_button_, "录制视频/桌面捕获");
+
   // 创建发送按钮
   send_button_ = gtk_button_new_with_label("↑");
   gtk_widget_add_css_class(send_button_, "send-button");
   gtk_widget_set_size_request(send_button_, 40, 40);
 
-  // 创建清空按钮
-  clear_button_ = gtk_button_new_with_label("Clear");
-  gtk_widget_add_css_class(clear_button_, "clear-button");
-
   // 添加到输入容器
+  gtk_box_append(GTK_BOX(input_container_), upload_image_button_);
+  gtk_box_append(GTK_BOX(input_container_), upload_file_button_);
+  gtk_box_append(GTK_BOX(input_container_), video_record_button_);
   gtk_box_append(GTK_BOX(input_container_), input_entry_);
   gtk_box_append(GTK_BOX(input_container_), send_button_);
-
-  // 创建按钮容器
-  GtkWidget *button_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-  gtk_widget_set_halign(button_container, GTK_ALIGN_CENTER);
-  gtk_box_append(GTK_BOX(button_container), clear_button_);
 
   // 添加到主输入容器
   gtk_box_append(GTK_BOX(input_box_), model_container);
   gtk_box_append(GTK_BOX(input_box_), input_container_);
-  gtk_box_append(GTK_BOX(input_box_), button_container);
 
   // 添加到主容器
   gtk_box_append(GTK_BOX(main_widget_), input_box_);
@@ -295,9 +310,17 @@ void ChatView::connect_signals() {
   g_signal_connect(send_button_, "clicked", G_CALLBACK(on_send_button_clicked),
                    this);
 
-  // 连接清空按钮信号
-  g_signal_connect(clear_button_, "clicked",
-                   G_CALLBACK(on_clear_button_clicked), this);
+  // 连接上传图片按钮信号
+  g_signal_connect(upload_image_button_, "clicked", G_CALLBACK(on_upload_image_button_clicked),
+                   this);
+
+  // 连接上传文件按钮信号
+  g_signal_connect(upload_file_button_, "clicked", G_CALLBACK(on_upload_file_button_clicked),
+                   this);
+
+  // 连接录制视频按钮信号
+  g_signal_connect(video_record_button_, "clicked", G_CALLBACK(on_video_record_button_clicked),
+                   this);
 
   // 连接回车键发送消息
   g_signal_connect(input_entry_, "activate",
@@ -324,12 +347,15 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
 
   // 使用gtk_editable_get_text直接获取文本，避免buffer操作导致的Pango错误
   const char *text_ptr = gtk_editable_get_text(GTK_EDITABLE(chat_view->input_entry_));
+  std::string message_text = text_ptr ? std::string(text_ptr) : "";
   
-  if (text_ptr && strlen(text_ptr) > 0) {
-    // 立即创建字符串拷贝
-    std::string message_copy(text_ptr);
-    
-    // 使用gtk_editable_set_text清空输入框，这比buffer操作更安全
+  // 检查是否有文本消息或选择的文件
+  bool has_text = !message_text.empty();
+  bool has_image = !chat_view->selected_image_path_.empty();
+  bool has_file = !chat_view->selected_file_path_.empty();
+  
+  if (has_text || has_image || has_file) {
+    // 使用gtk_editable_set_text清空输入框
     gtk_editable_set_text(GTK_EDITABLE(chat_view->input_entry_), "");
     
     // 只在第一次发送消息时清除欢迎界面
@@ -338,17 +364,34 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       chat_view->welcome_cleared_ = true;
     }
     
+    // 构建完整消息
+    std::string full_message = message_text;
+    
+    // 添加图片信息
+    if (has_image) {
+      if (!full_message.empty()) full_message += "\n";
+      full_message += "📷 图片: " + std::string(g_path_get_basename(chat_view->selected_image_path_.c_str()));
+    }
+    
+    // 添加文档信息
+    if (has_file) {
+      if (!full_message.empty()) full_message += "\n";
+      full_message += "📎 文档: " + std::string(g_path_get_basename(chat_view->selected_file_path_.c_str()));
+    }
+    
     // 发送消息
-    chat_view->send_message(message_copy);
+    chat_view->send_message(full_message);
+    
+    // 清空选择的文件路径并重置按钮提示
+    if (has_image) {
+      chat_view->selected_image_path_.clear();
+      gtk_widget_set_tooltip_text(chat_view->upload_image_button_, "上传图片");
+    }
+    if (has_file) {
+      chat_view->selected_file_path_.clear();
+      gtk_widget_set_tooltip_text(chat_view->upload_file_button_, "上传文档");
+    }
   }
-}
-
-void ChatView::on_clear_button_clicked(GtkWidget *widget, gpointer user_data) {
-  ChatView *chat_view = static_cast<ChatView *>(user_data);
-  chat_view->clear_chat();
-  // 重置欢迎界面标志并重新创建欢迎界面
-  chat_view->welcome_cleared_ = false;
-  chat_view->create_welcome_screen();
 }
 
 void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
@@ -360,12 +403,15 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
 
   // 使用gtk_editable_get_text直接获取文本，避免buffer操作导致的Pango错误
   const char *text_ptr = gtk_editable_get_text(GTK_EDITABLE(widget));
+  std::string message_text = text_ptr ? std::string(text_ptr) : "";
   
-  if (text_ptr && strlen(text_ptr) > 0) {
-    // 立即创建字符串拷贝
-    std::string message_copy(text_ptr);
-    
-    // 使用gtk_editable_set_text清空输入框，这比buffer操作更安全
+  // 检查是否有文本消息或选择的文件
+  bool has_text = !message_text.empty();
+  bool has_image = !chat_view->selected_image_path_.empty();
+  bool has_file = !chat_view->selected_file_path_.empty();
+  
+  if (has_text || has_image || has_file) {
+    // 使用gtk_editable_set_text清空输入框
     gtk_editable_set_text(GTK_EDITABLE(widget), "");
     
     // 只在第一次发送消息时清除欢迎界面
@@ -374,10 +420,276 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       chat_view->welcome_cleared_ = true;
     }
     
+    // 构建完整消息
+    std::string full_message = message_text;
+    
+    // 添加图片信息
+    if (has_image) {
+      if (!full_message.empty()) full_message += "\n";
+      full_message += "📷 图片: " + std::string(g_path_get_basename(chat_view->selected_image_path_.c_str()));
+    }
+    
+    // 添加文档信息
+    if (has_file) {
+      if (!full_message.empty()) full_message += "\n";
+      full_message += "📎 文档: " + std::string(g_path_get_basename(chat_view->selected_file_path_.c_str()));
+    }
+    
     // 发送消息
-    chat_view->send_message(message_copy);
+    chat_view->send_message(full_message);
+    
+    // 清空选择的文件路径并重置按钮提示
+    if (has_image) {
+      chat_view->selected_image_path_.clear();
+      gtk_widget_set_tooltip_text(chat_view->upload_image_button_, "上传图片");
+    }
+    if (has_file) {
+      chat_view->selected_file_path_.clear();
+      gtk_widget_set_tooltip_text(chat_view->upload_file_button_, "上传文档");
+    }
   }
 }
 
-} // namespace gui
-} // namespace duorou
+void ChatView::on_upload_image_button_clicked(GtkWidget *widget, gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(user_data);
+  
+  // 创建文件选择对话框
+  GtkWidget *dialog = gtk_file_chooser_dialog_new(
+    "Select Image",
+    GTK_WINDOW(gtk_widget_get_root(widget)),
+    GTK_FILE_CHOOSER_ACTION_OPEN,
+    "_Cancel", GTK_RESPONSE_CANCEL,
+    "_Open", GTK_RESPONSE_ACCEPT,
+    NULL);
+  
+  // 设置图片文件过滤器
+  GtkFileFilter *filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter, "Image files");
+  gtk_file_filter_add_mime_type(filter, "image/png");
+  gtk_file_filter_add_mime_type(filter, "image/jpeg");
+  gtk_file_filter_add_mime_type(filter, "image/gif");
+  gtk_file_filter_add_mime_type(filter, "image/bmp");
+  gtk_file_filter_add_mime_type(filter, "image/webp");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+  
+  // 显示对话框
+  gtk_widget_show(dialog);
+  
+  // 存储chat_view指针到dialog的数据中
+  g_object_set_data(G_OBJECT(dialog), "chat_view", chat_view);
+  
+  // 连接响应信号
+  g_signal_connect(dialog, "response", G_CALLBACK(on_image_dialog_response), NULL);
+}
+
+void ChatView::on_upload_file_button_clicked(GtkWidget *widget, gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(user_data);
+  
+  // 创建文件选择对话框
+  GtkWidget *dialog = gtk_file_chooser_dialog_new(
+    "Select Document",
+    GTK_WINDOW(gtk_widget_get_root(widget)),
+    GTK_FILE_CHOOSER_ACTION_OPEN,
+    "_Cancel", GTK_RESPONSE_CANCEL,
+    "_Open", GTK_RESPONSE_ACCEPT,
+    NULL);
+  
+  // 设置文档文件过滤器
+  GtkFileFilter *filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter, "Document files");
+  gtk_file_filter_add_pattern(filter, "*.md");
+  gtk_file_filter_add_pattern(filter, "*.doc");
+  gtk_file_filter_add_pattern(filter, "*.docx");
+  gtk_file_filter_add_pattern(filter, "*.xls");
+  gtk_file_filter_add_pattern(filter, "*.xlsx");
+  gtk_file_filter_add_pattern(filter, "*.ppt");
+  gtk_file_filter_add_pattern(filter, "*.pptx");
+  gtk_file_filter_add_pattern(filter, "*.pdf");
+  gtk_file_filter_add_pattern(filter, "*.txt");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+  
+  // 显示对话框
+  gtk_widget_show(dialog);
+  
+  // 存储chat_view指针到dialog的数据中
+  g_object_set_data(G_OBJECT(dialog), "chat_view", chat_view);
+  
+  // 连接响应信号
+  g_signal_connect(dialog, "response", G_CALLBACK(on_file_dialog_response), NULL);
+}
+
+void ChatView::on_image_dialog_response(GtkDialog *dialog, gint response_id, gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(g_object_get_data(G_OBJECT(dialog), "chat_view"));
+  
+  if (response_id == GTK_RESPONSE_ACCEPT) {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+    GFile *file = gtk_file_chooser_get_file(chooser);
+    
+    if (file) {
+      char *filename = g_file_get_path(file);
+      if (filename) {
+        // 存储选择的图片路径，不直接发送
+        chat_view->selected_image_path_ = std::string(filename);
+        
+        // 更新上传按钮的提示文本或样式来表示已选择文件
+        gtk_widget_set_tooltip_text(chat_view->upload_image_button_, 
+                                   ("已选择图片: " + std::string(g_path_get_basename(filename))).c_str());
+        
+        g_free(filename);
+      }
+      g_object_unref(file);
+    }
+  }
+  
+  gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+void ChatView::on_file_dialog_response(GtkDialog *dialog, gint response_id, gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(g_object_get_data(G_OBJECT(dialog), "chat_view"));
+  
+  if (response_id == GTK_RESPONSE_ACCEPT) {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+    GFile *file = gtk_file_chooser_get_file(chooser);
+    
+    if (file) {
+      char *filename = g_file_get_path(file);
+      if (filename) {
+        // 存储选择的文档路径，不直接发送
+        chat_view->selected_file_path_ = std::string(filename);
+        
+        // 更新上传按钮的提示文本或样式来表示已选择文件
+        gtk_widget_set_tooltip_text(chat_view->upload_file_button_, 
+                                   ("已选择文档: " + std::string(g_path_get_basename(filename))).c_str());
+        
+        g_free(filename);
+      }
+      g_object_unref(file);
+    }
+  }
+  
+  gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+void ChatView::on_video_record_button_clicked(GtkWidget *widget, gpointer user_data) {
+   ChatView *chat_view = static_cast<ChatView *>(user_data);
+   
+   // 创建选择对话框
+   GtkWidget *dialog = gtk_dialog_new_with_buttons(
+     "选择视频源",
+     GTK_WINDOW(gtk_widget_get_root(widget)),
+     GTK_DIALOG_MODAL,
+     "取消", GTK_RESPONSE_CANCEL,
+     "确定", GTK_RESPONSE_OK,
+     NULL);
+   
+   // 创建内容区域
+   GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+   GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+   gtk_widget_set_margin_start(vbox, 20);
+   gtk_widget_set_margin_end(vbox, 20);
+   gtk_widget_set_margin_top(vbox, 20);
+   gtk_widget_set_margin_bottom(vbox, 20);
+   
+   // 创建单选按钮组
+   GtkWidget *desktop_radio = gtk_check_button_new_with_label("🖥️ 桌面捕获 (默认)");
+   GtkWidget *camera_radio = gtk_check_button_new_with_label("📹 摄像头");
+   
+   // 设置单选按钮组
+   gtk_check_button_set_group(GTK_CHECK_BUTTON(camera_radio), GTK_CHECK_BUTTON(desktop_radio));
+   gtk_check_button_set_active(GTK_CHECK_BUTTON(desktop_radio), TRUE);
+   
+   // 添加到容器
+   gtk_box_append(GTK_BOX(vbox), desktop_radio);
+   gtk_box_append(GTK_BOX(vbox), camera_radio);
+   gtk_box_append(GTK_BOX(content_area), vbox);
+   
+   // 显示对话框
+   gtk_widget_show(dialog);
+   
+   // 连接响应信号
+   g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog *dialog, gint response_id, gpointer user_data) {
+     ChatView *chat_view = static_cast<ChatView *>(user_data);
+     
+     if (response_id == GTK_RESPONSE_OK) {
+       // 获取内容区域
+       GtkWidget *content_area = gtk_dialog_get_content_area(dialog);
+       GtkWidget *vbox = gtk_widget_get_first_child(content_area);
+       GtkWidget *desktop_radio = gtk_widget_get_first_child(vbox);
+       GtkWidget *camera_radio = gtk_widget_get_next_sibling(desktop_radio);
+       
+       bool use_desktop = gtk_check_button_get_active(GTK_CHECK_BUTTON(desktop_radio));
+       
+       if (use_desktop) {
+         chat_view->start_desktop_capture();
+       } else {
+         chat_view->start_camera_capture();
+       }
+     }
+     
+     gtk_window_destroy(GTK_WINDOW(dialog));
+   }), chat_view);
+  }
+  
+  void ChatView::start_desktop_capture() {
+    std::cout << "Starting desktop capture..." << std::endl;
+    
+    // 显示信息对话框
+    GtkWidget *dialog = gtk_message_dialog_new(
+      GTK_WINDOW(gtk_widget_get_root(main_widget_)),
+      GTK_DIALOG_MODAL,
+      GTK_MESSAGE_INFO,
+      GTK_BUTTONS_OK,
+      "桌面捕获功能已启动\n\n这是一个演示功能，实际的桌面捕获需要集成屏幕录制库。");
+    
+    gtk_widget_show(dialog);
+    g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
+    
+    // TODO: 集成实际的桌面捕获功能
+    // 可以使用 FFmpeg, GStreamer 或系统API
+  }
+  
+  void ChatView::start_camera_capture() {
+    std::cout << "Starting camera capture..." << std::endl;
+    
+    // 检查摄像头可用性（简化版本）
+    bool camera_available = false;
+    
+    // TODO: 实际检查摄像头设备
+    // 在macOS上可以使用AVFoundation框架
+    // 在Linux上可以检查/dev/video*设备
+    
+    if (!camera_available) {
+      // 显示警告对话框并回退到桌面捕获
+      GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(gtk_widget_get_root(main_widget_)),
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_OK,
+        "未检测到可用的摄像头设备\n\n将自动切换到桌面捕获模式。");
+      
+      gtk_widget_show(dialog);
+      g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog *dialog, gint response_id, gpointer user_data) {
+        ChatView *chat_view = static_cast<ChatView *>(user_data);
+        gtk_window_destroy(GTK_WINDOW(dialog));
+        // 回退到桌面捕获
+        chat_view->start_desktop_capture();
+      }), this);
+    } else {
+      // 显示摄像头启动信息
+      GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(gtk_widget_get_root(main_widget_)),
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_INFO,
+        GTK_BUTTONS_OK,
+        "摄像头捕获功能已启动\n\n这是一个演示功能，实际的摄像头捕获需要集成相机库。");
+      
+      gtk_widget_show(dialog);
+      g_signal_connect(dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
+      
+      // TODO: 集成实际的摄像头捕获功能
+      // 可以使用 OpenCV, GStreamer 或系统API
+    }
+  }
+  
+  } // namespace gui
+  } // namespace duorou

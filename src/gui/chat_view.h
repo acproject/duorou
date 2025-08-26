@@ -57,7 +57,13 @@ private:
     GtkWidget* input_box_;           // 输入区域容器
     GtkWidget* input_entry_;         // 输入框
     GtkWidget* send_button_;         // 发送按钮
-    GtkWidget* clear_button_;        // 清空按钮
+    GtkWidget* upload_image_button_; // 上传图片按钮
+    GtkWidget* upload_file_button_;  // 上传文件按钮
+    GtkWidget* video_record_button_; // 录制视频按钮
+    
+    // 存储选择的文件路径
+    std::string selected_image_path_;
+    std::string selected_file_path_;
     GtkWidget* model_selector_;      // 模型选择器
     GtkWidget* input_container_;     // 输入框容器
     
@@ -90,8 +96,16 @@ private:
 
     // 静态回调函数
     static void on_send_button_clicked(GtkWidget* widget, gpointer user_data);
-    static void on_clear_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_upload_image_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_upload_file_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_video_record_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_input_entry_activate(GtkWidget* widget, gpointer user_data);
+    static void on_image_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
+    static void on_file_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
+    
+    // 视频捕获方法
+    void start_desktop_capture();
+    void start_camera_capture();
 };
 
 } // namespace gui

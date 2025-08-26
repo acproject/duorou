@@ -97,6 +97,9 @@ bool MacOSTray::initialize() {
         // Set default properties
         statusItem_.button.toolTip = @"Duorou";
         
+        // Set flower emoji as default icon
+        setIcon("🌸");
+        
         initialized_ = true;
         std::cout << "macOS system tray initialized successfully" << std::endl;
         return true;
@@ -221,6 +224,8 @@ void MacOSTray::show() {
             [statusItem_ retain];
             statusItem_.menu = menu_;
             statusItem_.button.toolTip = @"Duorou";
+            // Set flower emoji as icon
+            setIcon("🌸");
         }
     }
 }
