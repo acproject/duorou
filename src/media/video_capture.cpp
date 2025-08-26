@@ -320,6 +320,16 @@ public:
                 VideoFrame frame;
                 
                 if (source == VideoSource::DESKTOP_CAPTURE) {
+#ifdef __APPLE__
+                    // 在 macOS 上，如果 ScreenCaptureKit 正在运行，不要使用后备实现
+                    // 真实的屏幕数据会通过 ScreenCaptureKit 的回调机制提供
+                    if (duorou::media::is_macos_screen_capture_running()) {
+                        // ScreenCaptureKit 正在运行，等待回调数据
+                        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+                        continue;
+                    }
+#endif
+                    // 只有在 ScreenCaptureKit 未运行时才使用后备实现
                     if (capture_desktop_frame(frame)) {
                         if (frame_callback) {
                             frame_callback(frame);
@@ -483,11 +493,15 @@ bool VideoCapture::start_capture() {
 }
 
 void VideoCapture::stop_capture() {
+    bool was_capturing = false;
     {
         std::lock_guard<std::mutex> lock(pImpl->mutex);
+        was_capturing = pImpl->capturing;
         pImpl->capturing = false;
-        // 清除回调函数，避免在对象销毁后被调用
-        pImpl->frame_callback = nullptr;
+    }
+    
+    if (!was_capturing) {
+        return; // 已经停止，避免重复操作
     }
     
 #ifdef __APPLE__
@@ -515,6 +529,12 @@ void VideoCapture::stop_capture() {
         pImpl->opencv_capture.release();
     }
 #endif
+    
+    // 在所有资源清理完成后再清除回调函数
+    {
+        std::lock_guard<std::mutex> lock(pImpl->mutex);
+        pImpl->frame_callback = nullptr;
+    }
     
     std::cout << "停止视频捕获" << std::endl;
 }

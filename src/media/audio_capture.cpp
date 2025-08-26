@@ -4,9 +4,48 @@
 #include <chrono>
 #include <mutex>
 #include <cstring>
+#include <atomic>
 
 namespace duorou {
 namespace media {
+
+// 全局PortAudio管理
+static std::mutex g_pa_mutex;
+static std::atomic<int> g_pa_ref_count{0};
+static bool g_pa_initialized = false;
+
+static bool ensure_portaudio_initialized() {
+#ifdef HAVE_PORTAUDIO
+    std::lock_guard<std::mutex> lock(g_pa_mutex);
+    if (!g_pa_initialized) {
+        PaError err = Pa_Initialize();
+        if (err != paNoError) {
+            std::cout << "PortAudio 初始化失败: " << Pa_GetErrorText(err) << std::endl;
+            return false;
+        }
+        g_pa_initialized = true;
+        std::cout << "PortAudio 初始化成功" << std::endl;
+    }
+    g_pa_ref_count++;
+    return true;
+#else
+    return false;
+#endif
+}
+
+static void release_portaudio() {
+#ifdef HAVE_PORTAUDIO
+    std::lock_guard<std::mutex> lock(g_pa_mutex);
+    if (g_pa_ref_count > 0) {
+        g_pa_ref_count--;
+        if (g_pa_ref_count == 0 && g_pa_initialized) {
+            Pa_Terminate();
+            g_pa_initialized = false;
+            std::cout << "PortAudio 已终止" << std::endl;
+        }
+    }
+#endif
+}
 
 class AudioCapture::Impl {
 public:
@@ -54,21 +93,7 @@ public:
     }
 #endif
     
-    bool initialize_portaudio() {
-#ifdef HAVE_PORTAUDIO
-        PaError err = Pa_Initialize();
-        if (err != paNoError) {
-            std::cout << "PortAudio 初始化失败: " << Pa_GetErrorText(err) << std::endl;
-            return false;
-        }
-        
-        std::cout << "PortAudio 初始化成功" << std::endl;
-        return true;
-#else
-        std::cout << "PortAudio 未启用" << std::endl;
-        return false;
-#endif
-    }
+    // initialize_portaudio方法已移除，现在使用全局PortAudio管理
     
     bool setup_input_stream() {
 #ifdef HAVE_PORTAUDIO
@@ -133,26 +158,21 @@ public:
     }
 };
 
-AudioCapture::AudioCapture() : pImpl(std::make_unique<Impl>()) {}
+AudioCapture::AudioCapture() : pImpl(std::make_unique<Impl>()) {
+    // 在构造时确保PortAudio已初始化
+    ensure_portaudio_initialized();
+}
 
 AudioCapture::~AudioCapture() {
     stop_capture();
     
 #ifdef HAVE_PORTAUDIO
-    // 安全地终止PortAudio
-    if (pImpl) {
-        // 确保流已关闭
-        if (pImpl->pa_stream) {
-            Pa_CloseStream(pImpl->pa_stream);
-            pImpl->pa_stream = nullptr;
-        }
-        
-        // 检查PortAudio是否已初始化并安全终止
-        PaError err = Pa_GetVersion();
-        if (err >= 0) {
-            Pa_Terminate();
-        }
+    // 关闭流并释放PortAudio引用
+    if (pImpl && pImpl->pa_stream) {
+        Pa_CloseStream(pImpl->pa_stream);
+        pImpl->pa_stream = nullptr;
     }
+    release_portaudio();
 #endif
 }
 
@@ -166,10 +186,6 @@ bool AudioCapture::initialize(AudioSource source, int device_id) {
     
     pImpl->source = source;
     pImpl->device_id = device_id;
-    
-    if (!pImpl->initialize_portaudio()) {
-        return false;
-    }
     
     switch (source) {
         case AudioSource::MICROPHONE:
@@ -247,8 +263,7 @@ std::vector<std::string> AudioCapture::get_input_devices() {
     std::vector<std::string> devices;
     
 #ifdef HAVE_PORTAUDIO
-    PaError err = Pa_Initialize();
-    if (err != paNoError) {
+    if (!ensure_portaudio_initialized()) {
         return devices;
     }
     
@@ -261,7 +276,7 @@ std::vector<std::string> AudioCapture::get_input_devices() {
         }
     }
     
-    Pa_Terminate();
+    release_portaudio();
 #endif
     
     return devices;
@@ -269,15 +284,14 @@ std::vector<std::string> AudioCapture::get_input_devices() {
 
 bool AudioCapture::is_microphone_available() {
 #ifdef HAVE_PORTAUDIO
-    PaError err = Pa_Initialize();
-    if (err != paNoError) {
+    if (!ensure_portaudio_initialized()) {
         return false;
     }
     
     PaDeviceIndex default_input = Pa_GetDefaultInputDevice();
     bool available = (default_input != paNoDevice);
     
-    Pa_Terminate();
+    release_portaudio();
     return available;
 #else
     return false;

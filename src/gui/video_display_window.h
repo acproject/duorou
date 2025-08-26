@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include <memory>
+#include <functional>
 #include "../media/video_capture.h"
 
 namespace duorou {
@@ -25,6 +26,9 @@ public:
     // 检查窗口是否可见
     bool is_visible() const;
     
+    // 设置窗口关闭回调
+    void set_close_callback(std::function<void()> callback);
+    
 private:
     GtkWidget* window_;
     GtkWidget* video_area_;
@@ -34,6 +38,10 @@ private:
     std::unique_ptr<guchar[]> frame_data_;
     int frame_width_;
     int frame_height_;
+    int frame_channels_;
+    
+    // 窗口关闭回调
+    std::function<void()> close_callback_;
     
     // 初始化UI
     void init_ui();

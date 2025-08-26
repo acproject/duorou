@@ -436,8 +436,12 @@ void MainWindow::on_settings_button_clicked(GtkWidget* widget, gpointer user_dat
 
 gboolean MainWindow::on_window_delete_event(GtkWindow* window, gpointer user_data) {
     MainWindow* main_window = static_cast<MainWindow*>(user_data);
-    main_window->quit_application();
-    return FALSE;
+    // 只保存会话数据，不手动销毁窗口
+    // GTK4会自动处理窗口销毁
+    if (main_window->session_manager_) {
+        main_window->session_manager_->save_sessions_to_file("chat_sessions.txt");
+    }
+    return FALSE; // 允许窗口正常关闭
 }
 
 void MainWindow::on_window_destroy(GtkWidget* widget, gpointer user_data) {

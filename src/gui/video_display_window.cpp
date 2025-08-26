@@ -7,7 +7,7 @@ namespace gui {
 
 VideoDisplayWindow::VideoDisplayWindow() 
     : window_(nullptr), video_area_(nullptr), info_label_(nullptr),
-      frame_data_(nullptr), frame_width_(0), frame_height_(0) {
+      frame_data_(nullptr), frame_width_(0), frame_height_(0), frame_channels_(4) {
     init_ui();
 }
 
@@ -77,6 +77,10 @@ void VideoDisplayWindow::hide() {
     }
 }
 
+void VideoDisplayWindow::set_close_callback(std::function<void()> callback) {
+    close_callback_ = callback;
+}
+
 bool VideoDisplayWindow::is_visible() const {
     return window_ && gtk_widget_get_visible(window_);
 }
@@ -85,16 +89,30 @@ void VideoDisplayWindow::update_frame(const media::VideoFrame& frame) {
     // 更新帧数据
     frame_width_ = frame.width;
     frame_height_ = frame.height;
+    frame_channels_ = frame.channels;
     
     // 分配内存存储帧数据
     size_t data_size = frame.width * frame.height * frame.channels;
     frame_data_ = std::make_unique<guchar[]>(data_size);
     std::memcpy(frame_data_.get(), frame.data.data(), data_size);
     
-    // 更新信息标签
+    // 更新信息标签 - 格式化时间戳为可读格式
     char info_text[256];
-    snprintf(info_text, sizeof(info_text), "分辨率: %dx%d, 通道: %d, 时间戳: %.3f", 
-             frame.width, frame.height, frame.channels, frame.timestamp);
+    
+    // 将时间戳转换为可读的时间格式
+    auto timestamp_ms = static_cast<int64_t>(frame.timestamp * 1000);
+    auto timestamp_sec = timestamp_ms / 1000;
+    auto ms_part = timestamp_ms % 1000;
+    auto hours = timestamp_sec / 3600;
+    auto minutes = (timestamp_sec % 3600) / 60;
+    auto seconds = timestamp_sec % 60;
+    
+    char timestamp_str[64];
+    snprintf(timestamp_str, sizeof(timestamp_str), "%02lld:%02lld:%02lld.%03lld", 
+             hours, minutes, seconds, ms_part);
+    
+    snprintf(info_text, sizeof(info_text), "分辨率: %dx%d, 通道: %d, 时间戳: %s", 
+             frame.width, frame.height, frame.channels, timestamp_str);
     gtk_label_set_text(GTK_LABEL(info_label_), info_text);
     
     // 触发重绘
@@ -143,17 +161,28 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int wid
                 std::unique_ptr<guchar[]> rgba_data = std::make_unique<guchar[]>(stride * window->frame_height_);
                 
                 // 将视频帧数据转换为Cairo可用的格式
+                // 使用存储的通道数信息，避免动态检测导致的不稳定
+                int channels = window->frame_channels_;
+                
                 for (int y = 0; y < window->frame_height_; y++) {
                     for (int x = 0; x < window->frame_width_; x++) {
-                        int src_idx = (y * window->frame_width_ + x) * 3; // 假设是RGB格式
+                        int src_idx = (y * window->frame_width_ + x) * channels;
                         int dst_idx = y * stride + x * 4;
                         
-                        if (src_idx + 2 < (int)(window->frame_width_ * window->frame_height_ * 3)) {
-                            // Cairo使用BGRA格式（小端序）
-                            rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
-                            rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
-                            rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R
-                            rgba_data[dst_idx + 3] = 255; // A
+                        if (src_idx + (channels - 1) < (int)(window->frame_width_ * window->frame_height_ * channels)) {
+                            if (channels == 4) {
+                                // RGBA格式
+                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
+                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
+                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R
+                                rgba_data[dst_idx + 3] = window->frame_data_[src_idx + 3]; // A
+                            } else {
+                                // RGB格式
+                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
+                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
+                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R
+                                rgba_data[dst_idx + 3] = 255; // A
+                            }
                         }
                     }
                 }
@@ -205,6 +234,12 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int wid
 
 gboolean VideoDisplayWindow::on_window_close(GtkWidget* widget, gpointer user_data) {
     VideoDisplayWindow* window = static_cast<VideoDisplayWindow*>(user_data);
+    
+    // 如果设置了关闭回调，调用它来停止录制
+    if (window->close_callback_) {
+        window->close_callback_();
+    }
+    
     window->hide();
     return TRUE; // 阻止窗口销毁，只是隐藏
 }

@@ -11,6 +11,7 @@ namespace duorou {
 namespace media {
 
 // macOS ScreenCaptureKit 接口函数
+bool check_screen_recording_permission();
 bool initialize_macos_screen_capture();
 bool start_macos_screen_capture(std::function<void(const VideoFrame&)> callback);
 void stop_macos_screen_capture();

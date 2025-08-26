@@ -124,6 +124,7 @@ private:
     static void on_file_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
     
     // 视频捕获方法
+  
     void start_desktop_capture();
     void start_camera_capture();
     void stop_recording();
