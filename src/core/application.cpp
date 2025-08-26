@@ -4,6 +4,7 @@
 #include "model_manager.h"
 #include "workflow_engine.h"
 #include "../api/api_server.h"
+#include "../gui/system_tray.h"
 
 #include <iostream>
 #include <thread>
@@ -53,7 +54,7 @@ Application::Application(int argc, char* argv[])
     
     // 检查是否有服务模式参数
     for (const auto& arg : args_) {
-        if (arg == "--service" || arg == "-s") {
+        if (arg == "--service" || arg == "-s" || arg == "--mode=server") {
             service_mode_ = true;
             break;
         }
@@ -264,6 +265,11 @@ bool Application::initializeComponents() {
             std::cout << "API server will be started in service mode" << std::endl;
         }
         
+        // 初始化系统托盘（仅在GUI模式下）
+        if (!service_mode_ && !initializeSystemTray()) {
+            logger_->info("Failed to initialize system tray, continuing without it");
+        }
+        
         logger_->info("All core components initialized successfully");
         return true;
         
@@ -316,6 +322,78 @@ void Application::onShutdown(GtkApplication* app, gpointer user_data) {
             application->logger_->info("Application shutting down");
         }
         application->cleanup();
+    }
+}
+
+bool Application::initializeSystemTray() {
+    try {
+        system_tray_ = std::make_unique<::duorou::gui::SystemTray>();
+        
+        // 初始化系统托盘
+        if (!system_tray_->initialize("Duorou AI Assistant")) {
+            logger_->error("Failed to initialize system tray");
+            return false;
+        }
+        
+        // 设置系统托盘属性
+        system_tray_->setTooltip("Duorou AI Assistant");
+        system_tray_->setStatus(::duorou::gui::TrayStatus::Idle);
+        
+        // 设置回调函数
+        system_tray_->setLeftClickCallback([this]() {
+            showMainWindow();
+        });
+        
+        // 添加菜单项
+        std::vector<::duorou::gui::TrayMenuItem> menu_items;
+        
+        ::duorou::gui::TrayMenuItem show_item;
+        show_item.id = "show";
+        show_item.label = "显示主窗口";
+        show_item.callback = [this]() { showMainWindow(); };
+        menu_items.push_back(show_item);
+        
+        ::duorou::gui::TrayMenuItem separator;
+        separator.separator = true;
+        menu_items.push_back(separator);
+        
+        ::duorou::gui::TrayMenuItem exit_item;
+        exit_item.id = "exit";
+        exit_item.label = "退出";
+        exit_item.callback = [this]() { stop(); };
+        menu_items.push_back(exit_item);
+        
+        system_tray_->setMenu(menu_items);
+        
+        // 显示系统托盘
+        system_tray_->show();
+        
+        logger_->info("System tray initialized successfully");
+        return true;
+    } catch (const std::exception& e) {
+        logger_->error("Exception during system tray initialization: " + std::string(e.what()));
+        return false;
+    }
+}
+
+void Application::showMainWindow() {
+    // TODO: 实现显示主窗口的逻辑
+    if (logger_) {
+        logger_->info("Show main window requested");
+    }
+}
+
+void Application::hideMainWindow() {
+    // TODO: 实现隐藏主窗口的逻辑
+    if (logger_) {
+        logger_->info("Hide main window requested");
+    }
+}
+
+void Application::toggleMainWindow() {
+    // TODO: 实现切换主窗口显示状态的逻辑
+    if (logger_) {
+        logger_->info("Toggle main window requested");
     }
 }
 

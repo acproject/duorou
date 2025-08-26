@@ -187,6 +187,10 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/models)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/utils)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/core)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/models)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/pipeline)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/invokeai/utils)
 
 # 源文件列表（当前为空，待后续开发时添加）
 # 取消注释以下源文件并创建对应的.cpp文件来构建可执行文件
@@ -208,6 +212,9 @@ set(DUOROU_SOURCES_LIST
     src/utils/string_utils.cpp
     src/utils/image_utils.cpp
     src/api/api_server.cpp
+    src/invokeai/core/invokeai_engine.cpp
+    src/invokeai/models/model_manager.cpp
+    src/invokeai/pipeline/image_pipeline.cpp
 )
 
 # 头文件列表（当前为空，待后续开发时添加）
@@ -228,6 +235,9 @@ set(DUOROU_HEADERS_LIST
     src/utils/string_utils.h
     src/utils/image_utils.h
     src/api/api_server.h
+    src/invokeai/core/invokeai_engine.h
+    src/invokeai/models/model_manager.h
+    src/invokeai/pipeline/image_pipeline.h
 )
 
 # 检查实际存在的源文件

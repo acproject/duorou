@@ -23,6 +23,15 @@ class Logger;
 class ModelManager;
 class WorkflowEngine;
 
+} // namespace core
+
+// GUI相关前向声明
+namespace gui {
+    class SystemTray;
+}
+
+namespace core {
+
 /**
  * @brief 应用程序主类
  * 
@@ -100,6 +109,27 @@ public:
     const std::string& getVersion() const { return version_; }
 
     /**
+     * @brief 显示主窗口
+     */
+    void showMainWindow();
+
+    /**
+     * @brief 隐藏主窗口
+     */
+    void hideMainWindow();
+
+    /**
+     * @brief 切换主窗口显示状态
+     */
+    void toggleMainWindow();
+
+    /**
+     * @brief 获取系统托盘实例
+     * @return 系统托盘指针
+     */
+    ::duorou::gui::SystemTray* getSystemTray() const { return system_tray_.get(); }
+
+    /**
      * @brief 获取配置管理器
      * @return 配置管理器指针
      */
@@ -143,10 +173,16 @@ private:
     bool initializeGtk();
 
     /**
-     * @brief 初始化核心组件
+     * @brief 初始化组件
      * @return 初始化是否成功
      */
     bool initializeComponents();
+
+    /**
+     * @brief 初始化系统托盘
+     * @return 初始化是否成功
+     */
+    bool initializeSystemTray();
 
     /**
      * @brief 清理资源
@@ -194,7 +230,10 @@ private:
     
     // API服务器
     std::unique_ptr<::duorou::ApiServer> api_server_;
-    
+
+    // GUI组件
+    std::unique_ptr<::duorou::gui::SystemTray> system_tray_;
+
     // 退出回调函数列表
     std::vector<std::function<void()>> exit_callbacks_;
     
