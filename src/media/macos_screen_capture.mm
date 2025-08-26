@@ -27,9 +27,28 @@ static id<SCStreamDelegate> g_delegate = nil;
         return;
     }
     
+    // 检查CMSampleBuffer的有效性
+    if (!sampleBuffer) {
+        std::cout << "ScreenCaptureKit: CMSampleBuffer为空" << std::endl;
+        return;
+    }
+    
+    // 检查CMSampleBuffer是否有效
+    if (!CMSampleBufferIsValid(sampleBuffer)) {
+        std::cout << "ScreenCaptureKit: CMSampleBuffer无效" << std::endl;
+        return;
+    }
+    
     CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!imageBuffer) {
-        std::cout << "ScreenCaptureKit: 无法获取图像缓冲区" << std::endl;
+        std::cout << "ScreenCaptureKit: 无法获取图像缓冲区，CMSampleBuffer可能不包含视频数据" << std::endl;
+        return;
+    }
+    
+    // 检查像素格式
+    OSType pixelFormat = CVPixelBufferGetPixelFormatType(imageBuffer);
+    if (pixelFormat != kCVPixelFormatType_32BGRA) {
+        std::cout << "ScreenCaptureKit: 意外的像素格式: " << pixelFormat << ", 期望: " << kCVPixelFormatType_32BGRA << std::endl;
         return;
     }
     
@@ -53,17 +72,11 @@ static id<SCStreamDelegate> g_delegate = nil;
     
     CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
     
-    std::cout << "ScreenCaptureKit: 收到真实屏幕帧 " << width << "x" << height << std::endl;
-    
-    // 视频帧处理在后台线程完成，但UI更新需要切换到主线程
-    // 复制frame数据避免线程安全问题
-    auto frameCopy = std::make_shared<duorou::media::VideoFrame>(std::move(frame));
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_frame_callback && g_is_capturing) {
-            g_frame_callback(*frameCopy);
-        }
-    });
+    // 直接在当前线程调用回调，减少线程切换开销
+    // ScreenCaptureKit已经在专门的队列中处理帧数据
+    if (g_frame_callback && g_is_capturing) {
+        g_frame_callback(frame);
+    }
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
@@ -192,8 +205,9 @@ bool start_macos_screen_capture(std::function<void(const VideoFrame&)> callback)
                         SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
                         config.width = 1920;
                         config.height = 1080;
-                        config.minimumFrameInterval = CMTimeMake(1, 30); // 30 FPS
+                        config.minimumFrameInterval = CMTimeMake(1, 15); // 15 FPS，与UI更新频率同步
                         config.pixelFormat = kCVPixelFormatType_32BGRA;
+                        config.queueDepth = 3; // 减少缓冲队列深度，降低延迟
                         std::cout << "创建流配置成功" << std::endl;
                         
                         std::cout << "创建 ScreenCaptureKit 流..." << std::endl;

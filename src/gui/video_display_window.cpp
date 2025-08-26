@@ -171,13 +171,14 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int wid
                         
                         if (src_idx + (channels - 1) < (int)(window->frame_width_ * window->frame_height_ * channels)) {
                             if (channels == 4) {
-                                // RGBA格式
-                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
-                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
-                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R
-                                rgba_data[dst_idx + 3] = window->frame_data_[src_idx + 3]; // A
+                                // ScreenCaptureKit使用BGRA格式，需要正确转换为Cairo的RGB24格式
+                                // Cairo RGB24格式期望: B, G, R, A (小端序)
+                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 0]; // B (BGRA中的B)
+                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G (BGRA中的G)
+                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 2]; // R (BGRA中的R)
+                                rgba_data[dst_idx + 3] = window->frame_data_[src_idx + 3]; // A (BGRA中的A)
                             } else {
-                                // RGB格式
+                                // RGB格式转换为Cairo RGB24
                                 rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
                                 rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
                                 rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R

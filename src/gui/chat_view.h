@@ -5,7 +5,10 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <chrono>
 #include "video_display_window.h"
+#include "../media/video_frame.h"
+#include "../media/audio_capture.h"
 
 // 前向声明
 namespace duorou {
@@ -69,7 +72,7 @@ private:
     GtkWidget* send_button_;         // 发送按钮
     GtkWidget* upload_image_button_; // 上传图片按钮
     GtkWidget* upload_file_button_;  // 上传文件按钮
-    GtkWidget* video_record_button_; // 录制视频按钮
+    GtkWidget* video_record_button_; // 录制视频按钮 (GtkToggleButton)
     
     // 存储选择的文件路径
     std::string selected_image_path_;
@@ -88,6 +91,19 @@ private:
     // 录制按钮图标
     GtkWidget* video_off_image_;     // 录制关闭图标
     GtkWidget* video_on_image_;      // 录制开启图标
+    
+    // 防止递归调用的标志
+    bool updating_button_state_;     // 标记是否正在更新按钮状态
+    
+    // 视频帧缓存相关
+    std::shared_ptr<duorou::media::VideoFrame> cached_video_frame_;  // 缓存的视频帧
+    std::chrono::steady_clock::time_point last_video_update_; // 上次视频更新时间
+    static constexpr int VIDEO_UPDATE_INTERVAL_MS = 66;      // 视频更新间隔(约15fps，减少闪烁)
+    
+    // 音频帧缓存相关
+    std::vector<duorou::media::AudioFrame> cached_audio_frames_;     // 缓存的音频帧
+    std::chrono::steady_clock::time_point last_audio_update_; // 上次音频更新时间
+    static constexpr int AUDIO_UPDATE_INTERVAL_MS = 100;     // 音频更新间隔
 
     /**
      * 创建聊天显示区域
@@ -119,6 +135,7 @@ private:
     static void on_upload_image_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_upload_file_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_video_record_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_video_record_button_toggled(GtkToggleButton* toggle_button, gpointer user_data);
     static void on_input_entry_activate(GtkWidget* widget, gpointer user_data);
     static void on_image_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
     static void on_file_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);

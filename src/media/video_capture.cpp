@@ -321,20 +321,28 @@ public:
                 
                 if (source == VideoSource::DESKTOP_CAPTURE) {
 #ifdef __APPLE__
-                    // 在 macOS 上，如果 ScreenCaptureKit 正在运行，不要使用后备实现
-                    // 真实的屏幕数据会通过 ScreenCaptureKit 的回调机制提供
+                    // 在 macOS 上，如果 ScreenCaptureKit 正在运行，完全依赖回调机制
+                    // 不生成任何后备数据，避免与真实屏幕数据混合造成闪烁
                     if (duorou::media::is_macos_screen_capture_running()) {
-                        // ScreenCaptureKit 正在运行，等待回调数据
+                        // ScreenCaptureKit 正在运行，只等待回调数据，不生成测试图案
                         std::this_thread::sleep_for(std::chrono::milliseconds(33));
                         continue;
                     }
-#endif
-                    // 只有在 ScreenCaptureKit 未运行时才使用后备实现
+                    // 只有在 ScreenCaptureKit 完全未运行时才使用后备实现
+                    // 这种情况下生成测试图案是安全的，因为不会与真实数据混合
                     if (capture_desktop_frame(frame)) {
                         if (frame_callback) {
                             frame_callback(frame);
                         }
                     }
+#else
+                    // 非 macOS 平台使用标准桌面捕获
+                    if (capture_desktop_frame(frame)) {
+                        if (frame_callback) {
+                            frame_callback(frame);
+                        }
+                    }
+#endif
                 } else if (source == VideoSource::CAMERA) {
                     if (capture_camera_frame(frame)) {
                         if (frame_callback) {
