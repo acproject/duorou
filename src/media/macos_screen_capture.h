@@ -4,8 +4,8 @@
 #ifdef __APPLE__
 #ifdef __cplusplus
 
-#include <functional>
 #include "video_frame.h"
+#include <functional>
 
 namespace duorou {
 namespace media {
@@ -13,7 +13,8 @@ namespace media {
 // macOS ScreenCaptureKit 接口函数
 bool check_screen_recording_permission();
 bool initialize_macos_screen_capture();
-bool start_macos_screen_capture(std::function<void(const VideoFrame&)> callback);
+bool start_macos_screen_capture(
+    std::function<void(const VideoFrame &)> callback);
 void stop_macos_screen_capture();
 bool is_macos_screen_capture_running();
 void cleanup_macos_screen_capture();
