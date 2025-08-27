@@ -2,6 +2,9 @@
 #include "../core/logger.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
+#ifdef __APPLE__
+#include "../media/macos_screen_capture.h"
+#endif
 
 #include <chrono>
 #include <iostream>
@@ -717,9 +720,16 @@ void ChatView::on_video_record_button_toggled(GtkToggleButton *toggle_button,
     }
   } else {
     // Toggle按钮非激活 = 关闭状态 = 显示video-off图标
-    if (chat_view->video_off_image_) {
+    if (chat_view->video_off_image_ && GTK_IS_WIDGET(chat_view->video_off_image_)) {
+      gtk_widget_set_visible(chat_view->video_off_image_, TRUE);
       gtk_button_set_child(GTK_BUTTON(toggle_button),
                            chat_view->video_off_image_);
+      // 移除录制状态的CSS类
+      gtk_widget_remove_css_class(GTK_WIDGET(toggle_button), "recording");
+      // 确保基础样式类存在
+      if (!gtk_widget_has_css_class(GTK_WIDGET(toggle_button), "upload-button")) {
+        gtk_widget_add_css_class(GTK_WIDGET(toggle_button), "upload-button");
+      }
       gtk_widget_set_tooltip_text(GTK_WIDGET(toggle_button),
                                   "开始录制视频/桌面捕获");
     }
@@ -750,13 +760,28 @@ void ChatView::start_desktop_capture() {
 
   // 确保之前的资源已经清理
   if (video_capture_) {
+    std::cout << "正在停止之前的视频捕获..." << std::endl;
     video_capture_->stop_capture();
+    // 等待一段时间确保资源完全释放
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     video_capture_.reset();
+    std::cout << "之前的视频捕获已停止" << std::endl;
   }
   if (audio_capture_) {
+    std::cout << "正在停止之前的音频捕获..." << std::endl;
     audio_capture_->stop_capture();
     audio_capture_.reset();
+    std::cout << "之前的音频捕获已停止" << std::endl;
   }
+  
+  // 在macOS上，确保ScreenCaptureKit资源完全清理
+#ifdef __APPLE__
+  std::cout << "正在清理macOS屏幕捕获资源..." << std::endl;
+  media::cleanup_macos_screen_capture();
+  // 额外等待时间确保macOS资源完全释放
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::cout << "macOS屏幕捕获资源清理完成" << std::endl;
+#endif
 
   // 初始化视频捕获
   video_capture_ = std::make_unique<media::VideoCapture>();
@@ -1000,13 +1025,28 @@ void ChatView::start_camera_capture() {
 
   // 确保之前的资源已经清理
   if (video_capture_) {
+    std::cout << "正在停止之前的视频捕获..." << std::endl;
     video_capture_->stop_capture();
+    // 等待一段时间确保资源完全释放
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     video_capture_.reset();
+    std::cout << "之前的视频捕获已停止" << std::endl;
   }
   if (audio_capture_) {
+    std::cout << "正在停止之前的音频捕获..." << std::endl;
     audio_capture_->stop_capture();
     audio_capture_.reset();
+    std::cout << "之前的音频捕获已停止" << std::endl;
   }
+  
+  // 在macOS上，确保ScreenCaptureKit资源完全清理
+#ifdef __APPLE__
+  std::cout << "正在清理macOS屏幕捕获资源..." << std::endl;
+  media::cleanup_macos_screen_capture();
+  // 额外等待时间确保macOS资源完全释放
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::cout << "macOS屏幕捕获资源清理完成" << std::endl;
+#endif
 
   // 初始化视频捕获
   video_capture_ = std::make_unique<media::VideoCapture>();
@@ -1230,10 +1270,12 @@ void ChatView::stop_recording() {
   // 停止视频捕获
   if (video_capture_) {
     try {
+      std::cout << "正在停止视频捕获..." << std::endl;
       video_capture_->stop_capture();
       // 等待一小段时间，确保所有待处理的回调完成
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
       video_capture_.reset(); // 重置视频捕获对象
+      std::cout << "视频捕获已停止" << std::endl;
     } catch (const std::exception &e) {
       std::cout << "Error stopping video capture: " << e.what() << std::endl;
     }
@@ -1242,12 +1284,27 @@ void ChatView::stop_recording() {
   // 停止音频捕获
   if (audio_capture_) {
     try {
+      std::cout << "正在停止音频捕获..." << std::endl;
       audio_capture_->stop_capture();
       audio_capture_.reset(); // 重置音频捕获对象
+      std::cout << "音频捕获已停止" << std::endl;
     } catch (const std::exception &e) {
       std::cout << "Error stopping audio capture: " << e.what() << std::endl;
     }
   }
+  
+  // 在macOS上，确保ScreenCaptureKit资源完全清理
+#ifdef __APPLE__
+  try {
+    std::cout << "正在清理macOS屏幕捕获资源..." << std::endl;
+    media::cleanup_macos_screen_capture();
+    // 额外等待时间确保macOS资源完全释放
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::cout << "macOS屏幕捕获资源清理完成" << std::endl;
+  } catch (const std::exception &e) {
+    std::cout << "Error cleaning up macOS screen capture: " << e.what() << std::endl;
+  }
+#endif
 
   // 更新按钮状态和图标
   if (video_record_button_) {
@@ -1258,9 +1315,38 @@ void ChatView::stop_recording() {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
                                  FALSE);
 
-    // 直接更新图标为关闭状态
-    if (video_off_image_) {
+    // 确保图标对象有效并重新设置
+    if (video_off_image_ && GTK_IS_WIDGET(video_off_image_)) {
+      // 确保图标可见
+      gtk_widget_set_visible(video_off_image_, TRUE);
       gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+      
+      // 重新应用CSS类确保样式正确
+      gtk_widget_remove_css_class(video_record_button_, "recording");
+      if (!gtk_widget_has_css_class(video_record_button_, "upload-button")) {
+        gtk_widget_add_css_class(video_record_button_, "upload-button");
+      }
+      
+      gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
+                                  "开始录制视频/桌面捕获");
+    } else {
+      // 如果图标对象无效，重新创建
+      std::cout << "警告: video_off_image_无效，重新创建图标" << std::endl;
+      std::string icon_path_base = "src/gui/";
+      video_off_image_ = gtk_picture_new_for_filename((icon_path_base + "video-off.png").c_str());
+      if (!video_off_image_) {
+        video_off_image_ = gtk_label_new("⏹");
+      }
+      gtk_widget_set_size_request(video_off_image_, 24, 24);
+      gtk_widget_set_visible(video_off_image_, TRUE);
+      gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+      
+      // 重新应用CSS类
+      gtk_widget_remove_css_class(video_record_button_, "recording");
+      if (!gtk_widget_has_css_class(video_record_button_, "upload-button")) {
+        gtk_widget_add_css_class(video_record_button_, "upload-button");
+      }
+      
       gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
                                   "开始录制视频/桌面捕获");
     }
@@ -1356,8 +1442,11 @@ void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
       if (video_record_button_) {
         updating_button_state_ = true;
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), TRUE);
-        if (video_on_image_) {
+        if (video_on_image_ && GTK_IS_WIDGET(video_on_image_)) {
+          gtk_widget_set_visible(video_on_image_, TRUE);
           gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+          // 添加录制状态的CSS类
+          gtk_widget_add_css_class(video_record_button_, "recording");
           gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_), "停止录制");
         }
         updating_button_state_ = false;
@@ -1370,8 +1459,11 @@ void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
       if (video_record_button_) {
         updating_button_state_ = true;
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), TRUE);
-        if (video_on_image_) {
+        if (video_on_image_ && GTK_IS_WIDGET(video_on_image_)) {
+          gtk_widget_set_visible(video_on_image_, TRUE);
           gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+          // 添加录制状态的CSS类
+          gtk_widget_add_css_class(video_record_button_, "recording");
           gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_), "停止录制");
         }
         updating_button_state_ = false;
