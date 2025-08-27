@@ -143,3 +143,4 @@ pid.file
 *.pid
 *.sock
 .cache
+other

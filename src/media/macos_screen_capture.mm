@@ -27,23 +27,30 @@ static bool g_needs_restart = false;
 - (void)stream:(SCStream *)stream
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                    ofType:(SCStreamOutputType)type {
-  if (type != SCStreamOutputTypeScreen) {
-    return;
-  }
+  @try {
+    if (type != SCStreamOutputTypeScreen) {
+      return;
+    }
 
-  // 检查是否仍在捕获状态
-  if (!g_is_capturing || !g_frame_callback) {
-    return;
-  }
+    // 检查是否仍在捕获状态和回调函数有效性
+    if (!g_is_capturing || !g_frame_callback) {
+      return;
+    }
 
-  // 检查CMSampleBuffer的有效性
-  if (!sampleBuffer) {
-    std::cout << "ScreenCaptureKit: CMSampleBuffer为空" << std::endl;
-    return;
-  }
+    // 检查stream是否仍然有效
+    if (!stream || stream != g_stream) {
+      std::cout << "ScreenCaptureKit: 收到来自无效stream的回调" << std::endl;
+      return;
+    }
 
-  // 检查CMSampleBuffer是否有效
-  if (!CMSampleBufferIsValid(sampleBuffer)) {
+    // 检查CMSampleBuffer的有效性
+    if (!sampleBuffer) {
+      std::cout << "ScreenCaptureKit: CMSampleBuffer为空" << std::endl;
+      return;
+    }
+
+    // 检查CMSampleBuffer是否有效
+    if (!CMSampleBufferIsValid(sampleBuffer)) {
     std::cout << "ScreenCaptureKit: CMSampleBuffer无效" << std::endl;
     return;
   }
@@ -157,6 +164,9 @@ static bool g_needs_restart = false;
   // ScreenCaptureKit已经在专门的队列中处理帧数据
   if (g_frame_callback && g_is_capturing) {
     g_frame_callback(frame);
+  }
+  } @catch (NSException *exception) {
+    std::cout << "ScreenCaptureKit 回调异常: " << [[exception description] UTF8String] << std::endl;
   }
 }
 
@@ -449,39 +459,111 @@ bool is_macos_screen_capture_running() { return g_is_capturing; }
 
 void cleanup_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
+    std::cout << "开始清理macOS屏幕捕获资源..." << std::endl;
+    
+    // 使用静态互斥锁防止并发清理
+    static std::mutex cleanup_mutex;
+    static bool cleanup_completed = false;
+    
+    std::lock_guard<std::mutex> lock(cleanup_mutex);
+    
+    // 检查是否已经清理过
+    if (cleanup_completed) {
+      std::cout << "macOS屏幕捕获资源已经清理，跳过" << std::endl;
+      return;
+    }
+    
     // 先清除回调函数，防止在清理过程中被调用
     g_frame_callback = nullptr;
 
     // 确保停止捕获
     if (g_stream && g_is_capturing) {
-      g_is_capturing = false;
-
-      // 在主线程上执行清理操作
-      dispatch_sync(dispatch_get_main_queue(), ^{
-        // 使用同步方式等待停止完成
-        __block bool stop_completed = false;
-        [g_stream stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
-          if (error) {
-            std::cout << "停止 ScreenCaptureKit 时出错: " <<
-                [[error localizedDescription] UTF8String] << std::endl;
-          }
+      std::cout << "正在停止屏幕捕获流..." << std::endl;
+      
+      // 使用信号量等待停止完成
+      dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+      __block bool stop_completed = false;
+      
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_stream) { // 再次检查，防止竞态条件
+          [g_stream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
+            if (error) {
+              std::cout << "停止捕获时出错: " << [[error localizedDescription] UTF8String] << std::endl;
+            } else {
+              std::cout << "屏幕捕获流已停止" << std::endl;
+            }
+            g_is_capturing = false;
+            stop_completed = true;
+            dispatch_semaphore_signal(semaphore);
+          }];
+        } else {
+          // 如果g_stream已经为nil，直接完成
+          g_is_capturing = false;
           stop_completed = true;
-        }];
-
-        // 等待停止完成（最多等待1秒）
-        int wait_count = 0;
-        while (!stop_completed && wait_count < 100) {
-          [[NSRunLoop currentRunLoop]
-              runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-          wait_count++;
+          dispatch_semaphore_signal(semaphore);
         }
-
-        // 清理资源
-        g_stream = nil;
       });
+      
+      // 等待最多2秒，给更多时间完成清理
+      dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC);
+      if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
+        std::cout << "警告: 停止捕获超时，强制设置状态" << std::endl;
+        g_is_capturing = false;
+      }
+      
+      dispatch_release(semaphore);
+      
+      // 额外等待一小段时间，确保所有回调完成
+      if (stop_completed) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+    } else {
+      // 即使没有在捕获，也要确保状态正确
+      g_is_capturing = false;
     }
 
-    g_delegate = nil;
+    // 安全地清理资源，避免使用dispatch_sync可能导致的死锁
+    if ([NSThread isMainThread]) {
+      // 如果已经在主线程，直接清理
+      if (g_stream) {
+        g_stream = nil;
+        std::cout << "屏幕捕获流已清理" << std::endl;
+      }
+      
+      if (g_delegate) {
+        g_delegate = nil;
+        std::cout << "屏幕捕获代理已清理" << std::endl;
+      }
+    } else {
+      // 如果不在主线程，使用异步方式清理
+      dispatch_semaphore_t cleanup_semaphore = dispatch_semaphore_create(0);
+      
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_stream) {
+          g_stream = nil;
+          std::cout << "屏幕捕获流已清理" << std::endl;
+        }
+        
+        if (g_delegate) {
+          g_delegate = nil;
+          std::cout << "屏幕捕获代理已清理" << std::endl;
+        }
+        
+        dispatch_semaphore_signal(cleanup_semaphore);
+      });
+      
+      // 等待清理完成，最多等待1秒
+      dispatch_time_t cleanup_timeout = dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC);
+      if (dispatch_semaphore_wait(cleanup_semaphore, cleanup_timeout) != 0) {
+        std::cout << "警告: 资源清理超时" << std::endl;
+      }
+      
+      dispatch_release(cleanup_semaphore);
+    }
+    
+    // 标记清理完成
+    cleanup_completed = true;
+    std::cout << "macOS屏幕捕获资源清理完成" << std::endl;
   }
 }
 

@@ -44,14 +44,37 @@ public:
   std::mutex mutex;
 
   ~Impl() {
+    std::cout << "VideoCapture::Impl 析构开始" << std::endl;
+    
+    // 1. 首先设置停止标志
+    capturing = false;
+    
+    // 2. 等待捕获线程完全结束
+    if (capture_thread.joinable()) {
+      std::cout << "等待捕获线程结束..." << std::endl;
+      capture_thread.join();
+      std::cout << "捕获线程已结束" << std::endl;
+    }
+    
+    // 3. 清理平台特定资源
+#ifdef __APPLE__
+    duorou::media::cleanup_macos_screen_capture();
+#endif
+    
+    // 4. 清理GStreamer资源
 #ifdef HAVE_GSTREAMER
     cleanup_gstreamer();
 #endif
+    
+    // 5. 清理OpenCV资源
 #ifdef HAVE_OPENCV
     if (opencv_capture.isOpened()) {
       opencv_capture.release();
+      std::cout << "OpenCV 捕获已释放" << std::endl;
     }
 #endif
+    
+    std::cout << "VideoCapture::Impl 析构完成" << std::endl;
   }
 
 #ifdef HAVE_GSTREAMER
@@ -83,18 +106,44 @@ public:
   void cleanup_gstreamer() {
 #ifdef HAVE_GSTREAMER
     if (pipeline) {
-      gst_element_set_state(pipeline, GST_STATE_NULL);
+      // 安全地停止管道
+      GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_NULL);
+      
+      // 等待状态变化完成，避免竞态条件
+      if (ret != GST_STATE_CHANGE_FAILURE) {
+        GstState state;
+        GstState pending;
+        // 等待最多2秒让管道完全停止
+         ret = gst_element_get_state(pipeline, &state, &pending, 2 * GST_SECOND);
+         if (ret == GST_STATE_CHANGE_ASYNC) {
+           std::cout << "警告: GStreamer 管道停止仍在进行中" << std::endl;
+         }
+      }
+      
+      // 清理appsink引用（它是pipeline的一部分，会被自动释放）
+      appsink = nullptr;
+      
+      // 释放管道
       gst_object_unref(pipeline);
       pipeline = nullptr;
-      appsink = nullptr;
+      std::cout << "GStreamer 管道已安全清理" << std::endl;
     }
+    
     if (loop) {
-      g_main_loop_quit(loop);
+      // 安全地退出主循环
+      if (g_main_loop_is_running(loop)) {
+        g_main_loop_quit(loop);
+      }
+      
+      // 等待GStreamer线程结束
       if (gst_thread.joinable()) {
         gst_thread.join();
       }
+      
+      // 释放主循环
       g_main_loop_unref(loop);
       loop = nullptr;
+      std::cout << "GStreamer 主循环已安全清理" << std::endl;
     }
 #endif
   }
@@ -291,48 +340,84 @@ public:
     if (pipeline && appsink) {
       // GStreamer 捕获循环
       while (capturing) {
-        GstSample *sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
-        if (sample) {
-          GstBuffer *buffer = gst_sample_get_buffer(sample);
-          GstCaps *caps = gst_sample_get_caps(sample);
-
-          if (buffer && caps) {
-            GstMapInfo map;
-            if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-              // 获取视频信息
-              GstStructure *structure = gst_caps_get_structure(caps, 0);
-              int width, height;
-              gst_structure_get_int(structure, "width", &width);
-              gst_structure_get_int(structure, "height", &height);
-
-              // 创建视频帧
-              VideoFrame frame;
-              frame.width = width;
-              frame.height = height;
-              frame.channels = 3; // RGB
-              frame.data.resize(map.size);
-              std::memcpy(frame.data.data(), map.data, map.size);
-              frame.timestamp =
-                  std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::system_clock::now().time_since_epoch())
-                      .count() /
-                  1000.0;
-
-              std::cout << "收到视频帧: " << width << "x" << height
-                        << ", 大小: " << map.size << " 字节" << std::endl;
-
-              if (frame_callback) {
-                frame_callback(frame);
-              }
-
-              gst_buffer_unmap(buffer, &map);
-            }
+        try {
+          // 检查基本状态
+          if (!capturing) {
+            break;
           }
+          
+          // 添加更严格的空指针检查
+          if (!pipeline || !appsink || gst_element_get_state(pipeline, nullptr, nullptr, 0) == GST_STATE_CHANGE_FAILURE) {
+            std::cout << "GStreamer: 管道状态异常，退出捕获循环" << std::endl;
+            break;
+          }
+          
+          GstSample *sample = nullptr;
+          sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
+          
+          if (sample) {
+            GstBuffer *buffer = gst_sample_get_buffer(sample);
+            GstCaps *caps = gst_sample_get_caps(sample);
 
-          gst_sample_unref(sample);
-        } else {
-          // 没有可用的样本，稍微等待
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (buffer && caps && GST_IS_BUFFER(buffer) && GST_IS_CAPS(caps)) {
+              GstMapInfo map;
+              if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+                // 检查数据有效性
+                if (map.data && map.size > 0) {
+                  // 获取视频信息
+                  GstStructure *structure = gst_caps_get_structure(caps, 0);
+                  if (structure) {
+                    int width, height;
+                    if (gst_structure_get_int(structure, "width", &width) &&
+                        gst_structure_get_int(structure, "height", &height) &&
+                        width > 0 && height > 0) {
+                      // 创建视频帧
+                      VideoFrame frame;
+                      frame.width = width;
+                      frame.height = height;
+                      frame.channels = 3; // RGB
+                      frame.data.resize(map.size);
+                      std::memcpy(frame.data.data(), map.data, map.size);
+                      frame.timestamp =
+                          std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count() /
+                          1000.0;
+
+                      std::cout << "收到视频帧: " << width << "x" << height
+                                << ", 大小: " << map.size << " 字节" << std::endl;
+
+                      if (frame_callback) {
+                        frame_callback(frame);
+                      }
+                    } else {
+                      std::cout << "GStreamer: 无效的帧尺寸" << std::endl;
+                    }
+                  } else {
+                    std::cout << "GStreamer: 无法获取caps结构" << std::endl;
+                  }
+                } else {
+                  std::cout << "GStreamer: 无效的缓冲区数据" << std::endl;
+                }
+                gst_buffer_unmap(buffer, &map);
+              } else {
+                std::cout << "GStreamer: 无法映射缓冲区" << std::endl;
+              }
+            } else {
+              std::cout << "GStreamer: 无效的缓冲区或caps" << std::endl;
+            }
+
+            gst_sample_unref(sample);
+          } else {
+            // 没有可用的样本，稍微等待
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+        } catch (const std::exception& e) {
+          std::cout << "GStreamer捕获异常: " << e.what() << std::endl;
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        } catch (...) {
+          std::cout << "GStreamer捕获未知异常" << std::endl;
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
       }
     } else {
@@ -457,7 +542,14 @@ public:
 
 VideoCapture::VideoCapture() : pImpl(std::make_unique<Impl>()) {}
 
-VideoCapture::~VideoCapture() { stop_capture(); }
+VideoCapture::~VideoCapture() {
+  std::cout << "VideoCapture 析构开始" << std::endl;
+  
+  // 1. 首先停止捕获，这会设置停止标志
+  stop_capture();
+  
+  std::cout << "VideoCapture 析构完成" << std::endl;
+}
 
 bool VideoCapture::initialize(VideoSource source, int device_id) {
   std::lock_guard<std::mutex> lock(pImpl->mutex);

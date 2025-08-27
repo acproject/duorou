@@ -13,10 +13,10 @@
 
 // 前向声明
 namespace duorou {
-namespace media {
-    class VideoCapture;
-    class AudioCapture;
-}
+    namespace media {
+        class VideoCapture;
+        class AudioCapture;
+    }
 }
 
 namespace duorou {
@@ -153,6 +153,14 @@ private:
     
     // 状态管理方法
     void verify_button_state();
+    
+    /**
+     * 重置所有状态，防止段错误
+     * 清理录制状态、按钮状态等
+     */
+    void reset_state();
+    
+private:
 };
 
 } // namespace gui

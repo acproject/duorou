@@ -237,14 +237,42 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int wid
 }
 
 gboolean VideoDisplayWindow::on_window_close(GtkWidget* widget, gpointer user_data) {
+    // 安全检查：确保user_data不为空
+    if (!user_data) {
+        std::cout << "VideoDisplayWindow::on_window_close: user_data为空" << std::endl;
+        return TRUE;
+    }
+    
     VideoDisplayWindow* window = static_cast<VideoDisplayWindow*>(user_data);
+    
+    // 安全检查：确保window对象有效
+    if (!window) {
+        std::cout << "VideoDisplayWindow::on_window_close: window对象为空" << std::endl;
+        return TRUE;
+    }
+    
+    std::cout << "VideoDisplayWindow关闭事件触发" << std::endl;
     
     // 如果设置了关闭回调，调用它来停止录制
     if (window->close_callback_) {
-        window->close_callback_();
+        try {
+            std::cout << "调用视频窗口关闭回调..." << std::endl;
+            window->close_callback_();
+            std::cout << "视频窗口关闭回调执行完成" << std::endl;
+        } catch (const std::exception &e) {
+            std::cout << "视频窗口关闭回调异常: " << e.what() << std::endl;
+        } catch (...) {
+            std::cout << "视频窗口关闭回调发生未知异常" << std::endl;
+        }
     }
     
-    window->hide();
+    // 安全地隐藏窗口
+    try {
+        window->hide();
+    } catch (const std::exception &e) {
+        std::cout << "隐藏视频窗口异常: " << e.what() << std::endl;
+    }
+    
     return TRUE; // 阻止窗口销毁，只是隐藏
 }
 
