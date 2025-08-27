@@ -45,27 +45,27 @@ public:
 
   ~Impl() {
     std::cout << "VideoCapture::Impl 析构开始" << std::endl;
-    
+
     // 1. 首先设置停止标志
     capturing = false;
-    
+
     // 2. 等待捕获线程完全结束
     if (capture_thread.joinable()) {
       std::cout << "等待捕获线程结束..." << std::endl;
       capture_thread.join();
       std::cout << "捕获线程已结束" << std::endl;
     }
-    
+
     // 3. 清理平台特定资源
 #ifdef __APPLE__
     duorou::media::cleanup_macos_screen_capture();
 #endif
-    
+
     // 4. 清理GStreamer资源
 #ifdef HAVE_GSTREAMER
     cleanup_gstreamer();
 #endif
-    
+
     // 5. 清理OpenCV资源
 #ifdef HAVE_OPENCV
     if (opencv_capture.isOpened()) {
@@ -73,7 +73,7 @@ public:
       std::cout << "OpenCV 捕获已释放" << std::endl;
     }
 #endif
-    
+
     std::cout << "VideoCapture::Impl 析构完成" << std::endl;
   }
 
@@ -107,39 +107,40 @@ public:
 #ifdef HAVE_GSTREAMER
     if (pipeline) {
       // 安全地停止管道
-      GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_NULL);
-      
+      GstStateChangeReturn ret =
+          gst_element_set_state(pipeline, GST_STATE_NULL);
+
       // 等待状态变化完成，避免竞态条件
       if (ret != GST_STATE_CHANGE_FAILURE) {
         GstState state;
         GstState pending;
         // 等待最多2秒让管道完全停止
-         ret = gst_element_get_state(pipeline, &state, &pending, 2 * GST_SECOND);
-         if (ret == GST_STATE_CHANGE_ASYNC) {
-           std::cout << "警告: GStreamer 管道停止仍在进行中" << std::endl;
-         }
+        ret = gst_element_get_state(pipeline, &state, &pending, 2 * GST_SECOND);
+        if (ret == GST_STATE_CHANGE_ASYNC) {
+          std::cout << "警告: GStreamer 管道停止仍在进行中" << std::endl;
+        }
       }
-      
+
       // 清理appsink引用（它是pipeline的一部分，会被自动释放）
       appsink = nullptr;
-      
+
       // 释放管道
       gst_object_unref(pipeline);
       pipeline = nullptr;
       std::cout << "GStreamer 管道已安全清理" << std::endl;
     }
-    
+
     if (loop) {
       // 安全地退出主循环
       if (g_main_loop_is_running(loop)) {
         g_main_loop_quit(loop);
       }
-      
+
       // 等待GStreamer线程结束
       if (gst_thread.joinable()) {
         gst_thread.join();
       }
-      
+
       // 释放主循环
       g_main_loop_unref(loop);
       loop = nullptr;
@@ -345,16 +346,18 @@ public:
           if (!capturing) {
             break;
           }
-          
+
           // 添加更严格的空指针检查
-          if (!pipeline || !appsink || gst_element_get_state(pipeline, nullptr, nullptr, 0) == GST_STATE_CHANGE_FAILURE) {
+          if (!pipeline || !appsink ||
+              gst_element_get_state(pipeline, nullptr, nullptr, 0) ==
+                  GST_STATE_CHANGE_FAILURE) {
             std::cout << "GStreamer: 管道状态异常，退出捕获循环" << std::endl;
             break;
           }
-          
+
           GstSample *sample = nullptr;
           sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
-          
+
           if (sample) {
             GstBuffer *buffer = gst_sample_get_buffer(sample);
             GstCaps *caps = gst_sample_get_caps(sample);
@@ -380,12 +383,14 @@ public:
                       std::memcpy(frame.data.data(), map.data, map.size);
                       frame.timestamp =
                           std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
+                              std::chrono::system_clock::now()
+                                  .time_since_epoch())
                               .count() /
                           1000.0;
 
                       std::cout << "收到视频帧: " << width << "x" << height
-                                << ", 大小: " << map.size << " 字节" << std::endl;
+                                << ", 大小: " << map.size << " 字节"
+                                << std::endl;
 
                       if (frame_callback) {
                         frame_callback(frame);
@@ -412,7 +417,7 @@ public:
             // 没有可用的样本，稍微等待
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
           }
-        } catch (const std::exception& e) {
+        } catch (const std::exception &e) {
           std::cout << "GStreamer捕获异常: " << e.what() << std::endl;
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         } catch (...) {
@@ -544,10 +549,10 @@ VideoCapture::VideoCapture() : pImpl(std::make_unique<Impl>()) {}
 
 VideoCapture::~VideoCapture() {
   std::cout << "VideoCapture 析构开始" << std::endl;
-  
+
   // 1. 首先停止捕获，这会设置停止标志
   stop_capture();
-  
+
   std::cout << "VideoCapture 析构完成" << std::endl;
 }
 

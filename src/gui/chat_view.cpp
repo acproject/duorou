@@ -28,8 +28,8 @@ ChatView::ChatView()
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
   // 设置视频窗口关闭回调
-  video_display_window_->set_close_callback([this]() { 
-    stop_recording(); 
+  video_display_window_->set_close_callback([this]() {
+    stop_recording();
     // 确保按钮被重新启用
     if (video_record_button_) {
       gtk_widget_set_sensitive(video_record_button_, TRUE);
@@ -39,12 +39,12 @@ ChatView::ChatView()
 
 ChatView::~ChatView() {
   std::cout << "ChatView析构开始..." << std::endl;
-  
+
   // 1. 首先停止所有录制活动，避免在析构过程中触发回调
   if (is_recording_) {
     std::cout << "析构时检测到录制正在进行，强制停止..." << std::endl;
     is_recording_ = false;
-    
+
     // 立即停止视频和音频捕获，不等待回调
     if (video_capture_) {
       try {
@@ -53,7 +53,7 @@ ChatView::~ChatView() {
         std::cout << "析构时停止视频捕获异常: " << e.what() << std::endl;
       }
     }
-    
+
     if (audio_capture_) {
       try {
         audio_capture_->stop_capture();
@@ -62,7 +62,7 @@ ChatView::~ChatView() {
       }
     }
   }
-  
+
   // 2. 清除视频窗口的关闭回调，避免在析构时触发
   if (video_display_window_) {
     try {
@@ -322,24 +322,24 @@ void ChatView::create_input_area() {
   std::string icon_path_base = "src/gui/";
   video_off_image_ =
       gtk_picture_new_for_filename((icon_path_base + "video-off.png").c_str());
-  video_on_image_ =
+  video_off_image_ =
       gtk_picture_new_for_filename((icon_path_base + "video-on.png").c_str());
 
   // 检查图标是否加载成功
-  if (!video_off_image_ || !video_on_image_) {
+  if (!video_off_image_ || !video_off_image_) {
     std::cout << "警告: 无法加载录制按钮图标，使用文本替代" << std::endl;
     // 如果图标加载失败，创建文本标签作为替代
     if (!video_off_image_) {
       video_off_image_ = gtk_label_new("⏹");
     }
-    if (!video_on_image_) {
-      video_on_image_ = gtk_label_new("⏺");
+    if (!video_off_image_) {
+      video_off_image_ = gtk_label_new("⏺");
     }
   }
 
   // 设置图标大小
   gtk_widget_set_size_request(video_off_image_, 24, 24);
-  gtk_widget_set_size_request(video_on_image_, 24, 24);
+  gtk_widget_set_size_request(video_off_image_, 24, 24);
 
   // 创建录制视频按钮 (使用GtkToggleButton)
   video_record_button_ = gtk_toggle_button_new();
@@ -1404,8 +1404,9 @@ void ChatView::stop_recording() {
     // 重新启用按钮
     gtk_widget_set_sensitive(video_record_button_, TRUE);
     updating_button_state_ = false;
-    std::cout << "按钮状态已切换为非激活状态，图标已更新为video-off，按钮已重新启用"
-              << std::endl;
+    std::cout
+        << "按钮状态已切换为非激活状态，图标已更新为video-off，按钮已重新启用"
+        << std::endl;
   }
 
   // 隐藏视频显示窗口
@@ -1449,8 +1450,9 @@ void ChatView::verify_button_state() {
     // 根据toggle状态更新图标：激活=video-on，非激活=video-off
     if (is_recording_) {
       // 录制中，按钮应该是激活状态，显示video-on图标
-      if (video_on_image_) {
-        gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+      if (video_off_image_) {
+        gtk_button_set_child(GTK_BUTTON(video_record_button_),
+                             video_off_image_);
         gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
                                     "停止录制视频/桌面捕获");
       }
@@ -1496,9 +1498,10 @@ void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
       updating_button_state_ = true;
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
                                    TRUE);
-      if (video_on_image_ && GTK_IS_WIDGET(video_on_image_)) {
-        gtk_widget_set_visible(video_on_image_, TRUE);
-        gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+      if (video_off_image_ && GTK_IS_WIDGET(video_off_image_)) {
+        gtk_widget_set_visible(video_off_image_, TRUE);
+        gtk_button_set_child(GTK_BUTTON(video_record_button_),
+                             video_off_image_);
         // 添加录制状态的CSS类
         gtk_widget_add_css_class(video_record_button_, "recording");
         gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
@@ -1517,9 +1520,10 @@ void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
       updating_button_state_ = true;
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
                                    TRUE);
-      if (video_on_image_ && GTK_IS_WIDGET(video_on_image_)) {
-        gtk_widget_set_visible(video_on_image_, TRUE);
-        gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+      if (video_off_image_ && GTK_IS_WIDGET(video_off_image_)) {
+        gtk_widget_set_visible(video_off_image_, TRUE);
+        gtk_button_set_child(GTK_BUTTON(video_record_button_),
+                             video_off_image_);
         // 添加录制状态的CSS类
         gtk_widget_add_css_class(video_record_button_, "recording");
         gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
@@ -1552,11 +1556,11 @@ void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
 
 void ChatView::reset_state() {
   std::cout << "开始重置ChatView状态..." << std::endl;
-  
+
   // 直接停止录制活动，不调用stop_recording避免重复清理
   if (is_recording_) {
     is_recording_ = false;
-    
+
     // 直接停止视频和音频捕获，不调用macOS清理函数
     if (video_capture_) {
       try {
@@ -1565,7 +1569,7 @@ void ChatView::reset_state() {
         std::cout << "重置状态时停止视频捕获异常: " << e.what() << std::endl;
       }
     }
-    
+
     if (audio_capture_) {
       try {
         audio_capture_->stop_capture();
@@ -1574,27 +1578,28 @@ void ChatView::reset_state() {
       }
     }
   }
-  
+
   // 重置录制状态
   is_recording_ = false;
   updating_button_state_ = false;
-  
+
   // 清理视频捕获
   if (video_capture_) {
     video_capture_.reset();
   }
-  
+
   // 清理音频捕获
   if (audio_capture_) {
     audio_capture_.reset();
   }
-  
+
   // 重置按钮状态
   if (video_record_button_) {
     updating_button_state_ = true;
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), FALSE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
+                                 FALSE);
     gtk_widget_set_sensitive(video_record_button_, TRUE);
-    
+
     // 重置按钮图标为关闭状态
     if (video_off_image_ && GTK_IS_WIDGET(video_off_image_)) {
       gtk_widget_set_visible(video_off_image_, TRUE);
@@ -1604,7 +1609,7 @@ void ChatView::reset_state() {
     }
     updating_button_state_ = false;
   }
-  
+
   // 隐藏视频显示窗口
   if (video_display_window_) {
     try {
@@ -1613,15 +1618,15 @@ void ChatView::reset_state() {
       std::cout << "隐藏视频窗口时出错: " << e.what() << std::endl;
     }
   }
-  
+
   // 清理缓存的帧数据
   cached_video_frame_.reset();
   cached_audio_frames_.clear();
-  
+
   // 重置时间戳
   last_video_update_ = std::chrono::steady_clock::now();
   last_audio_update_ = std::chrono::steady_clock::now();
-  
+
   std::cout << "ChatView状态重置完成" << std::endl;
 }
 
