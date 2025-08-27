@@ -145,6 +145,9 @@ private:
     void start_desktop_capture();
     void start_camera_capture();
     void stop_recording();
+    
+    // 状态管理方法
+    void verify_button_state();
 };
 
 } // namespace gui

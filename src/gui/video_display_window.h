@@ -40,6 +40,12 @@ private:
     int frame_height_;
     int frame_channels_;
     
+    // 缓存Cairo表面以避免重复创建
+    cairo_surface_t* cached_surface_;
+    std::unique_ptr<guchar[]> cached_rgba_data_;
+    int cached_width_;
+    int cached_height_;
+    
     // 窗口关闭回调
     std::function<void()> close_callback_;
     

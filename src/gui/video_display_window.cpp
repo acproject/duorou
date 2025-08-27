@@ -7,11 +7,18 @@ namespace gui {
 
 VideoDisplayWindow::VideoDisplayWindow() 
     : window_(nullptr), video_area_(nullptr), info_label_(nullptr),
-      frame_data_(nullptr), frame_width_(0), frame_height_(0), frame_channels_(4) {
+      frame_data_(nullptr), frame_width_(0), frame_height_(0), frame_channels_(4),
+      cached_surface_(nullptr), cached_rgba_data_(nullptr), cached_width_(0), cached_height_(0) {
     init_ui();
 }
 
 VideoDisplayWindow::~VideoDisplayWindow() {
+    // 清理缓存的Cairo表面
+    if (cached_surface_) {
+        cairo_surface_destroy(cached_surface_);
+        cached_surface_ = nullptr;
+    }
+    
     if (window_) {
         gtk_window_destroy(GTK_WINDOW(window_));
     }
@@ -86,6 +93,9 @@ bool VideoDisplayWindow::is_visible() const {
 }
 
 void VideoDisplayWindow::update_frame(const media::VideoFrame& frame) {
+    // 检查是否需要重新创建缓存表面
+    bool need_recreate_surface = (frame.width != cached_width_ || frame.height != cached_height_);
+    
     // 更新帧数据
     frame_width_ = frame.width;
     frame_height_ = frame.height;
@@ -95,6 +105,63 @@ void VideoDisplayWindow::update_frame(const media::VideoFrame& frame) {
     size_t data_size = frame.width * frame.height * frame.channels;
     frame_data_ = std::make_unique<guchar[]>(data_size);
     std::memcpy(frame_data_.get(), frame.data.data(), data_size);
+    
+    // 如果尺寸改变，重新创建缓存表面
+    if (need_recreate_surface) {
+        // 清理旧的表面
+        if (cached_surface_) {
+            cairo_surface_destroy(cached_surface_);
+            cached_surface_ = nullptr;
+        }
+        
+        // 更新缓存尺寸
+        cached_width_ = frame.width;
+        cached_height_ = frame.height;
+        
+        // 创建新的RGBA数据缓冲区
+        int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, frame.width);
+        cached_rgba_data_ = std::make_unique<guchar[]>(stride * frame.height);
+        
+        // 创建新的Cairo表面
+        cached_surface_ = cairo_image_surface_create_for_data(
+            cached_rgba_data_.get(), CAIRO_FORMAT_RGB24, 
+            frame.width, frame.height, stride);
+    }
+    
+    // 更新缓存表面的数据
+    if (cached_surface_ && cached_rgba_data_) {
+        int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, frame.width);
+        int channels = frame.channels;
+        
+        // 在修改表面数据前，先获取表面数据指针
+        cairo_surface_flush(cached_surface_);
+        
+        for (int y = 0; y < frame.height; y++) {
+            for (int x = 0; x < frame.width; x++) {
+                int src_idx = (y * frame.width + x) * channels;
+                int dst_idx = y * stride + x * 4;
+                
+                if (src_idx + (channels - 1) < (int)(frame.width * frame.height * channels)) {
+                    if (channels == 4) {
+                        // ScreenCaptureKit使用BGRA格式，转换为Cairo的RGB24格式
+                        cached_rgba_data_[dst_idx + 0] = frame.data[src_idx + 0]; // B
+                        cached_rgba_data_[dst_idx + 1] = frame.data[src_idx + 1]; // G
+                        cached_rgba_data_[dst_idx + 2] = frame.data[src_idx + 2]; // R
+                        cached_rgba_data_[dst_idx + 3] = frame.data[src_idx + 3]; // A
+                    } else {
+                        // RGB格式转换为Cairo RGB24
+                        cached_rgba_data_[dst_idx + 0] = frame.data[src_idx + 2]; // B
+                        cached_rgba_data_[dst_idx + 1] = frame.data[src_idx + 1]; // G
+                        cached_rgba_data_[dst_idx + 2] = frame.data[src_idx + 0]; // R
+                        cached_rgba_data_[dst_idx + 3] = 255; // A
+                    }
+                }
+            }
+        }
+        
+        // 标记表面数据已更新，确保Cairo知道数据已被修改
+        cairo_surface_mark_dirty(cached_surface_);
+    }
     
     // 更新信息标签 - 格式化时间戳为可读格式
     char info_text[256];
@@ -128,96 +195,32 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int wid
     cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
     cairo_paint(cr);
     
-    // 如果有视频数据，绘制视频帧
-    if (window->frame_data_ && window->frame_width_ > 0 && window->frame_height_ > 0) {
-        // 创建图像表面
-        cairo_format_t format = CAIRO_FORMAT_RGB24;
-        if (window->frame_width_ > 0 && window->frame_height_ > 0) {
-            // 计算缩放比例以适应显示区域
-            double scale_x = (double)width / window->frame_width_;
-            double scale_y = (double)height / window->frame_height_;
-            double scale = std::min(scale_x, scale_y);
-            
-            // 计算居中位置
-            int scaled_width = (int)(window->frame_width_ * scale);
-            int scaled_height = (int)(window->frame_height_ * scale);
-            int x_offset = (width - scaled_width) / 2;
-            int y_offset = (height - scaled_height) / 2;
-            
-            // 保存当前状态
-            cairo_save(cr);
-            
-            // 移动到居中位置并缩放
-            cairo_translate(cr, x_offset, y_offset);
-            cairo_scale(cr, scale, scale);
-            
-            // 创建图像表面来显示实际视频数据
-            cairo_surface_t* surface = nullptr;
-            
-            // 根据通道数创建适当的图像表面
-            if (window->frame_data_) {
-                // 创建一个临时的RGBA数据缓冲区
-                int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, window->frame_width_);
-                std::unique_ptr<guchar[]> rgba_data = std::make_unique<guchar[]>(stride * window->frame_height_);
-                
-                // 将视频帧数据转换为Cairo可用的格式
-                // 使用存储的通道数信息，避免动态检测导致的不稳定
-                int channels = window->frame_channels_;
-                
-                for (int y = 0; y < window->frame_height_; y++) {
-                    for (int x = 0; x < window->frame_width_; x++) {
-                        int src_idx = (y * window->frame_width_ + x) * channels;
-                        int dst_idx = y * stride + x * 4;
-                        
-                        if (src_idx + (channels - 1) < (int)(window->frame_width_ * window->frame_height_ * channels)) {
-                            if (channels == 4) {
-                                // ScreenCaptureKit使用BGRA格式，需要正确转换为Cairo的RGB24格式
-                                // Cairo RGB24格式期望: B, G, R, A (小端序)
-                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 0]; // B (BGRA中的B)
-                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G (BGRA中的G)
-                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 2]; // R (BGRA中的R)
-                                rgba_data[dst_idx + 3] = window->frame_data_[src_idx + 3]; // A (BGRA中的A)
-                            } else {
-                                // RGB格式转换为Cairo RGB24
-                                rgba_data[dst_idx + 0] = window->frame_data_[src_idx + 2]; // B
-                                rgba_data[dst_idx + 1] = window->frame_data_[src_idx + 1]; // G
-                                rgba_data[dst_idx + 2] = window->frame_data_[src_idx + 0]; // R
-                                rgba_data[dst_idx + 3] = 255; // A
-                            }
-                        }
-                    }
-                }
-                
-                // 创建Cairo图像表面
-                surface = cairo_image_surface_create_for_data(
-                    rgba_data.get(), CAIRO_FORMAT_RGB24, 
-                    window->frame_width_, window->frame_height_, stride);
-                
-                if (surface && cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
-                    // 绘制图像
-                    cairo_set_source_surface(cr, surface, 0, 0);
-                    cairo_paint(cr);
-                } else {
-                    // 如果创建表面失败，显示错误信息
-                    cairo_set_source_rgb(cr, 0.8, 0.2, 0.2);
-                    cairo_rectangle(cr, 0, 0, window->frame_width_, window->frame_height_);
-                    cairo_fill(cr);
-                }
-                
-                // 清理表面
-                if (surface) {
-                    cairo_surface_destroy(surface);
-                }
-            } else {
-                // 没有数据时显示灰色背景
-                cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-                cairo_rectangle(cr, 0, 0, window->frame_width_, window->frame_height_);
-                cairo_fill(cr);
-            }
-            
-            // 恢复状态
-            cairo_restore(cr);
-        }
+    // 如果有缓存的表面，直接绘制
+    if (window->cached_surface_ && window->frame_width_ > 0 && window->frame_height_ > 0) {
+        // 计算缩放比例以适应显示区域
+        double scale_x = (double)width / window->frame_width_;
+        double scale_y = (double)height / window->frame_height_;
+        double scale = std::min(scale_x, scale_y);
+        
+        // 计算居中位置
+        int scaled_width = (int)(window->frame_width_ * scale);
+        int scaled_height = (int)(window->frame_height_ * scale);
+        int x_offset = (width - scaled_width) / 2;
+        int y_offset = (height - scaled_height) / 2;
+        
+        // 保存当前状态
+        cairo_save(cr);
+        
+        // 移动到居中位置并缩放
+        cairo_translate(cr, x_offset, y_offset);
+        cairo_scale(cr, scale, scale);
+        
+        // 直接绘制缓存的表面
+        cairo_set_source_surface(cr, window->cached_surface_, 0, 0);
+        cairo_paint(cr);
+        
+        // 恢复状态
+        cairo_restore(cr);
     } else {
         // 没有视频数据时显示提示文字
         cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);

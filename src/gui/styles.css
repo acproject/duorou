@@ -248,6 +248,27 @@ scrollbar thumb:hover {
     background: #a0aec0;
 }
 
+/* Upload Button Styles */
+.upload-button {
+    background: #4299e1;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+    margin: 2px;
+}
+
+.upload-button:hover {
+    background: #3182ce;
+}
+
+.upload-button:active {
+    background: #2c5aa0;
+}
+
 /* General Layout */
 window {
     background: #ffffff;
