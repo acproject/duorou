@@ -19,6 +19,7 @@ ChatView::ChatView()
       input_container_(nullptr), welcome_cleared_(false),
       video_capture_(nullptr), audio_capture_(nullptr),
       video_display_window_(std::make_unique<VideoDisplayWindow>()),
+      video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
       cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
@@ -69,6 +70,12 @@ bool ChatView::initialize() {
 
   // 连接信号
   connect_signals();
+
+  // 初始化视频源选择对话框
+  if (video_source_dialog_ && !video_source_dialog_->initialize()) {
+    std::cerr << "Failed to initialize video source dialog" << std::endl;
+    return false;
+  }
 
   std::cout << "Chat view initialized successfully" << std::endl;
   return true;
@@ -656,11 +663,11 @@ void ChatView::on_video_record_button_clicked(GtkWidget *widget,
                                               gpointer user_data) {
   ChatView *chat_view = static_cast<ChatView *>(user_data);
 
-  // Toggle功能：如果正在录制则停止，否则直接开始桌面捕获
+  // Toggle功能：如果正在录制则停止，否则显示选择对话框
   if (chat_view->is_recording_) {
     chat_view->stop_recording();
   } else {
-    chat_view->start_desktop_capture();
+    chat_view->show_video_source_dialog();
   }
 }
 
@@ -697,18 +704,16 @@ void ChatView::on_video_record_button_toggled(GtkToggleButton *toggle_button,
   std::cout << "视频录制按钮状态变化: "
             << (is_active ? "激活(开启)" : "非激活(关闭)") << std::endl;
 
-  // 立即更新图标以反映toggle状态
   if (is_active) {
-    // Toggle按钮激活 = 开启状态 = 显示video-on图标
-    if (chat_view->video_on_image_) {
-      gtk_button_set_child(GTK_BUTTON(toggle_button),
-                           chat_view->video_on_image_);
-      gtk_widget_set_tooltip_text(GTK_WIDGET(toggle_button), "停止录制");
-    }
-    std::cout << "图标已切换为video-on（开启状态）" << std::endl;
-
+    // 按钮被激活，但不直接开始录制，而是显示选择对话框
     if (!chat_view->is_recording_) {
-      chat_view->start_desktop_capture();
+      // 先重置按钮状态，避免在用户取消时按钮保持激活状态
+      chat_view->updating_button_state_ = true;
+      gtk_toggle_button_set_active(toggle_button, FALSE);
+      chat_view->updating_button_state_ = false;
+      
+      // 显示视频源选择对话框
+      chat_view->show_video_source_dialog();
     }
   } else {
     // Toggle按钮非激活 = 关闭状态 = 显示video-off图标
@@ -1324,6 +1329,68 @@ void ChatView::verify_button_state() {
     }
 
     updating_button_state_ = false;
+  }
+}
+
+void ChatView::show_video_source_dialog() {
+  std::cout << "show_video_source_dialog() called" << std::endl;
+  
+  if (!video_source_dialog_) {
+    std::cerr << "Video source dialog not initialized" << std::endl;
+    return;
+  }
+
+  std::cout << "Showing video source dialog..." << std::endl;
+  
+  // 显示对话框，传递回调函数
+  video_source_dialog_->show(main_widget_, [this](VideoSourceDialog::VideoSource source) {
+    on_video_source_selected(source);
+  });
+}
+
+void ChatView::on_video_source_selected(VideoSourceDialog::VideoSource source) {
+  switch (source) {
+    case VideoSourceDialog::VideoSource::DESKTOP_CAPTURE:
+      std::cout << "用户选择：桌面录制" << std::endl;
+      // 激活按钮并更新图标
+      if (video_record_button_) {
+        updating_button_state_ = true;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), TRUE);
+        if (video_on_image_) {
+          gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+          gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_), "停止录制");
+        }
+        updating_button_state_ = false;
+      }
+      start_desktop_capture();
+      break;
+    case VideoSourceDialog::VideoSource::CAMERA:
+      std::cout << "用户选择：摄像头" << std::endl;
+      // 激活按钮并更新图标
+      if (video_record_button_) {
+        updating_button_state_ = true;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), TRUE);
+        if (video_on_image_) {
+          gtk_button_set_child(GTK_BUTTON(video_record_button_), video_on_image_);
+          gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_), "停止录制");
+        }
+        updating_button_state_ = false;
+      }
+      start_camera_capture();
+      break;
+    case VideoSourceDialog::VideoSource::CANCEL:
+      std::cout << "用户取消选择" << std::endl;
+      // 重置按钮状态
+      if (video_record_button_) {
+        updating_button_state_ = true;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_), FALSE);
+        if (video_off_image_) {
+          gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+          gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_), "开始录制视频/桌面捕获");
+        }
+        updating_button_state_ = false;
+      }
+      break;
   }
 }
 

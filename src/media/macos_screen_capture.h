@@ -18,6 +18,9 @@ void stop_macos_screen_capture();
 bool is_macos_screen_capture_running();
 void cleanup_macos_screen_capture();
 
+// macOS 摄像头检测函数
+bool is_macos_camera_available();
+
 } // namespace media
 } // namespace duorou
 

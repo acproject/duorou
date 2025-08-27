@@ -1,4 +1,5 @@
 #include "video_capture.h"
+#include "video_frame.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -580,7 +581,10 @@ std::vector<std::string> VideoCapture::get_camera_devices() {
 }
 
 bool VideoCapture::is_camera_available() {
-#ifdef HAVE_OPENCV
+#ifdef __APPLE__
+    // 在 macOS 上使用 AVFoundation 检测摄像头
+    return duorou::media::is_macos_camera_available();
+#elif defined(HAVE_OPENCV)
     cv::VideoCapture test_cap(0);
     bool available = test_cap.isOpened();
     if (available) {

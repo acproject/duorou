@@ -1,4 +1,5 @@
 #include "video_frame.h"
+#import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
@@ -481,6 +482,27 @@ void cleanup_macos_screen_capture() {
     }
 
     g_delegate = nil;
+  }
+}
+
+bool is_macos_camera_available() {
+  @try {
+    // 使用 AVFoundation 检测摄像头设备
+    NSArray<AVCaptureDevice *> *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+    
+    if (devices.count > 0) {
+      std::cout << "检测到 " << devices.count << " 个摄像头设备" << std::endl;
+      for (AVCaptureDevice *device in devices) {
+        std::cout << "摄像头设备: " << [device.localizedName UTF8String] << std::endl;
+      }
+      return true;
+    } else {
+      std::cout << "未检测到摄像头设备" << std::endl;
+      return false;
+    }
+  } @catch (NSException *exception) {
+    std::cout << "检测摄像头时发生异常: " << [[exception description] UTF8String] << std::endl;
+    return false;
   }
 }
 

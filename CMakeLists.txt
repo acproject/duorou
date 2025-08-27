@@ -338,6 +338,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
     src/gui/video_display_window.cpp
+    src/gui/video_source_dialog.cpp
     src/api/api_server.cpp
     src/media/video_capture.cpp
     src/media/audio_capture.cpp
@@ -364,6 +365,7 @@ set(DUOROU_HEADERS_LIST
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
     src/gui/video_display_window.h
+    src/gui/video_source_dialog.h
     src/api/api_server.h
     src/media/video_capture.h
     src/media/audio_capture.h
@@ -454,6 +456,7 @@ if(DUOROU_SOURCES)
             "-framework CoreGraphics"
             "-framework CoreMedia"
             "-framework CoreVideo"
+            "-framework AVFoundation"
         )
     elseif(WIN32)
         target_link_libraries(duorou

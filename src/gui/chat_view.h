@@ -7,6 +7,7 @@
 #include <memory>
 #include <chrono>
 #include "video_display_window.h"
+#include "video_source_dialog.h"
 #include "../media/video_frame.h"
 #include "../media/audio_capture.h"
 
@@ -86,6 +87,7 @@ private:
     std::unique_ptr<media::VideoCapture> video_capture_;
     std::unique_ptr<media::AudioCapture> audio_capture_;
     std::unique_ptr<VideoDisplayWindow> video_display_window_;
+    std::unique_ptr<VideoSourceDialog> video_source_dialog_;
     bool is_recording_;              // 录制状态标记
     
     // 录制按钮图标
@@ -141,10 +143,13 @@ private:
     static void on_file_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
     
     // 视频捕获方法
-  
+    void show_video_source_dialog();
     void start_desktop_capture();
     void start_camera_capture();
     void stop_recording();
+    
+    // 视频源选择回调
+    void on_video_source_selected(VideoSourceDialog::VideoSource source);
     
     // 状态管理方法
     void verify_button_state();
