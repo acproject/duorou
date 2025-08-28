@@ -81,6 +81,17 @@ public:
     void quit_application();
 
     /**
+     * 设置系统托盘状态
+     * @param status 状态描述（如："idle", "processing", "error"）
+     */
+    void set_tray_status(const std::string& status);
+
+    /**
+     * 从系统托盘恢复窗口显示
+     */
+    void restore_from_tray();
+
+    /**
      * 创建新的聊天会话
      */
     void create_new_chat();

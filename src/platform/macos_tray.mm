@@ -9,63 +9,56 @@
 
 // Helper class to handle menu item callbacks
 @interface MenuItemTarget : NSObject {
-    std::function<void()>* callback_;
+    std::function<void()> callback_;
 }
-- (instancetype)initWithCallback:(std::function<void()>*)callback;
+- (instancetype)initWithCallback:(const std::function<void()>&)callback;
 - (void)menuItemClicked:(id)sender;
 @end
 
 @implementation MenuItemTarget
 
-- (instancetype)initWithCallback:(std::function<void()>*)callback {
+- (instancetype)initWithCallback:(const std::function<void()>&)callback {
     self = [super init];
     if (self) {
-        callback_ = new std::function<void()>(*callback);
+        callback_ = callback;
     }
     return self;
 }
 
 - (void)menuItemClicked:(id)sender {
     if (callback_) {
-        (*callback_)();
+        callback_();
     }
 }
 
 - (void)dealloc {
-    delete callback_;
-    callback_ = nullptr;
     [super dealloc];
 }
 
 @end
 
-// Static storage for menu item targets to prevent deallocation
-static std::map<NSMenuItem*, MenuItemTarget*> menuTargets;
-
-MacOSTray::MacOSTray() 
+duorou::MacOSTray::MacOSTray() 
     : statusItem_(nullptr), menu_(nullptr), initialized_(false) {
 }
 
-MacOSTray::~MacOSTray() {
-    // Remove status item
-    if (statusItem_) {
-        [[NSStatusBar systemStatusBar] removeStatusItem:statusItem_];
-        statusItem_ = nil;
-    }
-    
-    // 清理menuTargets中的对象
+duorou::MacOSTray::~MacOSTray() {
     @autoreleasepool {
-        for (auto& pair : menuTargets) {
-            MenuItemTarget* target = pair.second;
-            if (target) {
-                [target release];
-            }
+        // Remove status item first
+        if (statusItem_) {
+            [[NSStatusBar systemStatusBar] removeStatusItem:statusItem_];
+            [statusItem_ release];
+            statusItem_ = nil;
         }
-        menuTargets.clear();
+        
+        // 清理menu_ (menu items will be automatically released)
+        if (menu_) {
+            [menu_ release];
+            menu_ = nil;
+        }
     }
 }
 
-bool MacOSTray::initialize() {
+bool duorou::MacOSTray::initialize() {
     if (initialized_) {
         return true;
     }
@@ -94,34 +87,78 @@ bool MacOSTray::initialize() {
         // Set up the status item
         statusItem_.menu = menu_;
         
+        // Check if button is available
+        if (!statusItem_.button) {
+            std::cerr << "Failed to get status item button" << std::endl;
+            [[NSStatusBar systemStatusBar] removeStatusItem:statusItem_];
+            [statusItem_ release];
+            statusItem_ = nil;
+            [menu_ release];
+            menu_ = nil;
+            return false;
+        }
+        
         // Set default properties
         statusItem_.button.toolTip = @"Duorou";
         
-        // Set flower emoji as default icon
-        setIcon("🌸");
-        
         initialized_ = true;
         std::cout << "macOS system tray initialized successfully" << std::endl;
+        
+        // Skip icon setting for now to avoid crashes
+        // setSystemIcon();
+        
         return true;
     }
 }
 
-void MacOSTray::setIcon(const std::string& iconText) {
-    if (!initialized_ || !statusItem_) {
+void duorou::MacOSTray::setIcon(const std::string& iconText) {
+    if (!initialized_ || !statusItem_ || !statusItem_.button) {
+        std::cerr << "setIcon failed: statusItem or button is nil" << std::endl;
         return;
     }
     
     @autoreleasepool {
         NSImage* image = createImageFromText(iconText);
-        if (image) {
-            statusItem_.button.image = image;
-            // Set as template image for automatic color adaptation <mcreference link="https://crosspaste.com/en/blog/mac-system-tray" index="3">3</mcreference>
+        if (image && [image isKindOfClass:[NSImage class]]) {
+            // Set as template image before assigning
             [image setTemplate:YES];
+            
+            // Assign to button (button will retain the image)
+            statusItem_.button.image = image;
+        } else {
+            std::cerr << "Failed to create image from text: " << iconText << std::endl;
         }
     }
 }
 
-void MacOSTray::setIconFromFile(const std::string& imagePath) {
+void duorou::MacOSTray::setSystemIcon() {
+    if (!initialized_ || !statusItem_ || !statusItem_.button) {
+        std::cerr << "setSystemIcon failed: statusItem or button is nil" << std::endl;
+        return;
+    }
+    
+    @autoreleasepool {
+        // Use tree.circle system icon
+        NSImage* image = [NSImage imageWithSystemSymbolName:@"tree.circle" accessibilityDescription:nil];
+        if (image) {
+            [image setTemplate:YES];
+            statusItem_.button.image = image;
+        } else {
+            // Fallback: create a simple colored circle
+            NSImage* fallbackImage = [[NSImage alloc] initWithSize:NSMakeSize(16, 16)];
+            [fallbackImage lockFocus];
+            [[NSColor systemBlueColor] set];
+            NSBezierPath* circle = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(2, 2, 12, 12)];
+            [circle fill];
+            [fallbackImage unlockFocus];
+            [fallbackImage setTemplate:YES];
+            statusItem_.button.image = fallbackImage;
+            [fallbackImage release];
+        }
+    }
+}
+
+void duorou::MacOSTray::setIconFromFile(const std::string& imagePath) {
     if (!initialized_ || !statusItem_) {
         return;
     }
@@ -143,7 +180,7 @@ void MacOSTray::setIconFromFile(const std::string& imagePath) {
     }
 }
 
-void MacOSTray::setTooltip(const std::string& tooltip) {
+void duorou::MacOSTray::setTooltip(const std::string& tooltip) {
     if (!initialized_ || !statusItem_) {
         return;
     }
@@ -154,23 +191,18 @@ void MacOSTray::setTooltip(const std::string& tooltip) {
     }
 }
 
-void MacOSTray::clearMenu() {
+void duorou::MacOSTray::clearMenu() {
     if (!initialized_ || !menu_) {
         return;
     }
     
     @autoreleasepool {
-        // Clean up existing menu targets
-        for (auto& pair : menuTargets) {
-            [pair.second release];
-        }
-        menuTargets.clear();
-        
+        // Remove all menu items (targets will be automatically released)
         [menu_ removeAllItems];
     }
 }
 
-void MacOSTray::addMenuItem(const std::string& title, std::function<void()> callback) {
+void duorou::MacOSTray::addMenuItem(const std::string& title, std::function<void()> callback) {
     if (!initialized_ || !menu_) {
         return;
     }
@@ -182,20 +214,17 @@ void MacOSTray::addMenuItem(const std::string& title, std::function<void()> call
                                                    keyEquivalent:@""];
         
         // Create target object to handle the callback
-        MenuItemTarget* target = [[MenuItemTarget alloc] initWithCallback:new std::function<void()>(callback)];
+        MenuItemTarget* target = [[MenuItemTarget alloc] initWithCallback:callback];
         
         [menuItem setTarget:target];
         [menu_ addItem:menuItem];
         
-        // 保存target的引用，不需要额外retain因为menuItem会持有target
-        menuTargets[menuItem] = target;
-        
         [menuItem release];
-        // target会被menuItem持有，不需要在这里release
+        [target release]; // menuItem will retain target
     }
 }
 
-void MacOSTray::addSeparator() {
+void duorou::MacOSTray::addSeparator() {
     if (!initialized_ || !menu_) {
         return;
     }
@@ -206,7 +235,7 @@ void MacOSTray::addSeparator() {
     }
 }
 
-void MacOSTray::show() {
+void duorou::MacOSTray::show() {
     if (!initialized_) {
         return;
     }
@@ -230,55 +259,45 @@ void MacOSTray::show() {
     }
 }
 
-void MacOSTray::hide() {
+void duorou::MacOSTray::hide() {
     if (!initialized_ || !statusItem_) {
         return;
     }
     
-    // 移除statusItem而不是设置visible属性
     @autoreleasepool {
-        [[NSStatusBar systemStatusBar] removeStatusItem:statusItem_];
-        [statusItem_ release];
-        statusItem_ = nil;
-    }
-}
+         [[NSStatusBar systemStatusBar] removeStatusItem:statusItem_];
+         [statusItem_ release]; // Release the retained statusItem_
+         statusItem_ = nil;
+     }
+ }
 
-bool MacOSTray::isAvailable() const {
+bool duorou::MacOSTray::isAvailable() const {
     return initialized_ && statusItem_ != nullptr;
 }
 
-NSImage* MacOSTray::createImageFromText(const std::string& text) {
+NSImage* duorou::MacOSTray::createImageFromText(const std::string& text) {
     @autoreleasepool {
         NSString* textStr = [NSString stringWithUTF8String:text.c_str()];
         
-        // Create font and attributes for the text
-        NSFont* font = [NSFont systemFontOfSize:16];
+        // Create a simple text-based image
+        NSFont* font = [NSFont systemFontOfSize:12];
         NSDictionary* attributes = @{
             NSFontAttributeName: font,
             NSForegroundColorAttributeName: [NSColor blackColor]
         };
         
-        // Calculate text size
         NSSize textSize = [textStr sizeWithAttributes:attributes];
+        NSSize imageSize = NSMakeSize(textSize.width + 4, textSize.height + 4);
         
-        // Create image with appropriate size
-        NSSize imageSize = NSMakeSize(18, 18);
         NSImage* image = [[NSImage alloc] initWithSize:imageSize];
-        
         [image lockFocus];
         
-        // Clear the background
+        // Clear background
         [[NSColor clearColor] set];
         NSRectFill(NSMakeRect(0, 0, imageSize.width, imageSize.height));
         
-        // Calculate position to center the text
-        NSPoint drawPoint = NSMakePoint(
-            (imageSize.width - textSize.width) / 2,
-            (imageSize.height - textSize.height) / 2
-        );
-        
-        // Draw the text
-        [textStr drawAtPoint:drawPoint withAttributes:attributes];
+        // Draw text
+        [textStr drawAtPoint:NSMakePoint(2, 2) withAttributes:attributes];
         
         [image unlockFocus];
         

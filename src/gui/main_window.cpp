@@ -23,6 +23,9 @@ MainWindow::MainWindow()
     , settings_button_(nullptr)
     , chat_history_box_(nullptr)
     , current_view_("chat")
+#ifdef __APPLE__
+    , macos_tray_(std::make_unique<MacOSTray>())
+#endif
 {
 }
 
@@ -96,40 +99,40 @@ bool MainWindow::initialize() {
 
     // 初始化系统托盘
 #ifdef __APPLE__
-    // macOS系统托盘功能已实现但暂时禁用以调试其他组件的段错误问题
-    std::cout << "macOS system tray feature temporarily disabled for debugging" << std::endl;
-    // if (macos_tray_->initialize()) {
-    //     std::cout << "macOS system tray initialized successfully" << std::endl;
-    //     
-    //     // 设置托盘图标（花朵emoji）
-    //     macos_tray_->setIcon("🌸");
-    //     
-    //     // 添加菜单项
-    //     macos_tray_->addMenuItem("Show Window", [this]() {
-    //         gtk_window_present(GTK_WINDOW(window_));
-    //     });
-    //     
-    //     macos_tray_->addMenuItem("New Chat", [this]() {
-    //         // 触发新建聊天
-    //         if (chat_view_) {
-    //             // 这里可以添加新建聊天的逻辑
-    //             std::cout << "New chat requested from tray" << std::endl;
-    //         }
-    //     });
-    //     
-    //     macos_tray_->addMenuItem("Settings", [this]() {
-    //         // 打开设置窗口
-    //         std::cout << "Settings requested from tray" << std::endl;
-    //     });
-    //     
-    //     macos_tray_->addMenuItem("Quit", [this]() {
-    //         gtk_window_close(GTK_WINDOW(window_));
-    //     });
-    //     
-    //     macos_tray_->show();
-    // } else {
-    //     std::cerr << "Failed to initialize macOS system tray" << std::endl;
-    // }
+    if (macos_tray_ && macos_tray_->initialize()) {
+        std::cout << "macOS system tray initialized successfully" << std::endl;
+        
+        // 使用系统图标而不是emoji（emoji会导致崩溃）
+        macos_tray_->setSystemIcon();
+        macos_tray_->setTooltip("Duorou - AI Desktop Assistant");
+        
+        // 添加菜单项
+        macos_tray_->addMenuItem("Show Window", [this]() {
+            restore_from_tray();
+        });
+        
+        macos_tray_->addSeparator();
+        
+        macos_tray_->addMenuItem("New Chat", [this]() {
+            restore_from_tray();
+            create_new_chat();
+        });
+        
+        macos_tray_->addMenuItem("Settings", [this]() {
+            restore_from_tray();
+            show_settings();
+        });
+        
+        macos_tray_->addSeparator();
+        
+        macos_tray_->addMenuItem("Quit Duorou", [this]() {
+            quit_application();
+        });
+        
+        macos_tray_->show();
+    } else {
+        std::cerr << "Failed to initialize macOS system tray" << std::endl;
+    }
 #else
     // 在其他平台上使用GTK系统托盘（如果支持）
     std::cout << "System tray feature not implemented for this platform" << std::endl;
@@ -436,17 +439,60 @@ void MainWindow::on_settings_button_clicked(GtkWidget* widget, gpointer user_dat
 
 gboolean MainWindow::on_window_delete_event(GtkWindow* window, gpointer user_data) {
     MainWindow* main_window = static_cast<MainWindow*>(user_data);
-    // 只保存会话数据，不手动销毁窗口
-    // GTK4会自动处理窗口销毁
+    
+    // 保存会话数据
     if (main_window->session_manager_) {
         main_window->session_manager_->save_sessions_to_file("chat_sessions.txt");
     }
+    
+#ifdef __APPLE__
+    // 在macOS上，如果系统托盘可用，隐藏窗口而不是退出
+    if (main_window->macos_tray_ && main_window->macos_tray_->isAvailable()) {
+        main_window->hide();
+        return TRUE; // 阻止窗口关闭，只是隐藏
+    }
+#endif
+    
+    // 如果系统托盘不可用，正常退出
     return FALSE; // 允许窗口正常关闭
 }
 
 void MainWindow::on_window_destroy(GtkWidget* widget, gpointer user_data) {
     // 在GTK4中，通常不需要手动调用退出函数
     // 应用程序会自动处理
+}
+
+void MainWindow::restore_from_tray() {
+    if (window_) {
+        show();
+        gtk_window_present(GTK_WINDOW(window_));
+        
+        // 确保窗口获得焦点
+        gtk_window_set_focus_visible(GTK_WINDOW(window_), TRUE);
+    }
+}
+
+void MainWindow::set_tray_status(const std::string& status) {
+#ifdef __APPLE__
+    if (macos_tray_ && macos_tray_->isAvailable()) {
+        if (status == "idle") {
+            macos_tray_->setIcon("🌸");  // 花朵表示空闲
+            macos_tray_->setTooltip("Duorou - Ready");
+        } else if (status == "processing") {
+            macos_tray_->setIcon("⚡");  // 闪电表示处理中
+            macos_tray_->setTooltip("Duorou - Processing...");
+        } else if (status == "error") {
+            macos_tray_->setIcon("❌");  // 红叉表示错误
+            macos_tray_->setTooltip("Duorou - Error occurred");
+        } else if (status == "success") {
+            macos_tray_->setIcon("✅");  // 绿勾表示成功
+            macos_tray_->setTooltip("Duorou - Task completed");
+        } else {
+            macos_tray_->setIcon("🌸");  // 默认图标
+            macos_tray_->setTooltip("Duorou - AI Desktop Assistant");
+        }
+    }
+#endif
 }
 
 } // namespace gui
