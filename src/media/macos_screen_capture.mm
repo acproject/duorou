@@ -599,6 +599,91 @@ void cleanup_macos_screen_capture() {
   }
 }
 
+void update_macos_screen_capture_window(int window_id) {
+  if (@available(macOS 12.3, *)) {
+    if (!g_stream || !g_is_capturing) {
+      std::cout << "屏幕捕获未运行，无法更新窗口" << std::endl;
+      return;
+    }
+
+    std::cout << "更新屏幕捕获窗口ID: " << window_id << std::endl;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      @try {
+        [SCShareableContent getShareableContentWithCompletionHandler:^(
+            SCShareableContent *_Nullable content, NSError *_Nullable error) {
+          @try {
+            if (error || !content) {
+              std::cout << "获取可共享内容失败: " <<
+                  (error ? [[error localizedDescription] UTF8String] : "未知错误")
+                        << std::endl;
+              return;
+            }
+
+            SCDisplay *display = content.displays.firstObject;
+            if (!display) {
+              std::cout << "未找到显示器" << std::endl;
+              return;
+            }
+
+            SCContentFilter *filter = nil;
+            
+            // 根据 window_id 参数决定捕捉目标
+            if (window_id <= 0) {
+              // 捕捉整个桌面
+              std::cout << "更新为桌面捕捉..." << std::endl;
+              filter = [[SCContentFilter alloc] initWithDisplay:display
+                                              excludingWindows:@[]];
+            } else {
+              // 捕捉特定窗口
+              std::cout << "查找窗口ID: " << window_id << std::endl;
+              SCWindow *targetWindow = nil;
+              for (SCWindow *window in content.windows) {
+                if (window.windowID == window_id) {
+                  targetWindow = window;
+                  break;
+                }
+              }
+              
+              if (targetWindow) {
+                std::cout << "找到目标窗口: " << [targetWindow.title UTF8String]
+                          << " (" << [targetWindow.owningApplication.applicationName UTF8String] << ")" << std::endl;
+                filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
+              } else {
+                std::cout << "未找到窗口ID " << window_id << "，保持当前设置" << std::endl;
+                return;
+              }
+            }
+
+            if (!filter) {
+              std::cout << "创建内容过滤器失败" << std::endl;
+              return;
+            }
+
+            // 更新流的过滤器
+            [g_stream updateContentFilter:filter completionHandler:^(NSError *_Nullable error) {
+              if (error) {
+                std::cout << "更新内容过滤器失败: " <<
+                    [[error localizedDescription] UTF8String] << std::endl;
+              } else {
+                std::cout << "内容过滤器更新成功" << std::endl;
+              }
+            }];
+          } @catch (NSException *exception) {
+            std::cout << "更新窗口过滤器异常: " <<
+                [[exception description] UTF8String] << std::endl;
+          }
+        }];
+      } @catch (NSException *exception) {
+        std::cout << "更新屏幕捕获窗口异常: " <<
+            [[exception description] UTF8String] << std::endl;
+      }
+    });
+  } else {
+    std::cout << "ScreenCaptureKit 需要 macOS 12.3 或更高版本" << std::endl;
+  }
+}
+
 bool is_macos_camera_available() {
   @try {
     // 使用 AVFoundation 检测摄像头设备

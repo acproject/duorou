@@ -47,6 +47,14 @@ ChatView::ChatView()
     if (video_capture_) {
       video_capture_->set_capture_window_id(window_info.window_id);
       std::cout << "已设置捕获窗口ID: " << window_info.window_id << std::endl;
+      
+      // 如果正在录制，使用动态更新窗口功能
+      if (video_capture_->is_capturing()) {
+        std::cout << "动态更新屏幕捕获窗口..." << std::endl;
+#ifdef __APPLE__
+        duorou::media::update_macos_screen_capture_window(window_info.window_id);
+#endif
+      }
     }
   });
   
@@ -54,8 +62,82 @@ ChatView::ChatView()
   enhanced_video_window_->set_device_selection_callback([this](const EnhancedVideoCaptureWindow::DeviceInfo& device_info) {
     std::cout << "设备选择: " << device_info.name << " (索引: " << device_info.device_index << ")" << std::endl;
     if (video_capture_) {
+      // 记录当前是否在录制状态
+      bool was_capturing = video_capture_->is_capturing();
+      
+      // 如果正在录制，先停止当前捕获
+      if (was_capturing) {
+        std::cout << "停止当前摄像头捕获以应用新设备选择..." << std::endl;
+        video_capture_->stop_capture();
+      }
+      
       video_capture_->set_camera_device_index(device_info.device_index);
       std::cout << "已设置捕获设备索引: " << device_info.device_index << std::endl;
+      
+      // 如果选择的是有效设备（索引>=0），总是尝试启动摄像头
+      if (device_info.device_index >= 0) {
+        std::cout << "重新初始化并启动摄像头捕获..." << std::endl;
+        
+        // 重新创建视频捕获对象以确保完全重置
+        video_capture_.reset();
+        video_capture_ = std::make_unique<media::VideoCapture>();
+        
+        // 设置视频帧回调
+        video_capture_->set_frame_callback([this](const media::VideoFrame &frame) {
+          static int camera_frame_count = 0;
+          camera_frame_count++;
+          
+          if (camera_frame_count <= 5 || camera_frame_count % 30 == 0) {
+            std::cout << "收到摄像头视频帧 #" << camera_frame_count << ": " << frame.width << "x" << frame.height << std::endl;
+          }
+          
+          auto now = std::chrono::steady_clock::now();
+          auto time_since_last_update = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_video_update_).count();
+          
+          if (time_since_last_update >= VIDEO_UPDATE_INTERVAL_MS) {
+            last_video_update_ = now;
+            
+            if (enhanced_video_window_) {
+              media::VideoFrame *frame_copy = new media::VideoFrame(frame);
+              
+              g_idle_add([](gpointer user_data) -> gboolean {
+                auto *data = static_cast<std::pair<ChatView *, media::VideoFrame *> *>(user_data);
+                ChatView *chat_view = data->first;
+                media::VideoFrame *frame_ptr = data->second;
+                
+                if (chat_view->enhanced_video_window_) {
+                  try {
+                    chat_view->enhanced_video_window_->update_frame(*frame_ptr);
+                    
+                    if (!chat_view->enhanced_video_window_->is_visible()) {
+                      std::cout << "显示摄像头视频窗口..." << std::endl;
+                      chat_view->enhanced_video_window_->show(EnhancedVideoCaptureWindow::CaptureMode::CAMERA);
+                    }
+                  } catch (const std::exception &e) {
+                    std::cout << "更新摄像头视频帧时出错: " << e.what() << std::endl;
+                  }
+                }
+                
+                delete frame_ptr;
+                delete data;
+                return G_SOURCE_REMOVE;
+              }, new std::pair<ChatView *, media::VideoFrame *>(this, frame_copy));
+            }
+          }
+        });
+        
+        // 重新初始化以应用新的设备索引
+        if (video_capture_->initialize(duorou::media::VideoSource::CAMERA, device_info.device_index) &&
+            video_capture_->start_capture()) {
+          is_recording_ = true;
+          std::cout << "摄像头捕获已启动，新设备选择已生效" << std::endl;
+        } else {
+          std::cout << "启动摄像头捕获失败" << std::endl;
+        }
+      } else if (device_info.device_index == -1) {
+        is_recording_ = false;
+        std::cout << "摄像头已禁用，停止捕获" << std::endl;
+      }
     }
   });
 }
