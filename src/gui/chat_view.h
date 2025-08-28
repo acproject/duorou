@@ -3,7 +3,7 @@
 
 #include "../media/audio_capture.h"
 #include "../media/video_frame.h"
-#include "video_display_window.h"
+#include "enhanced_video_capture_window.h"
 #include "video_source_dialog.h"
 #include <chrono>
 #include <gtk/gtk.h>
@@ -86,7 +86,7 @@ private:
   // 媒体捕获相关
   std::unique_ptr<media::VideoCapture> video_capture_;
   std::unique_ptr<media::AudioCapture> audio_capture_;
-  std::unique_ptr<VideoDisplayWindow> video_display_window_;
+  std::unique_ptr<EnhancedVideoCaptureWindow> enhanced_video_window_;
   std::unique_ptr<VideoSourceDialog> video_source_dialog_;
   bool is_recording_; // 录制状态标记
 

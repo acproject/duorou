@@ -21,18 +21,41 @@ ChatView::ChatView()
       selected_file_path_(""), model_selector_(nullptr),
       input_container_(nullptr), welcome_cleared_(false),
       video_capture_(nullptr), audio_capture_(nullptr),
-      video_display_window_(std::make_unique<VideoDisplayWindow>()),
+      enhanced_video_window_(std::make_unique<EnhancedVideoCaptureWindow>()),
       video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
       cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
+  // 初始化增强视频窗口
+  if (enhanced_video_window_) {
+    enhanced_video_window_->initialize();
+  }
+  
   // 设置视频窗口关闭回调
-  video_display_window_->set_close_callback([this]() {
+  enhanced_video_window_->set_close_callback([this]() {
     stop_recording();
     // 确保按钮被重新启用
     if (video_record_button_) {
       gtk_widget_set_sensitive(video_record_button_, TRUE);
+    }
+  });
+  
+  // 设置窗口选择回调（桌面捕获模式）
+  enhanced_video_window_->set_window_selection_callback([this](const EnhancedVideoCaptureWindow::WindowInfo& window_info) {
+    std::cout << "窗口选择: " << window_info.title << " (ID: " << window_info.window_id << ")" << std::endl;
+    if (video_capture_) {
+      video_capture_->set_capture_window_id(window_info.window_id);
+      std::cout << "已设置捕获窗口ID: " << window_info.window_id << std::endl;
+    }
+  });
+  
+  // 设置设备选择回调（摄像头模式）
+  enhanced_video_window_->set_device_selection_callback([this](const EnhancedVideoCaptureWindow::DeviceInfo& device_info) {
+    std::cout << "设备选择: " << device_info.name << " (索引: " << device_info.device_index << ")" << std::endl;
+    if (video_capture_) {
+      video_capture_->set_camera_device_index(device_info.device_index);
+      std::cout << "已设置捕获设备索引: " << device_info.device_index << std::endl;
     }
   });
 }
@@ -64,10 +87,10 @@ ChatView::~ChatView() {
   }
 
   // 2. 清除视频窗口的关闭回调，避免在析构时触发
-  if (video_display_window_) {
+  if (enhanced_video_window_) {
     try {
-      video_display_window_->set_close_callback(nullptr);
-      video_display_window_->hide();
+      enhanced_video_window_->set_close_callback(nullptr);
+      enhanced_video_window_->hide();
     } catch (const std::exception &e) {
       std::cout << "析构时处理视频窗口异常: " << e.what() << std::endl;
     }
@@ -81,9 +104,9 @@ ChatView::~ChatView() {
   }
 
   // 4. 清理视频显示窗口
-  if (video_display_window_) {
+  if (enhanced_video_window_) {
     try {
-      video_display_window_.reset();
+      enhanced_video_window_.reset();
     } catch (const std::exception &e) {
       std::cout << "析构时清理视频窗口异常: " << e.what() << std::endl;
     }
@@ -320,8 +343,9 @@ void ChatView::create_input_area() {
 
   // 创建录制视频按钮图标 - 使用相对路径
   std::string icon_path_base = "src/gui/";
-  video_off_image_ =
-      gtk_picture_new_for_filename((icon_path_base + "video-off.png").c_str());
+  // video_off_image_ =
+  // gtk_picture_new_for_filename((icon_path_base +
+  // "video-off.png").c_str());
   video_off_image_ =
       gtk_picture_new_for_filename((icon_path_base + "video-on.png").c_str());
 
@@ -859,7 +883,7 @@ void ChatView::start_desktop_capture() {
       last_video_update_ = now;
 
       // 直接更新视频显示窗口，避免复杂的内存分配
-      if (video_display_window_) {
+      if (enhanced_video_window_) {
         // 创建帧的副本用于异步更新
         media::VideoFrame *frame_copy = new media::VideoFrame(frame);
 
@@ -872,14 +896,14 @@ void ChatView::start_desktop_capture() {
               media::VideoFrame *frame_ptr = data->second;
 
               // 检查ChatView对象是否仍然有效
-              if (chat_view && chat_view->video_display_window_) {
+              if (chat_view && chat_view->enhanced_video_window_) {
                 try {
-                  chat_view->video_display_window_->update_frame(*frame_ptr);
+                  chat_view->enhanced_video_window_->update_frame(*frame_ptr);
 
                   // 只在第一次显示时输出日志
-                  if (!chat_view->video_display_window_->is_visible()) {
+                  if (!chat_view->enhanced_video_window_->is_visible()) {
                     std::cout << "显示视频窗口..." << std::endl;
-                    chat_view->video_display_window_->show();
+                    chat_view->enhanced_video_window_->show(EnhancedVideoCaptureWindow::CaptureMode::DESKTOP);
                   }
                 } catch (const std::exception &e) {
                   std::cout << "更新视频帧时出错: " << e.what() << std::endl;
@@ -1126,7 +1150,7 @@ void ChatView::start_camera_capture() {
       last_video_update_ = now;
 
       // 直接更新视频显示窗口，避免复杂的内存分配
-      if (video_display_window_) {
+      if (enhanced_video_window_) {
         // 创建帧的副本用于异步更新
         media::VideoFrame *frame_copy = new media::VideoFrame(frame);
 
@@ -1138,15 +1162,17 @@ void ChatView::start_camera_capture() {
               ChatView *chat_view = data->first;
               media::VideoFrame *frame_ptr = data->second;
 
-              if (chat_view->video_display_window_) {
-                chat_view->video_display_window_->update_frame(*frame_ptr);
-                if (!chat_view->video_display_window_->is_visible()) {
-                  static bool window_shown_logged = false;
-                  if (!window_shown_logged) {
+              if (chat_view->enhanced_video_window_) {
+                try {
+                  chat_view->enhanced_video_window_->update_frame(*frame_ptr);
+
+                  // 只在第一次显示时输出日志
+                  if (!chat_view->enhanced_video_window_->is_visible()) {
                     std::cout << "显示摄像头视频窗口..." << std::endl;
-                    window_shown_logged = true;
+                    chat_view->enhanced_video_window_->show(EnhancedVideoCaptureWindow::CaptureMode::CAMERA);
                   }
-                  chat_view->video_display_window_->show();
+                } catch (const std::exception &e) {
+                  std::cout << "更新摄像头视频帧时出错: " << e.what() << std::endl;
                 }
               }
 
@@ -1410,9 +1436,9 @@ void ChatView::stop_recording() {
   }
 
   // 隐藏视频显示窗口
-  if (video_display_window_) {
+  if (enhanced_video_window_) {
     try {
-      video_display_window_->hide();
+      enhanced_video_window_->hide();
     } catch (const std::exception &e) {
       std::cout << "Error hiding video window: " << e.what() << std::endl;
     }
@@ -1611,9 +1637,9 @@ void ChatView::reset_state() {
   }
 
   // 隐藏视频显示窗口
-  if (video_display_window_) {
+  if (enhanced_video_window_) {
     try {
-      video_display_window_->hide();
+      enhanced_video_window_->hide();
     } catch (const std::exception &e) {
       std::cout << "隐藏视频窗口时出错: " << e.what() << std::endl;
     }

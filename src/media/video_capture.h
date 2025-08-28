@@ -65,6 +65,12 @@ public:
     // 获取桌面分辨率
     static std::pair<int, int> get_desktop_resolution();
     
+    // 设置桌面捕获的窗口ID（仅在桌面捕获模式下有效）
+    void set_capture_window_id(int window_id);
+    
+    // 设置摄像头设备索引（仅在摄像头模式下有效）
+    void set_camera_device_index(int device_index);
+    
 private:
     class Impl;
     std::unique_ptr<Impl> pImpl;

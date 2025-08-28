@@ -38,6 +38,8 @@ class VideoCapture::Impl {
 public:
   VideoSource source = VideoSource::NONE;
   int device_id = 0;
+  int window_id = -1;  // 桌面捕获时的窗口ID，-1表示整个桌面
+  int camera_device_index = 0;  // 摄像头设备索引
   bool capturing = false;
   std::function<void(const VideoFrame &)> frame_callback;
   std::thread capture_thread;
@@ -159,20 +161,45 @@ public:
     // 创建桌面捕获管道
 #ifdef __APPLE__
     // macOS 使用 avfvideosrc 捕获屏幕，避免GTK依赖
-    std::string pipeline_str =
-        "avfvideosrc capture-screen=true ! "
-        "video/x-raw,format=BGRA,width=1280,height=720,framerate=15/1 ! "
-        "videoconvert ! "
-        "video/x-raw,format=RGB ! "
-        "appsink name=sink emit-signals=true sync=false max-buffers=1 "
-        "drop=true";
+    std::string pipeline_str;
+    if (window_id == -1 || window_id == 0) {
+      // 捕获整个桌面
+      pipeline_str =
+          "avfvideosrc capture-screen=true ! "
+          "video/x-raw,format=BGRA,width=1280,height=720,framerate=15/1 ! "
+          "videoconvert ! "
+          "video/x-raw,format=RGB ! "
+          "appsink name=sink emit-signals=true sync=false max-buffers=1 "
+          "drop=true";
+    } else {
+      // avfvideosrc 不直接支持窗口捕获，回退到整个桌面
+      std::cout << "avfvideosrc 不支持特定窗口捕获，将捕获整个桌面" << std::endl;
+      pipeline_str =
+          "avfvideosrc capture-screen=true ! "
+          "video/x-raw,format=BGRA,width=1280,height=720,framerate=15/1 ! "
+          "videoconvert ! "
+          "video/x-raw,format=RGB ! "
+          "appsink name=sink emit-signals=true sync=false max-buffers=1 "
+          "drop=true";
+    }
 #elif defined(__linux__)
     // Linux 使用 ximagesrc 捕获屏幕
-    std::string pipeline_str =
-        "ximagesrc ! "
-        "videoconvert ! "
-        "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
-        "appsink name=sink";
+    std::string pipeline_str;
+    if (window_id == -1 || window_id == 0) {
+      // 捕获整个桌面
+      pipeline_str =
+          "ximagesrc ! "
+          "videoconvert ! "
+          "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
+          "appsink name=sink";
+    } else {
+      // 捕获特定窗口
+      pipeline_str =
+          "ximagesrc xid=" + std::to_string(window_id) + " ! "
+          "videoconvert ! "
+          "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
+          "appsink name=sink";
+    }
 #else
     std::cout << "当前平台不支持 GStreamer 桌面捕获" << std::endl;
     return false;
@@ -261,6 +288,14 @@ public:
   }
 
   bool initialize_camera_capture(int device_id) {
+    // 如果 camera_device_index 为 -1，表示禁用摄像头
+    if (camera_device_index == -1) {
+      return false;
+    }
+    
+    // 使用 camera_device_index 而不是 device_id
+    int actual_device_id = camera_device_index;
+    
 #ifdef HAVE_GSTREAMER
     if (!initialize_gstreamer()) {
       return false;
@@ -270,7 +305,7 @@ public:
 #ifdef __APPLE__
     // macOS 使用 avfvideosrc 捕获摄像头
     std::string pipeline_str =
-        "avfvideosrc device-index=" + std::to_string(device_id) +
+        "avfvideosrc device-index=" + std::to_string(actual_device_id) +
         " ! "
         "videoconvert ! "
         "video/x-raw,format=RGB,width=640,height=480,framerate=30/1 ! "
@@ -278,7 +313,7 @@ public:
 #elif defined(__linux__)
     // Linux 使用 v4l2src 捕获摄像头
     std::string pipeline_str =
-        "v4l2src device=/dev/video" + std::to_string(device_id) +
+        "v4l2src device=/dev/video" + std::to_string(actual_device_id) +
         " ! "
         "videoconvert ! "
         "video/x-raw,format=RGB,width=640,height=480,framerate=30/1 ! "
@@ -310,14 +345,14 @@ public:
     // 配置 appsink
     g_object_set(appsink, "emit-signals", TRUE, "sync", FALSE, nullptr);
 
-    std::cout << "GStreamer 摄像头捕获初始化成功，设备: " << device_id
+    std::cout << "GStreamer 摄像头捕获初始化成功，设备: " << actual_device_id
               << std::endl;
     return true;
 #elif defined(HAVE_OPENCV)
     // 回退到 OpenCV 实现
-    opencv_capture.open(device_id);
+    opencv_capture.open(actual_device_id);
     if (!opencv_capture.isOpened()) {
-      std::cout << "无法打开摄像头设备 " << device_id << std::endl;
+      std::cout << "无法打开摄像头设备 " << actual_device_id << std::endl;
       return false;
     }
 
@@ -326,7 +361,7 @@ public:
     opencv_capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     opencv_capture.set(cv::CAP_PROP_FPS, 30);
 
-    std::cout << "成功初始化摄像头设备 " << device_id << " (OpenCV)"
+    std::cout << "成功初始化摄像头设备 " << actual_device_id << " (OpenCV)"
               << std::endl;
     return true;
 #else
@@ -608,7 +643,7 @@ bool VideoCapture::start_capture() {
   // 如果是桌面捕获，总是尝试启动ScreenCaptureKit
   if (pImpl->source == VideoSource::DESKTOP_CAPTURE) {
     std::cout << "尝试启动 ScreenCaptureKit..." << std::endl;
-    if (duorou::media::start_macos_screen_capture(pImpl->frame_callback)) {
+    if (duorou::media::start_macos_screen_capture(pImpl->frame_callback, pImpl->window_id)) {
       std::cout << "ScreenCaptureKit 已成功启动" << std::endl;
     } else {
       std::cout << "启动 ScreenCaptureKit 失败，将使用后备实现" << std::endl;
@@ -739,6 +774,18 @@ std::pair<int, int> VideoCapture::get_desktop_resolution() {
   }
 #endif
   return {1920, 1080}; // 默认分辨率
+}
+
+void VideoCapture::set_capture_window_id(int window_id) {
+  std::lock_guard<std::mutex> lock(pImpl->mutex);
+  pImpl->window_id = window_id;
+  std::cout << "设置桌面捕获窗口ID: " << window_id << std::endl;
+}
+
+void VideoCapture::set_camera_device_index(int device_index) {
+  std::lock_guard<std::mutex> lock(pImpl->mutex);
+  pImpl->camera_device_index = device_index;
+  std::cout << "设置摄像头设备索引: " << device_index << std::endl;
 }
 
 } // namespace media

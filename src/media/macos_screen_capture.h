@@ -14,7 +14,7 @@ namespace media {
 bool check_screen_recording_permission();
 bool initialize_macos_screen_capture();
 bool start_macos_screen_capture(
-    std::function<void(const VideoFrame &)> callback);
+    std::function<void(const VideoFrame &)> callback, int window_id = -1);
 void stop_macos_screen_capture();
 bool is_macos_screen_capture_running();
 void cleanup_macos_screen_capture();

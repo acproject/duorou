@@ -251,7 +251,7 @@ bool initialize_macos_screen_capture() {
 }
 
 bool start_macos_screen_capture(
-    std::function<void(const VideoFrame &)> callback) {
+    std::function<void(const VideoFrame &)> callback, int window_id) {
   if (@available(macOS 12.3, *)) {
     // 检查是否需要重启
     if (g_needs_restart && g_is_capturing) {
@@ -316,9 +316,36 @@ bool start_macos_screen_capture(
                       << ", 尺寸: " << display.width << "x" << display.height
                       << std::endl;
 
-            SCContentFilter *filter =
-                [[SCContentFilter alloc] initWithDisplay:display
-                                        excludingWindows:@[]];
+            SCContentFilter *filter = nil;
+            
+            // 根据 window_id 参数决定捕捉目标
+            if (window_id <= 0) {
+              // 捕捉整个桌面
+              std::cout << "创建桌面捕捉过滤器..." << std::endl;
+              filter = [[SCContentFilter alloc] initWithDisplay:display
+                                              excludingWindows:@[]];
+            } else {
+              // 捕捉特定窗口
+              std::cout << "查找窗口ID: " << window_id << std::endl;
+              SCWindow *targetWindow = nil;
+              for (SCWindow *window in content.windows) {
+                if (window.windowID == window_id) {
+                  targetWindow = window;
+                  break;
+                }
+              }
+              
+              if (targetWindow) {
+                std::cout << "找到目标窗口: " << [targetWindow.title UTF8String]
+                          << " (" << [targetWindow.owningApplication.applicationName UTF8String] << ")" << std::endl;
+                filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
+              } else {
+                std::cout << "未找到窗口ID " << window_id << "，回退到桌面捕捉" << std::endl;
+                filter = [[SCContentFilter alloc] initWithDisplay:display
+                                                excludingWindows:@[]];
+              }
+            }
+            
             if (!filter) {
               std::cout << "创建内容过滤器失败" << std::endl;
               g_is_capturing = false;
