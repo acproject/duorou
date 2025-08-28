@@ -149,12 +149,12 @@ public:
 
     void setMenu(const std::vector<TrayMenuItem>& menu_items) {
         menu_items_ = menu_items;
-        rebuildMenu();
+        markMenuForRebuild();
     }
 
     void addMenuItem(const TrayMenuItem& item) {
         menu_items_.push_back(item);
-        rebuildMenu();
+        markMenuForRebuild();
     }
 
     void removeMenuItem(const std::string& item_id) {
@@ -164,7 +164,7 @@ public:
                               return item.id == item_id;
                           }),
             menu_items_.end());
-        rebuildMenu();
+        markMenuForRebuild();
     }
 
     void setMenuItemEnabled(const std::string& item_id, bool enabled) {
@@ -174,7 +174,274 @@ public:
                 break;
             }
         }
+        markMenuForRebuild();
+    }
+
+    TrayMenuItem* findMenuItem(const std::string& item_id) {
+        for (auto& item : menu_items_) {
+            if (item.id == item_id) {
+                return &item;
+            }
+        }
+        return nullptr;
+    }
+
+    bool updateMenuItemLabel(const std::string& item_id, const std::string& label) {
+        auto* item = findMenuItem(item_id);
+        if (item) {
+            item->label = label;
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    bool updateMenuItemIcon(const std::string& item_id, const std::string& icon_name) {
+        auto* item = findMenuItem(item_id);
+        if (item) {
+            item->icon = icon_name;
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    bool updateMenuItemCallback(const std::string& item_id, std::function<void()> callback) {
+        auto* item = findMenuItem(item_id);
+        if (item) {
+            item->callback = callback;
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    void addMenuItems(const std::vector<TrayMenuItem>& items) {
+        menu_items_.insert(menu_items_.end(), items.begin(), items.end());
+        markMenuForRebuild();
+    }
+
+    void removeMenuItems(const std::vector<std::string>& item_ids) {
+        for (const auto& item_id : item_ids) {
+            menu_items_.erase(
+                std::remove_if(menu_items_.begin(), menu_items_.end(),
+                              [&item_id](const TrayMenuItem& item) {
+                                  return item.id == item_id;
+                              }),
+                menu_items_.end());
+        }
+        markMenuForRebuild();
+    }
+
+    void clearMenu() {
+        menu_items_.clear();
+        markMenuForRebuild();
+    }
+    
+    void updateWindowStateMenu(bool window_visible) {
+        // 根据窗口状态更新显示/隐藏菜单项的可见性
+        for (auto& item : menu_items_) {
+            if (item.id == "show") {
+                item.visible = !window_visible;  // 窗口隐藏时显示"显示窗口"
+            } else if (item.id == "hide") {
+                item.visible = window_visible;   // 窗口显示时显示"隐藏窗口"
+            }
+        }
+        markMenuForRebuild();
+    }
+
+    const std::vector<TrayMenuItem>& getMenuItems() const {
+        return menu_items_;
+    }
+
+    bool hasMenuItem(const std::string& item_id) const {
+        return std::any_of(menu_items_.begin(), menu_items_.end(),
+                          [&item_id](const TrayMenuItem& item) {
+                              return item.id == item_id;
+                          });
+    }
+
+    bool addSubMenuItem(const std::string& parent_id, const TrayMenuItem& item) {
+        auto* parent = findMenuItem(parent_id);
+        if (parent) {
+            parent->submenu.push_back(item);
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    bool removeSubMenuItem(const std::string& parent_id, const std::string& item_id) {
+        auto* parent = findMenuItem(parent_id);
+        if (parent) {
+            auto it = std::remove_if(parent->submenu.begin(), parent->submenu.end(),
+                                   [&item_id](const TrayMenuItem& item) {
+                                       return item.id == item_id;
+                                   });
+            if (it != parent->submenu.end()) {
+                parent->submenu.erase(it, parent->submenu.end());
+                markMenuForRebuild();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    TrayMenuItem* findSubMenuItem(const std::string& parent_id, const std::string& item_id) {
+        auto* parent = findMenuItem(parent_id);
+        if (parent) {
+            for (auto& subitem : parent->submenu) {
+                if (subitem.id == item_id) {
+                    return &subitem;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool setSubMenu(const std::string& parent_id, const std::vector<TrayMenuItem>& submenu_items) {
+        auto* parent = findMenuItem(parent_id);
+        if (parent) {
+            parent->submenu = submenu_items;
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    bool clearSubMenu(const std::string& parent_id) {
+        auto* parent = findMenuItem(parent_id);
+        if (parent) {
+            parent->submenu.clear();
+            markMenuForRebuild();
+            return true;
+        }
+        return false;
+    }
+
+    // Menu item state management methods
+    void setMenuItemVisible(const std::string& itemId, bool visible) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->visible != visible) {
+            item->visible = visible;
+            markMenuForRebuild();
+        }
+    }
+    
+    bool isMenuItemVisible(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->visible : false;
+    }
+    
+    void setMenuItemChecked(const std::string& itemId, bool checked) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->checked != checked) {
+            item->checked = checked;
+            markMenuForRebuild();
+        }
+    }
+    
+    bool isMenuItemChecked(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->checked : false;
+    }
+    
+    void setMenuItemBadge(const std::string& itemId, const std::string& badge) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->badge != badge) {
+            item->badge = badge;
+            markMenuForRebuild();
+        }
+    }
+    
+    std::string getMenuItemBadge(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->badge : "";
+    }
+    
+    void setMenuItemTooltip(const std::string& itemId, const std::string& tooltip) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->tooltip != tooltip) {
+            item->tooltip = tooltip;
+            markMenuForRebuild();
+        }
+    }
+    
+    std::string getMenuItemTooltip(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->tooltip : "";
+    }
+    
+    // Shortcut and priority management methods
+    void setMenuItemShortcut(const std::string& itemId, const std::string& shortcut) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->shortcut != shortcut) {
+            item->shortcut = shortcut;
+            markMenuForRebuild();
+        }
+    }
+    
+    std::string getMenuItemShortcut(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->shortcut : "";
+    }
+    
+    void setMenuItemPriority(const std::string& itemId, int priority) {
+        auto* item = findMenuItem(itemId);
+        if (item && item->priority != priority) {
+            item->priority = priority;
+            sortMenuItemsByPriority();
+            markMenuForRebuild();
+        }
+    }
+    
+    int getMenuItemPriority(const std::string& itemId) const {
+        auto* item = const_cast<Impl*>(this)->findMenuItem(itemId);
+        return item ? item->priority : 0;
+    }
+    
+    void setMenuItemToggleCallback(const std::string& itemId, std::function<void(bool)> callback) {
+        auto* item = findMenuItem(itemId);
+        if (item) {
+            item->toggle_callback = callback;
+        }
+    }
+    
+    void sortMenuItemsByPriority() {
+        std::sort(menu_items_.begin(), menu_items_.end(), 
+                  [](const TrayMenuItem& a, const TrayMenuItem& b) {
+                      return a.priority > b.priority; // 高优先级在前
+                  });
+        
+        // 递归排序子菜单
+        for (auto& item : menu_items_) {
+            if (!item.submenu.empty()) {
+                std::sort(item.submenu.begin(), item.submenu.end(),
+                          [](const TrayMenuItem& a, const TrayMenuItem& b) {
+                              return a.priority > b.priority;
+                          });
+            }
+        }
+    }
+    
+    // Performance optimization methods
+    void batchUpdateMenuItems(std::function<void()> updates) {
+        bool old_rebuild_flag = menu_needs_rebuild_;
+        menu_needs_rebuild_ = false; // 暂时禁用重建
+        
+        updates(); // 执行批量更新
+        
+        if (old_rebuild_flag || menu_needs_rebuild_) {
+            markMenuForRebuild();
+        }
+    }
+    
+    void forceRebuildMenu() {
         rebuildMenu();
+    }
+    
+    bool needsMenuRebuild() const {
+        return menu_needs_rebuild_;
     }
 
     void showNotification(const std::string& title, const std::string& message,
@@ -209,24 +476,105 @@ public:
     std::function<void()> right_click_callback_;
     std::function<void()> double_click_callback_;
     std::function<void(TrayStatus)> status_change_callback_;
+    std::function<void()> quit_callback_;  // 退出回调函数
+    bool menu_needs_rebuild_;
 
 private:
     void createDefaultMenu() {
-        menu_items_ = {
-            {"show", "显示主窗口", "", true, false, [this]() {
-                if (left_click_callback_) left_click_callback_();
-            }},
-            {"separator1", "", "", true, true, nullptr},
-            {"status", "状态: 空闲", "", false, false, nullptr},
-            {"separator2", "", "", true, true, nullptr},
-            {"quit", "退出", "", true, false, [this]() {
-                // 退出应用程序
-                std::exit(0);
-            }}
+        menu_items_.clear();
+        
+        // Show Window 菜单项
+        TrayMenuItem show_window_item;
+        show_window_item.id = "show_window";
+        show_window_item.label = "Show Window";
+        show_window_item.icon = "";
+        show_window_item.enabled = true;
+        show_window_item.separator = false;
+        show_window_item.visible = true;
+        show_window_item.callback = [this]() {
+            if (left_click_callback_) left_click_callback_();
         };
+        menu_items_.push_back(show_window_item);
+        
+        TrayMenuItem show_item;
+        show_item.id = "show";
+        show_item.label = "显示主窗口";
+        show_item.icon = "";
+        show_item.enabled = true;
+        show_item.separator = false;
+        show_item.visible = true;
+        show_item.callback = [this]() {
+            if (left_click_callback_) left_click_callback_();
+        };
+        menu_items_.push_back(show_item);
+        
+        TrayMenuItem hide_item;
+        hide_item.id = "hide";
+        hide_item.label = "隐藏窗口";
+        hide_item.icon = "";
+        hide_item.enabled = true;
+        hide_item.separator = false;
+        hide_item.visible = false;  // 初始时隐藏，根据窗口状态动态显示
+        hide_item.callback = [this]() {
+            if (right_click_callback_) right_click_callback_();
+        };
+        menu_items_.push_back(hide_item);
+        
+        TrayMenuItem sep1;
+        sep1.id = "separator1";
+        sep1.label = "";
+        sep1.icon = "";
+        sep1.enabled = true;
+        sep1.separator = true;
+        menu_items_.push_back(sep1);
+        
+        TrayMenuItem status_item;
+        status_item.id = "status";
+        status_item.label = "状态: 空闲";
+        status_item.icon = "";
+        status_item.enabled = false;
+        status_item.separator = false;
+        menu_items_.push_back(status_item);
+        
+        TrayMenuItem sep2;
+        sep2.id = "separator2";
+        sep2.label = "";
+        sep2.icon = "";
+        sep2.enabled = true;
+        sep2.separator = true;
+        menu_items_.push_back(sep2);
+        
+        TrayMenuItem quit_item;
+        quit_item.id = "quit";
+        quit_item.label = "Quit Duorou";
+        quit_item.icon = "";
+        quit_item.enabled = true;
+        quit_item.separator = false;
+        quit_item.callback = [this]() {
+            // 调用退出回调函数，而不是直接调用std::exit
+            if (quit_callback_) {
+                quit_callback_();
+            } else {
+                // 如果没有设置退出回调，则使用默认退出方式
+                std::exit(0);
+            }
+        };
+        menu_items_.push_back(quit_item);
+        
         rebuildMenu();
     }
 
+    void markMenuForRebuild() {
+        menu_needs_rebuild_ = true;
+    }
+    
+    void rebuildMenuIfNeeded() {
+        if (menu_needs_rebuild_) {
+            rebuildMenu();
+            menu_needs_rebuild_ = false;
+        }
+    }
+    
     void rebuildMenu() {
         // 清理旧菜单
         if (menu_) {
@@ -237,20 +585,60 @@ private:
         menu_ = gtk_popover_menu_new_from_model(nullptr);
         menu_item_map_.clear();
 
-        for (const auto& item : menu_items_) {
+        buildMenuItems(menu_items_, menu_);
+        
+        gtk_widget_show(menu_);
+        menu_needs_rebuild_ = false;
+    }
+
+    void buildMenuItems(const std::vector<TrayMenuItem>& items, GtkWidget* parent_menu) {
+        for (const auto& item : items) {
+            // Skip invisible items
+            if (!item.visible) {
+                continue;
+            }
+            
             GtkWidget* menu_item;
             
             if (item.separator) {
                 // GTK4: 简化分隔符处理
                 continue;
             } else {
-                menu_item = gtk_button_new_with_label(item.label.c_str());
+                std::string label = item.label;
+                 
+                 // Add badge if present
+                 if (!item.badge.empty()) {
+                     label += " [" + item.badge + "]";
+                 }
+                 
+                 // Add check mark if checked
+                 if (item.checked) {
+                     label = "✓ " + label;
+                 }
+                 
+                 // Add shortcut if present
+                 if (!item.shortcut.empty()) {
+                     label += "\t" + item.shortcut;
+                 }
+                
+                menu_item = gtk_button_new_with_label(label.c_str());
                 
                 // 设置启用状态
                 gtk_widget_set_sensitive(menu_item, item.enabled);
                 
-                // 连接回调
-                if (item.callback) {
+                // Set tooltip if present
+                if (!item.tooltip.empty()) {
+                    gtk_widget_set_tooltip_text(menu_item, item.tooltip.c_str());
+                }
+                
+                // 如果有子菜单，创建子菜单
+                if (!item.submenu.empty()) {
+                    GtkWidget* submenu = gtk_popover_menu_new_from_model(nullptr);
+                    buildMenuItems(item.submenu, submenu);
+                    // GTK4: 简化子菜单设置
+                    g_object_set_data(G_OBJECT(menu_item), "submenu", submenu);
+                } else if (item.callback) {
+                    // 连接回调（只有叶子节点才有回调）
                     g_object_set_data(G_OBJECT(menu_item), "callback_ptr", 
                                      const_cast<std::function<void()>*>(&item.callback));
                     g_signal_connect(menu_item, "clicked", 
@@ -260,8 +648,6 @@ private:
             
             menu_item_map_[item.id] = menu_item;
         }
-        
-        gtk_widget_show(menu_);
     }
 
     void updateStatusIcon() {
@@ -428,6 +814,133 @@ void SystemTray::setMenuItemEnabled(const std::string& item_id, bool enabled) {
     pimpl_->setMenuItemEnabled(item_id, enabled);
 }
 
+TrayMenuItem* SystemTray::findMenuItem(const std::string& item_id) {
+    return pimpl_->findMenuItem(item_id);
+}
+
+bool SystemTray::updateMenuItemLabel(const std::string& item_id, const std::string& label) {
+    return pimpl_->updateMenuItemLabel(item_id, label);
+}
+
+bool SystemTray::updateMenuItemIcon(const std::string& item_id, const std::string& icon_name) {
+    return pimpl_->updateMenuItemIcon(item_id, icon_name);
+}
+
+bool SystemTray::updateMenuItemCallback(const std::string& item_id, std::function<void()> callback) {
+    return pimpl_->updateMenuItemCallback(item_id, callback);
+}
+
+void SystemTray::addMenuItems(const std::vector<TrayMenuItem>& items) {
+    pimpl_->addMenuItems(items);
+}
+
+void SystemTray::removeMenuItems(const std::vector<std::string>& item_ids) {
+    pimpl_->removeMenuItems(item_ids);
+}
+
+void SystemTray::clearMenu() {
+    pimpl_->clearMenu();
+}
+
+const std::vector<TrayMenuItem>& SystemTray::getMenuItems() const {
+    return pimpl_->getMenuItems();
+}
+
+bool SystemTray::hasMenuItem(const std::string& itemId) const {
+    return pimpl_->hasMenuItem(itemId);
+}
+
+// Menu item state management
+void SystemTray::setMenuItemVisible(const std::string& itemId, bool visible) {
+    pimpl_->setMenuItemVisible(itemId, visible);
+}
+
+bool SystemTray::isMenuItemVisible(const std::string& itemId) const {
+    return pimpl_->isMenuItemVisible(itemId);
+}
+
+void SystemTray::setMenuItemChecked(const std::string& itemId, bool checked) {
+    pimpl_->setMenuItemChecked(itemId, checked);
+}
+
+bool SystemTray::isMenuItemChecked(const std::string& itemId) const {
+    return pimpl_->isMenuItemChecked(itemId);
+}
+
+void SystemTray::setMenuItemBadge(const std::string& itemId, const std::string& badge) {
+    pimpl_->setMenuItemBadge(itemId, badge);
+}
+
+std::string SystemTray::getMenuItemBadge(const std::string& itemId) const {
+    return pimpl_->getMenuItemBadge(itemId);
+}
+
+void SystemTray::setMenuItemTooltip(const std::string& itemId, const std::string& tooltip) {
+    pimpl_->setMenuItemTooltip(itemId, tooltip);
+}
+
+std::string SystemTray::getMenuItemTooltip(const std::string& itemId) const {
+    return pimpl_->getMenuItemTooltip(itemId);
+}
+
+// Shortcut and priority management
+void SystemTray::setMenuItemShortcut(const std::string& itemId, const std::string& shortcut) {
+    pimpl_->setMenuItemShortcut(itemId, shortcut);
+}
+
+std::string SystemTray::getMenuItemShortcut(const std::string& itemId) const {
+    return pimpl_->getMenuItemShortcut(itemId);
+}
+
+void SystemTray::setMenuItemPriority(const std::string& itemId, int priority) {
+    pimpl_->setMenuItemPriority(itemId, priority);
+}
+
+int SystemTray::getMenuItemPriority(const std::string& itemId) const {
+    return pimpl_->getMenuItemPriority(itemId);
+}
+
+void SystemTray::setMenuItemToggleCallback(const std::string& itemId, std::function<void(bool)> callback) {
+    pimpl_->setMenuItemToggleCallback(itemId, callback);
+}
+
+void SystemTray::sortMenuItemsByPriority() {
+    pimpl_->sortMenuItemsByPriority();
+}
+
+// Performance optimization methods
+void SystemTray::batchUpdateMenuItems(std::function<void()> updates) {
+    pimpl_->batchUpdateMenuItems(updates);
+}
+
+void SystemTray::forceRebuildMenu() {
+    pimpl_->forceRebuildMenu();
+}
+
+bool SystemTray::needsMenuRebuild() const {
+    return pimpl_->needsMenuRebuild();
+}
+
+bool SystemTray::addSubMenuItem(const std::string& parent_id, const TrayMenuItem& item) {
+    return pimpl_->addSubMenuItem(parent_id, item);
+}
+
+bool SystemTray::removeSubMenuItem(const std::string& parent_id, const std::string& item_id) {
+    return pimpl_->removeSubMenuItem(parent_id, item_id);
+}
+
+TrayMenuItem* SystemTray::findSubMenuItem(const std::string& parent_id, const std::string& item_id) {
+    return pimpl_->findSubMenuItem(parent_id, item_id);
+}
+
+bool SystemTray::setSubMenu(const std::string& parent_id, const std::vector<TrayMenuItem>& submenu_items) {
+    return pimpl_->setSubMenu(parent_id, submenu_items);
+}
+
+bool SystemTray::clearSubMenu(const std::string& parent_id) {
+    return pimpl_->clearSubMenu(parent_id);
+}
+
 void SystemTray::showNotification(const std::string& title, const std::string& message,
                                  const std::string& icon_name, int timeout_ms) {
     pimpl_->showNotification(title, message, icon_name, timeout_ms);
@@ -447,6 +960,14 @@ void SystemTray::setDoubleClickCallback(std::function<void()> callback) {
 
 void SystemTray::setStatusChangeCallback(std::function<void(TrayStatus)> callback) {
     pimpl_->status_change_callback_ = callback;
+}
+
+void SystemTray::setQuitCallback(std::function<void()> callback) {
+    pimpl_->quit_callback_ = callback;
+}
+
+void SystemTray::updateWindowStateMenu(bool window_visible) {
+    pimpl_->updateWindowStateMenu(window_visible);
 }
 
 void SystemTray::updateProgress(double progress, const std::string& text) {

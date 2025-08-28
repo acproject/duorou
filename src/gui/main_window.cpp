@@ -106,30 +106,54 @@ bool MainWindow::initialize() {
         macos_tray_->setSystemIcon();
         macos_tray_->setTooltip("Duorou - AI Desktop Assistant");
         
-        // 添加菜单项
-        macos_tray_->addMenuItem("Show Window", [this]() {
+        // 设置左键回调为显示窗口
+        macos_tray_->setLeftClickCallback([this]() {
             restore_from_tray();
+        });
+        
+        // 设置右键回调为隐藏窗口
+        macos_tray_->setRightClickCallback([this]() {
+            hide();
+        });
+        
+        // 添加菜单项
+        macos_tray_->addMenuItemWithId("show_window", "Show Window", [this]() {
+            restore_from_tray();
+        });
+        
+        macos_tray_->addMenuItemWithId("hide_window", "Hide Window", [this]() {
+            std::cout << "[MainWindow] Hide Window menu item clicked" << std::endl;
+            hide();
         });
         
         macos_tray_->addSeparator();
         
-        macos_tray_->addMenuItem("New Chat", [this]() {
+        macos_tray_->addMenuItemWithId("new_chat", "New Chat", [this]() {
             restore_from_tray();
             create_new_chat();
         });
         
-        macos_tray_->addMenuItem("Settings", [this]() {
+        macos_tray_->addMenuItemWithId("settings", "Settings", [this]() {
             restore_from_tray();
             show_settings();
         });
         
         macos_tray_->addSeparator();
         
-        macos_tray_->addMenuItem("Quit Duorou", [this]() {
+        macos_tray_->addMenuItemWithId("quit", "Quit Duorou", [this]() {
+            std::cout << "[MainWindow] Quit Duorou menu item clicked" << std::endl;
+            quit_application();
+        });
+        
+        // 设置退出回调函数
+        macos_tray_->setQuitCallback([this]() {
             quit_application();
         });
         
         macos_tray_->show();
+        
+        // 初始化菜单状态（窗口当前是显示的）
+        macos_tray_->updateWindowStateMenu(true);
     } else {
         std::cerr << "Failed to initialize macOS system tray" << std::endl;
     }
@@ -151,12 +175,29 @@ bool MainWindow::initialize() {
 void MainWindow::show() {
     if (window_) {
         gtk_widget_show(window_);
+        
+        // 更新系统托盘菜单状态
+#ifdef __APPLE__
+        if (macos_tray_ && macos_tray_->isAvailable()) {
+            macos_tray_->updateWindowStateMenu(true);
+        }
+#endif
     }
 }
 
 void MainWindow::hide() {
+    std::cout << "[MainWindow] hide() method called" << std::endl;
     if (window_) {
         gtk_widget_hide(window_);
+        std::cout << "[MainWindow] Window hidden" << std::endl;
+        
+        // 更新系统托盘菜单状态
+#ifdef __APPLE__
+        if (macos_tray_ && macos_tray_->isAvailable()) {
+            macos_tray_->updateWindowStateMenu(false);
+            std::cout << "[MainWindow] Updated tray menu state to hidden" << std::endl;
+        }
+#endif
     }
 }
 
@@ -201,16 +242,20 @@ void MainWindow::show_settings() {
 }
 
 void MainWindow::quit_application() {
+    std::cout << "[MainWindow] quit_application() method called" << std::endl;
     // 正确退出应用程序，避免mach port错误
     if (window_) {
         // 先保存会话数据
         if (session_manager_) {
+            std::cout << "[MainWindow] Saving session data" << std::endl;
             session_manager_->save_sessions_to_file("chat_sessions.txt");
         }
         
         // 销毁窗口，这会触发应用程序退出
+        std::cout << "[MainWindow] Destroying window" << std::endl;
         gtk_window_destroy(GTK_WINDOW(window_));
         window_ = nullptr;
+        std::cout << "[MainWindow] Application should exit now" << std::endl;
     }
 }
 
@@ -469,6 +514,13 @@ void MainWindow::restore_from_tray() {
         
         // 确保窗口获得焦点
         gtk_window_set_focus_visible(GTK_WINDOW(window_), TRUE);
+        
+        // 更新系统托盘菜单状态
+#ifdef __APPLE__
+        if (macos_tray_ && macos_tray_->isAvailable()) {
+            macos_tray_->updateWindowStateMenu(true);
+        }
+#endif
     }
 }
 
