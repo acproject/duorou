@@ -1,10 +1,10 @@
 #ifndef DUOROU_GUI_CHAT_SESSION_H
 #define DUOROU_GUI_CHAT_SESSION_H
 
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <chrono>
 
 namespace duorou {
 namespace gui {
@@ -13,12 +13,13 @@ namespace gui {
  * 聊天消息结构
  */
 struct ChatMessage {
-    std::string content;     // 消息内容
-    bool is_user;           // 是否为用户消息
-    std::chrono::system_clock::time_point timestamp; // 时间戳
-    
-    ChatMessage(const std::string& msg, bool user) 
-        : content(msg), is_user(user), timestamp(std::chrono::system_clock::now()) {}
+  std::string content;                             // 消息内容
+  bool is_user;                                    // 是否为用户消息
+  std::chrono::system_clock::time_point timestamp; // 时间戳
+
+  ChatMessage(const std::string &msg, bool user)
+      : content(msg), is_user(user),
+        timestamp(std::chrono::system_clock::now()) {}
 };
 
 /**
@@ -26,85 +27,128 @@ struct ChatMessage {
  */
 class ChatSession {
 public:
-    ChatSession();
-    explicit ChatSession(const std::string& title);
-    ~ChatSession() = default;
+  ChatSession();
+  explicit ChatSession(const std::string &title);
 
-    // 禁用拷贝构造和赋值
-    ChatSession(const ChatSession&) = delete;
-    ChatSession& operator=(const ChatSession&) = delete;
+  // 用于反序列化的构造函数
+  ChatSession(const std::string &id, const std::string &title,
+              const std::chrono::system_clock::time_point &created_time,
+              const std::chrono::system_clock::time_point &last_updated);
 
-    /**
-     * 添加消息到会话
-     * @param message 消息内容
-     * @param is_user 是否为用户消息
-     */
-    void add_message(const std::string& message, bool is_user);
+  // 用于反序列化的构造函数（包含自定义名称）
+  ChatSession(const std::string &id, const std::string &title,
+              const std::string &custom_name,
+              const std::chrono::system_clock::time_point &created_time,
+              const std::chrono::system_clock::time_point &last_updated);
 
-    /**
-     * 获取所有消息
-     * @return 消息列表
-     */
-    const std::vector<ChatMessage>& get_messages() const { return messages_; }
+  ~ChatSession() = default;
 
-    /**
-     * 获取会话标题
-     * @return 会话标题
-     */
-    const std::string& get_title() const { return title_; }
+  // 禁用拷贝构造和赋值
+  ChatSession(const ChatSession &) = delete;
+  ChatSession &operator=(const ChatSession &) = delete;
 
-    /**
-     * 设置会话标题
-     * @param title 新标题
-     */
-    void set_title(const std::string& title) { title_ = title; }
+  /**
+   * 添加消息到会话
+   * @param message 消息内容
+   * @param is_user 是否为用户消息
+   */
+  void add_message(const std::string &message, bool is_user);
 
-    /**
-     * 获取会话ID
-     * @return 会话ID
-     */
-    const std::string& get_id() const { return id_; }
+  /**
+   * 获取所有消息
+   * @return 消息列表
+   */
+  const std::vector<ChatMessage> &get_messages() const { return messages_; }
 
-    /**
-     * 获取创建时间
-     * @return 创建时间
-     */
-    const std::chrono::system_clock::time_point& get_created_time() const { return created_time_; }
+  /**
+   * 获取会话标题
+   * @return 会话标题
+   */
+  const std::string &get_title() const { return title_; }
 
-    /**
-     * 获取最后更新时间
-     * @return 最后更新时间
-     */
-    const std::chrono::system_clock::time_point& get_last_updated() const { return last_updated_; }
+  /**
+   * 设置会话标题
+   * @param title 新标题
+   */
+  void set_title(const std::string &title) { title_ = title; }
 
-    /**
-     * 清空会话消息
-     */
-    void clear_messages();
+  /**
+   * 获取自定义名称
+   * @return 自定义名称，如果没有设置则返回空字符串
+   */
+  const std::string &get_custom_name() const { return custom_name_; }
 
-    /**
-     * 检查会话是否为空
-     * @return 如果没有消息返回true
-     */
-    bool is_empty() const { return messages_.empty(); }
+  /**
+   * 设置自定义名称
+   * @param name 自定义名称
+   */
+  void set_custom_name(const std::string &name) { custom_name_ = name; }
+
+  /**
+   * 获取显示名称（优先使用自定义名称，否则使用标题）
+   * @return 显示名称
+   */
+  std::string get_display_name() const {
+    return custom_name_.empty() ? title_ : custom_name_;
+  }
+
+  /**
+   * 检查是否有自定义名称
+   * @return 如果有自定义名称返回true
+   */
+  bool has_custom_name() const { return !custom_name_.empty(); }
+
+  /**
+   * 获取会话ID
+   * @return 会话ID
+   */
+  const std::string &get_id() const { return id_; }
+
+  /**
+   * 获取创建时间
+   * @return 创建时间
+   */
+  const std::chrono::system_clock::time_point &get_created_time() const {
+    return created_time_;
+  }
+
+  /**
+   * 获取最后更新时间
+   * @return 最后更新时间
+   */
+  const std::chrono::system_clock::time_point &get_last_updated() const {
+    return last_updated_;
+  }
+
+  /**
+   * 清空会话消息
+   */
+  void clear_messages();
+
+  /**
+   * 检查会话是否为空
+   * @return 如果没有消息返回true
+   */
+  bool is_empty() const { return messages_.empty(); }
 
 private:
-    std::string id_;                                    // 会话唯一ID
-    std::string title_;                                 // 会话标题
-    std::vector<ChatMessage> messages_;                 // 消息列表
-    std::chrono::system_clock::time_point created_time_; // 创建时间
-    std::chrono::system_clock::time_point last_updated_; // 最后更新时间
+  std::string id_;                                     // 会话唯一ID
+  std::string title_;                                  // 会话标题
+  std::string custom_name_;                            // 自定义名称
+  std::vector<ChatMessage> messages_;                  // 消息列表
+  std::chrono::system_clock::time_point created_time_; // 创建时间
+  std::chrono::system_clock::time_point last_updated_; // 最后更新时间
 
-    /**
-     * 生成唯一ID
-     * @return 唯一ID字符串
-     */
-    std::string generate_id();
+  /**
+   * 生成唯一ID
+   * @return 唯一ID字符串
+   */
+  std::string generate_id();
 
-    /**
-     * 更新最后修改时间
-     */
-    void update_timestamp();
+  /**
+   * 更新最后修改时间
+   */
+  void update_timestamp();
 };
 
 } // namespace gui

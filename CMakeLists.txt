@@ -199,6 +199,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMemory/src/server
     ${GTK4_INCLUDE_DIRS}
 )
 
@@ -310,6 +311,7 @@ endif()
 # 添加子项目
 add_subdirectory(third_party/llama.cpp)
 add_subdirectory(third_party/stable-diffusion.cpp)
+# MiniMemory作为独立服务运行，不需要编译到主项目中
 
 # 创建源文件目录（如果不存在）
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
@@ -337,6 +339,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/system_tray.cpp
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
+    src/gui/session_storage_adapter.cpp
     src/gui/video_display_window.cpp
     src/gui/enhanced_video_capture_window.cpp
     src/gui/video_source_dialog.cpp
@@ -365,6 +368,7 @@ set(DUOROU_HEADERS_LIST
     src/gui/system_tray.h
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
+    src/gui/session_storage_adapter.h
     src/gui/video_display_window.h
     src/gui/enhanced_video_capture_window.h
     src/gui/video_source_dialog.h

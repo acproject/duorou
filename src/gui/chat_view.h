@@ -70,13 +70,13 @@ public:
    * 设置当前会话管理器
    * @param session_manager 会话管理器指针
    */
-  void set_session_manager(ChatSessionManager* session_manager);
+  void set_session_manager(ChatSessionManager *session_manager);
 
   /**
    * 加载并显示指定会话的消息
    * @param session_id 会话ID
    */
-  void load_session_messages(const std::string& session_id);
+  void load_session_messages(const std::string &session_id);
 
 private:
   GtkWidget *main_widget_;         // 主容器
@@ -112,7 +112,7 @@ private:
   bool updating_button_state_; // 标记是否正在更新按钮状态
 
   // 会话管理器
-  ChatSessionManager* session_manager_; // 会话管理器指针
+  ChatSessionManager *session_manager_; // 会话管理器指针
 
   // 视频帧缓存相关
   std::shared_ptr<duorou::media::VideoFrame>
