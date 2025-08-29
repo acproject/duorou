@@ -110,6 +110,11 @@ bool MainWindow::initialize() {
         std::cerr << "Failed to initialize sub views" << std::endl;
         return false;
     }
+    
+    // 为ChatView设置会话管理器
+    if (chat_view_ && session_manager_) {
+        chat_view_->set_session_manager(session_manager_.get());
+    }
 
     // 将子视图添加到堆栈
     gtk_stack_add_named(GTK_STACK(content_stack_), chat_view_->get_widget(), "chat");
@@ -322,9 +327,14 @@ void MainWindow::update_chat_history_list() {
     if (session_manager_) {
         auto sessions = session_manager_->get_all_sessions();
         for (const auto& session : sessions) {
+            // 创建水平容器来包含聊天按钮和删除按钮
+            GtkWidget* item_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+            gtk_widget_set_size_request(item_container, -1, 40);
+            
+            // 创建聊天项按钮
             GtkWidget* chat_item = gtk_button_new();
             gtk_widget_add_css_class(chat_item, "chat-history-item");
-            gtk_widget_set_size_request(chat_item, -1, 40);
+            gtk_widget_set_hexpand(chat_item, TRUE);
             
             std::string title = session->get_title();
             if (title.empty()) {
@@ -340,15 +350,47 @@ void MainWindow::update_chat_history_list() {
             // 连接点击信号
             g_signal_connect(chat_item, "clicked", G_CALLBACK(on_chat_history_item_clicked), this);
             
-            gtk_box_append(GTK_BOX(chat_history_box_), chat_item);
+            // 添加右键点击手势
+            GtkGesture* right_click_gesture = gtk_gesture_click_new();
+            gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click_gesture), GDK_BUTTON_SECONDARY);
+            g_signal_connect(right_click_gesture, "pressed", G_CALLBACK(on_chat_history_item_right_clicked), this);
+            
+            // 为手势存储会话ID
+            g_object_set_data_full(G_OBJECT(right_click_gesture), "session_id", 
+                                 g_strdup(session->get_id().c_str()), g_free);
+            
+            gtk_widget_add_controller(chat_item, GTK_EVENT_CONTROLLER(right_click_gesture));
+            
+            // 创建删除按钮
+            GtkWidget* delete_button = gtk_button_new_with_label("🗑️");
+            gtk_widget_add_css_class(delete_button, "delete-button");
+            gtk_widget_set_size_request(delete_button, 30, -1);
+            gtk_widget_set_tooltip_text(delete_button, "Delete this chat");
+            
+            // 为删除按钮存储会话ID
+            g_object_set_data_full(G_OBJECT(delete_button), "session_id", 
+                                 g_strdup(session->get_id().c_str()), g_free);
+            
+            // 连接删除按钮信号
+            g_signal_connect(delete_button, "clicked", G_CALLBACK(on_delete_chat_button_clicked), this);
+            
+            // 将按钮添加到容器
+            gtk_box_append(GTK_BOX(item_container), chat_item);
+            gtk_box_append(GTK_BOX(item_container), delete_button);
+            
+            gtk_box_append(GTK_BOX(chat_history_box_), item_container);
         }
     }
 }
 
 void MainWindow::on_session_changed(const std::string& session_id) {
     // 会话切换时的处理
-    // 这里可以更新聊天视图显示当前会话的消息
     std::cout << "Session changed to: " << session_id << std::endl;
+    
+    // 更新聊天视图显示当前会话的消息
+    if (chat_view_) {
+        chat_view_->load_session_messages(session_id);
+    }
 }
 
 void MainWindow::on_session_list_changed() {
@@ -503,6 +545,83 @@ void MainWindow::on_chat_history_item_clicked(GtkWidget* widget, gpointer user_d
     const char* session_id = static_cast<const char*>(g_object_get_data(G_OBJECT(widget), "session_id"));
     if (session_id) {
         main_window->switch_to_chat_session(session_id);
+    }
+}
+
+void MainWindow::on_chat_history_item_right_clicked(GtkGestureClick* gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
+    MainWindow* main_window = static_cast<MainWindow*>(user_data);
+    const char* session_id = static_cast<const char*>(g_object_get_data(G_OBJECT(gesture), "session_id"));
+    
+    if (session_id) {
+        // 创建弹出菜单
+        GtkWidget* popover = gtk_popover_new();
+        GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        
+        // 创建删除菜单项
+        GtkWidget* delete_item = gtk_button_new_with_label("🗑️ Delete Chat");
+        gtk_widget_add_css_class(delete_item, "context-menu-item");
+        gtk_widget_set_size_request(delete_item, 150, 35);
+        
+        // 为删除菜单项存储会话ID和主窗口指针
+        g_object_set_data_full(G_OBJECT(delete_item), "session_id", 
+                             g_strdup(session_id), g_free);
+        g_object_set_data(G_OBJECT(delete_item), "popover", popover);
+        g_object_set_data(G_OBJECT(delete_item), "main_window", main_window);
+        
+        // 连接删除菜单项信号
+        g_signal_connect(delete_item, "clicked", G_CALLBACK(on_context_menu_delete_clicked), nullptr);
+        
+        gtk_box_append(GTK_BOX(menu_box), delete_item);
+        gtk_popover_set_child(GTK_POPOVER(popover), menu_box);
+        
+        // 设置弹出菜单位置
+        GtkWidget* chat_item = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+        gtk_widget_set_parent(popover, chat_item);
+        
+        // 显示弹出菜单
+        gtk_popover_popup(GTK_POPOVER(popover));
+    }
+}
+
+void MainWindow::on_context_menu_delete_clicked(GtkWidget* widget, gpointer user_data) {
+    MainWindow* main_window = static_cast<MainWindow*>(g_object_get_data(G_OBJECT(widget), "main_window"));
+    const char* session_id = static_cast<const char*>(g_object_get_data(G_OBJECT(widget), "session_id"));
+    GtkWidget* popover = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(widget), "popover"));
+    
+    if (session_id && main_window && main_window->session_manager_) {
+        // 删除会话
+        main_window->session_manager_->delete_session(session_id);
+        
+        // 更新聊天历史列表
+        main_window->update_chat_history_list();
+        
+        // 如果删除的是当前会话，创建新会话
+        if (main_window->session_manager_->get_current_session_id() == session_id) {
+            main_window->create_new_chat();
+        }
+    }
+    
+    // 关闭弹出菜单
+    if (popover) {
+        gtk_popover_popdown(GTK_POPOVER(popover));
+    }
+}
+
+void MainWindow::on_delete_chat_button_clicked(GtkWidget* widget, gpointer user_data) {
+    MainWindow* main_window = static_cast<MainWindow*>(user_data);
+    const char* session_id = static_cast<const char*>(g_object_get_data(G_OBJECT(widget), "session_id"));
+    
+    if (session_id && main_window->session_manager_) {
+        // 删除会话
+        main_window->session_manager_->delete_session(session_id);
+        
+        // 更新聊天历史列表
+        main_window->update_chat_history_list();
+        
+        // 如果删除的是当前会话，创建新会话
+        if (main_window->session_manager_->get_current_session_id() == session_id) {
+            main_window->create_new_chat();
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 #include "../core/logger.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
+#include "chat_session_manager.h"
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #endif
@@ -24,7 +25,7 @@ ChatView::ChatView()
       enhanced_video_window_(std::make_unique<EnhancedVideoCaptureWindow>()),
       video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
-      cached_video_frame_(nullptr),
+      session_manager_(nullptr), cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
   // 初始化增强视频窗口
@@ -1736,6 +1737,34 @@ void ChatView::reset_state() {
   last_audio_update_ = std::chrono::steady_clock::now();
 
   std::cout << "ChatView状态重置完成" << std::endl;
+}
+
+void ChatView::set_session_manager(ChatSessionManager* session_manager) {
+  session_manager_ = session_manager;
+}
+
+void ChatView::load_session_messages(const std::string& session_id) {
+  if (!session_manager_) {
+    std::cerr << "Session manager not set" << std::endl;
+    return;
+  }
+
+  // 清空当前聊天历史
+  clear_chat();
+
+  // 获取指定会话的消息
+  auto session = session_manager_->get_session(session_id);
+  if (!session) {
+    std::cout << "Session not found: " << session_id << std::endl;
+    return;
+  }
+
+  // 加载会话中的所有消息
+  for (const auto& message : session->get_messages()) {
+    add_message(message.content, message.is_user);
+  }
+
+  std::cout << "Loaded " << session->get_messages().size() << " messages for session: " << session_id << std::endl;
 }
 
 } // namespace gui

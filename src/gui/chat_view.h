@@ -22,6 +22,8 @@ class AudioCapture;
 namespace duorou {
 namespace gui {
 
+class ChatSessionManager;
+
 /**
  * 聊天视图类 - 处理文本生成模型的交互界面
  */
@@ -64,6 +66,18 @@ public:
    */
   void clear_chat();
 
+  /**
+   * 设置当前会话管理器
+   * @param session_manager 会话管理器指针
+   */
+  void set_session_manager(ChatSessionManager* session_manager);
+
+  /**
+   * 加载并显示指定会话的消息
+   * @param session_id 会话ID
+   */
+  void load_session_messages(const std::string& session_id);
+
 private:
   GtkWidget *main_widget_;         // 主容器
   GtkWidget *chat_scrolled_;       // 滚动窗口
@@ -96,6 +110,9 @@ private:
 
   // 防止递归调用的标志
   bool updating_button_state_; // 标记是否正在更新按钮状态
+
+  // 会话管理器
+  ChatSessionManager* session_manager_; // 会话管理器指针
 
   // 视频帧缓存相关
   std::shared_ptr<duorou::media::VideoFrame>

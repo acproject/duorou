@@ -199,6 +199,9 @@ private:
     // 静态回调函数
     static void on_new_chat_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_chat_history_item_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_chat_history_item_right_clicked(GtkGestureClick* gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
+    static void on_context_menu_delete_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_delete_chat_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_image_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_settings_button_clicked(GtkWidget* widget, gpointer user_data);
     static gboolean on_window_delete_event(GtkWindow* window, gpointer user_data);
