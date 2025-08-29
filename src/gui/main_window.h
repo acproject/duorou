@@ -11,6 +11,9 @@
 #endif
 
 namespace duorou {
+namespace core {
+    class Application;
+}
 namespace gui {
 
 class ChatView;
@@ -26,6 +29,7 @@ class SystemTray;
 class MainWindow {
 public:
     MainWindow();
+    explicit MainWindow(core::Application* app);
     ~MainWindow();
 
     // 禁用拷贝构造和赋值
@@ -81,6 +85,12 @@ public:
     void quit_application();
 
     /**
+     * 设置应用程序实例引用
+     * @param app 应用程序实例指针
+     */
+    void set_application(core::Application* app);
+
+    /**
      * 设置系统托盘状态
      * @param status 状态描述（如："idle", "processing", "error"）
      */
@@ -130,6 +140,9 @@ private:
 
     // 当前视图状态
     std::string current_view_;
+    
+    // 应用程序实例引用
+    core::Application* application_;
 
     /**
      * 创建头部栏

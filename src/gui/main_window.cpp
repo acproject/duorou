@@ -5,6 +5,7 @@
 #include "chat_session_manager.h"
 #include "system_tray.h"
 #include "../core/logger.h"
+#include "../core/application.h"
 
 #include <iostream>
 
@@ -23,6 +24,26 @@ MainWindow::MainWindow()
     , settings_button_(nullptr)
     , chat_history_box_(nullptr)
     , current_view_("chat")
+    , application_(nullptr)
+#ifdef __APPLE__
+    , macos_tray_(std::make_unique<MacOSTray>())
+#endif
+{
+}
+
+MainWindow::MainWindow(core::Application* app)
+    : window_(nullptr)
+    , header_bar_(nullptr)
+    , main_box_(nullptr)
+    , sidebar_(nullptr)
+    , content_stack_(nullptr)
+    , status_bar_(nullptr)
+    , new_chat_button_(nullptr)
+    , image_button_(nullptr)
+    , settings_button_(nullptr)
+    , chat_history_box_(nullptr)
+    , current_view_("chat")
+    , application_(app)
 #ifdef __APPLE__
     , macos_tray_(std::make_unique<MacOSTray>())
 #endif
@@ -172,6 +193,10 @@ bool MainWindow::initialize() {
     return true;
 }
 
+void MainWindow::set_application(core::Application* app) {
+    application_ = app;
+}
+
 void MainWindow::show() {
     if (window_) {
         gtk_widget_show(window_);
@@ -243,20 +268,29 @@ void MainWindow::show_settings() {
 
 void MainWindow::quit_application() {
     std::cout << "[MainWindow] quit_application() method called" << std::endl;
-    // 正确退出应用程序，避免mach port错误
+    
+    // 先保存会话数据
+    if (session_manager_) {
+        std::cout << "[MainWindow] Saving session data" << std::endl;
+        session_manager_->save_sessions_to_file("chat_sessions.txt");
+    }
+    
+    // 销毁窗口
     if (window_) {
-        // 先保存会话数据
-        if (session_manager_) {
-            std::cout << "[MainWindow] Saving session data" << std::endl;
-            session_manager_->save_sessions_to_file("chat_sessions.txt");
-        }
-        
-        // 销毁窗口，这会触发应用程序退出
         std::cout << "[MainWindow] Destroying window" << std::endl;
         gtk_window_destroy(GTK_WINDOW(window_));
         window_ = nullptr;
-        std::cout << "[MainWindow] Application should exit now" << std::endl;
     }
+    
+    // 调用Application的stop方法来正确退出应用程序
+    if (application_) {
+        std::cout << "[MainWindow] Calling Application::stop()" << std::endl;
+        application_->stop();
+    } else {
+        std::cout << "[MainWindow] Warning: No application instance available" << std::endl;
+    }
+    
+    std::cout << "[MainWindow] Application should exit now" << std::endl;
 }
 
 void MainWindow::create_new_chat() {

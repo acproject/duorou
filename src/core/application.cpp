@@ -337,7 +337,7 @@ void Application::onActivate(GtkApplication* app, gpointer user_data) {
     
     // 创建并显示主窗口
     if (application && !application->main_window_) {
-        application->main_window_ = std::make_unique<::duorou::gui::MainWindow>();
+        application->main_window_ = std::make_unique<::duorou::gui::MainWindow>(application);
         if (application->main_window_->initialize()) {
             application->main_window_->show();
             if (application->logger_) {
