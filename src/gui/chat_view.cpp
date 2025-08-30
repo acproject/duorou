@@ -265,12 +265,22 @@ void ChatView::send_message(const std::string &message) {
 
   // 添加用户消息到聊天显示
   add_message(message, true);
+  
+  // 保存用户消息到当前会话
+  if (session_manager_) {
+    session_manager_->add_message_to_current_session(message, true);
+  }
 
   // TODO: 这里应该调用AI模型处理消息
   // 暂时添加一个模拟回复
-  add_message("This is a placeholder response. AI integration will be "
-              "implemented later.",
-              false);
+  std::string ai_response = "This is a placeholder response. AI integration will be "
+                           "implemented later.";
+  add_message(ai_response, false);
+  
+  // 保存AI回复到当前会话
+  if (session_manager_) {
+    session_manager_->add_message_to_current_session(ai_response, false);
+  }
 }
 
 void ChatView::add_message(const std::string &message, bool is_user) {
