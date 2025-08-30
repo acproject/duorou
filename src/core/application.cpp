@@ -16,6 +16,7 @@
 #include <iostream>
 #include <thread>
 #include <unistd.h> // for getpid
+#include <sys/wait.h> // for waitpid
 
 // 版本定义
 #ifndef DUOROU_VERSION
@@ -53,7 +54,7 @@ Application *Application::instance_ = nullptr;
 Application::Application(int argc, char *argv[])
     : app_name_("Duorou"), version_(DUOROU_VERSION),
       status_(Status::NotInitialized), service_mode_(false), gtk_app_(nullptr),
-      minimemory_running_(false) {
+      minimemory_running_(false), is_destructing_(false) {
 
   // 保存命令行参数
   for (int i = 0; i < argc; ++i) {
@@ -81,6 +82,9 @@ Application::Application(int argc, char *argv[])
 }
 
 Application::~Application() {
+  // 设置析构标志
+  is_destructing_.store(true);
+  
   // 确保MiniMemory服务器被停止
   stopMiniMemoryServer();
   cleanup();
@@ -392,14 +396,24 @@ void Application::onShutdown(GtkApplication *app, gpointer user_data) {
     g_application_release(G_APPLICATION(app));
 
     // 停止MiniMemory服务器
+    if (application->logger_) {
+      application->logger_->info("正在退出MiniMemory服务...");
+    }
     application->stopMiniMemoryServer();
 
 #ifdef __APPLE__
     // 清理 ScreenCaptureKit 资源
+    if (application->logger_) {
+      application->logger_->info("Cleaning up ScreenCaptureKit resources...");
+    }
     duorou::media::cleanup_macos_screen_capture();
 #endif
 
     // 只清理非GTK资源，GTK资源由GTK自动管理
+    if (application->logger_) {
+      application->logger_->info("Cleaning up application resources...");
+    }
+    
     if (application->api_server_) {
       application->api_server_->stop();
       application->api_server_.reset();
@@ -409,7 +423,11 @@ void Application::onShutdown(GtkApplication *app, gpointer user_data) {
     application->workflow_engine_.reset();
     application->model_manager_.reset();
     application->config_manager_.reset();
-    application->logger_.reset();
+    
+    if (application->logger_) {
+      application->logger_->info("退出Duorou应用程序");
+      application->logger_.reset();
+    }
     application->status_ = Status::Stopped;
   }
 }
@@ -579,39 +597,154 @@ void Application::stopMiniMemoryServer() {
   // 设置停止标志
   minimemory_running_.store(false);
 
-  // 发送SIGTERM信号给MiniMemory进程
-  std::system("pkill -f mini_cache_server");
-
-  // 等待进程真正停止
-  int attempts = 0;
-  const int max_attempts = 50; // 最多等待5秒
-  while (attempts < max_attempts) {
-    int result = std::system("pgrep -f mini_cache_server > /dev/null 2>&1");
-    if (result != 0) {
-      // 进程已停止
-      break;
+  // 避免使用system调用，直接设置停止标志让线程自然退出
+  if (logger_) {
+    logger_->info("Signaling MiniMemory thread to stop...");
+  }
+  
+  // 等待一段时间让线程自然结束
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  
+  // 如果需要强制终止进程，使用更安全的方式
+  if (logger_) {
+    logger_->info("Attempting to terminate MiniMemory process...");
+  }
+  
+  // 首先检查进程是否存在
+  pid_t check_pid = fork();
+  if (check_pid == 0) {
+    // 子进程：检查进程是否存在
+    execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+    _exit(1);
+  } else if (check_pid > 0) {
+    int status;
+    waitpid(check_pid, &status, 0);
+    
+    if (WEXITSTATUS(status) == 0) {
+      // 进程存在，尝试发送SIGINT信号
+      if (logger_) {
+        logger_->info("Found MiniMemory process, sending SIGINT...");
+      }
+      
+      pid_t kill_pid = fork();
+      if (kill_pid == 0) {
+        execl("/usr/bin/pkill", "pkill", "-INT", "-f", "mini_cache_server", (char*)NULL);
+        _exit(1);
+      } else if (kill_pid > 0) {
+        waitpid(kill_pid, &status, 0);
+        
+        // 等待2秒让进程优雅退出
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        
+        // 再次检查进程是否还存在
+        pid_t recheck_pid = fork();
+        if (recheck_pid == 0) {
+          execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+          _exit(1);
+        } else if (recheck_pid > 0) {
+          waitpid(recheck_pid, &status, 0);
+          
+          if (WEXITSTATUS(status) == 0) {
+            // 进程仍然存在，使用SIGKILL强制终止
+            if (logger_) {
+              logger_->warning("MiniMemory process still running, sending SIGKILL...");
+            }
+            
+            pid_t force_kill_pid = fork();
+            if (force_kill_pid == 0) {
+              execl("/usr/bin/pkill", "pkill", "-9", "-f", "mini_cache_server", (char*)NULL);
+              _exit(1);
+            } else if (force_kill_pid > 0) {
+              waitpid(force_kill_pid, &status, 0);
+              
+              // 最后再次确认
+              std::this_thread::sleep_for(std::chrono::milliseconds(500));
+              pid_t final_check_pid = fork();
+              if (final_check_pid == 0) {
+                execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+                _exit(1);
+              } else if (final_check_pid > 0) {
+                waitpid(final_check_pid, &status, 0);
+                if (WEXITSTATUS(status) == 0) {
+                  if (logger_) {
+                    logger_->error("Failed to terminate MiniMemory process");
+                  }
+                } else {
+                  if (logger_) {
+                    logger_->info("MiniMemory process terminated successfully");
+                  }
+                }
+              }
+            }
+          } else {
+            if (logger_) {
+              logger_->info("MiniMemory process exited gracefully");
+            }
+          }
+        }
+      }
+    } else {
+      if (logger_) {
+        logger_->info("MiniMemory process not found");
+      }
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    attempts++;
   }
 
-  // 如果进程仍在运行，强制杀死
-  if (attempts >= max_attempts) {
-    std::system("pkill -9 -f mini_cache_server");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  }
-
-  // 等待线程结束
-  if (minimemory_thread_ && minimemory_thread_->joinable()) {
-    try {
-      minimemory_thread_->join();
-    } catch (const std::exception &e) {
-      // 如果join失败，使用detach
+  // 安全地处理线程结束
+  if (minimemory_thread_) {
+    if (logger_) {
+      logger_->info("Waiting for MiniMemory thread to finish...");
+    }
+    
+    if (is_destructing_.load()) {
+      // 在析构过程中，直接detach避免线程异常
+      if (logger_) {
+        logger_->info("Detaching MiniMemory thread during destruction");
+      }
       if (minimemory_thread_->joinable()) {
         minimemory_thread_->detach();
       }
+      // 立即释放线程对象
+      minimemory_thread_.reset();
+    } else {
+      // 正常停止时，尝试join线程，但设置超时
+      if (minimemory_thread_->joinable()) {
+        std::atomic<bool> join_completed{false};
+        std::thread join_thread([this, &join_completed]() {
+          try {
+            minimemory_thread_->join();
+            join_completed.store(true);
+          } catch (const std::exception &e) {
+            // join失败
+            join_completed.store(true);
+          }
+        });
+        
+        // 等待最多3秒
+        auto start_time = std::chrono::steady_clock::now();
+        while (!join_completed.load() && 
+               std::chrono::steady_clock::now() - start_time < std::chrono::seconds(3)) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        
+        if (!join_completed.load()) {
+          // 超时，强制detach
+          if (logger_) {
+            logger_->warning("MiniMemory thread join timeout, detaching...");
+          }
+          if (minimemory_thread_->joinable()) {
+            minimemory_thread_->detach();
+          }
+          join_thread.detach();
+        } else {
+          join_thread.join();
+          if (logger_) {
+            logger_->info("MiniMemory thread joined successfully");
+          }
+        }
+      }
+      minimemory_thread_.reset();
     }
-    minimemory_thread_.reset();
   }
 
   if (logger_) {

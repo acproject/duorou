@@ -257,6 +257,7 @@ private:
   // MiniMemory服务器管理
   std::unique_ptr<std::thread> minimemory_thread_;
   std::atomic<bool> minimemory_running_;
+  std::atomic<bool> is_destructing_; ///< 标记是否正在析构
   std::string minimemory_executable_path_;
 
   // 静态实例指针（用于信号处理）
