@@ -57,10 +57,14 @@ bool Logger::initialize() {
 }
 
 void Logger::setLogLevel(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    current_level_ = level;
+    std::string level_str;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        current_level_ = level;
+        level_str = getLevelString(level);
+    } // mutex锁在这里释放
     
-    std::string level_str = getLevelString(level);
+    // 在锁释放后调用info，避免死锁
     info("Log level set to: " + level_str);
 }
 

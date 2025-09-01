@@ -109,18 +109,33 @@ void testResourceManagerFeatures() {
     auto& resource_manager = engine.getResourceManager();
     
     // 注册额外的资源
-    resource_manager.registerResource("custom_model", ResourceType::MODEL, 1);
-    resource_manager.registerResource("network_bandwidth", ResourceType::NETWORK, 100);
+    ResourceInfo custom_model_info;
+    custom_model_info.id = "custom_model";
+    custom_model_info.type = ResourceType::MODEL;
+    custom_model_info.name = "Custom Model";
+    custom_model_info.capacity = 1;
+    custom_model_info.used = 0;
+    custom_model_info.available = true;
+    custom_model_info.last_accessed = std::chrono::system_clock::now();
+    resource_manager.registerResource(custom_model_info);
+    
+    ResourceInfo network_info;
+    network_info.id = "network_bandwidth";
+    network_info.type = ResourceType::NETWORK;
+    network_info.name = "Network Bandwidth";
+    network_info.capacity = 100;
+    network_info.used = 0;
+    network_info.available = true;
+    network_info.last_accessed = std::chrono::system_clock::now();
+    resource_manager.registerResource(network_info);
     
     // 获取资源信息
     auto resources = resource_manager.getResourceList();
     std::cout << "\nRegistered Resources:" << std::endl;
     for (const auto& resource_id : resources) {
         auto info = resource_manager.getResourceInfo(resource_id);
-        if (info.has_value()) {
-            std::cout << "- " << resource_id << ": capacity=" << info->capacity 
-                      << ", available=" << info->available_capacity << std::endl;
-        }
+        std::cout << "- " << resource_id << ": capacity=" << info.capacity 
+                  << ", used=" << info.used << ", available=" << (info.available ? "YES" : "NO") << std::endl;
     }
     
     // 测试资源预留
@@ -129,21 +144,20 @@ void testResourceManagerFeatures() {
     std::cout << "Resource reservation: " << (reserved ? "SUCCESS" : "FAILED") << std::endl;
     
     // 检查资源可用性
-    bool available = resource_manager.isResourceAvailable("custom_model", 1);
+    bool available = resource_manager.isResourceAvailable("custom_model", LockMode::SHARED);
     std::cout << "Resource availability after reservation: " << (available ? "AVAILABLE" : "NOT AVAILABLE") << std::endl;
-    
+
     // 释放资源
     resource_manager.releaseReservation("custom_model", "test_holder");
-    available = resource_manager.isResourceAvailable("custom_model", 1);
+    available = resource_manager.isResourceAvailable("custom_model", LockMode::SHARED);
     std::cout << "Resource availability after release: " << (available ? "AVAILABLE" : "NOT AVAILABLE") << std::endl;
     
     // 获取统计信息
-    auto stats = resource_manager.getStatistics();
+    auto stats = resource_manager.getResourceStatistics();
     std::cout << "\nResource Statistics:" << std::endl;
-    std::cout << "- Total resources: " << stats.total_resources << std::endl;
-    std::cout << "- Active locks: " << stats.active_locks << std::endl;
-    std::cout << "- Active reservations: " << stats.active_reservations << std::endl;
-    std::cout << "- Total lock acquisitions: " << stats.total_lock_acquisitions << std::endl;
+    for (const auto& [resource_id, count] : stats) {
+        std::cout << "- " << resource_id << ": " << count << std::endl;
+    }
     
     engine.stop();
 }

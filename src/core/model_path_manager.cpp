@@ -15,7 +15,8 @@ namespace core {
 // ModelPath implementation
 bool ModelPath::parseFromString(const std::string& path) {
     // 正则表达式匹配格式：[scheme://]registry/namespace/repository:tag
-    std::regex path_regex(R"(^(?:([^:/]+)://)?([^/]+)/([^/]+)/([^:]+)(?::([^:]+))?$)");
+    // 支持registry域名包含点号，如registry.ollama.ai
+    std::regex path_regex(R"(^(?:([^:/]+)://)?([^/]+(?:\.[^/]+)*)/([^/]+)/([^:]+)(?::([^:]+))?$)");
     std::smatch matches;
     
     if (std::regex_match(path, matches, path_regex)) {
@@ -64,8 +65,20 @@ std::string ModelPath::getBaseURL() const {
 ModelPathManager::ModelPathManager(const std::string& base_path) 
     : base_path_(base_path), initialized_(false) {
     if (base_path_.empty()) {
-        // 使用默认路径
-        base_path_ = std::filesystem::current_path() / "models";
+        // 首先检查OLLAMA_MODELS环境变量
+        const char* ollama_models = std::getenv("OLLAMA_MODELS");
+        if (ollama_models && strlen(ollama_models) > 0) {
+            base_path_ = std::string(ollama_models);
+        } else {
+            // 使用ollama的默认模型存储路径
+            const char* home = std::getenv("HOME");
+            if (home) {
+                base_path_ = std::filesystem::path(home) / ".ollama" / "models";
+            } else {
+                // 如果无法获取HOME环境变量，使用当前目录下的models作为备选
+                base_path_ = std::filesystem::current_path() / "models";
+            }
+        }
     }
 }
 
@@ -209,15 +222,29 @@ std::unordered_map<std::string, ModelManifest> ModelPathManager::enumerateManife
                 // 解析模型路径
                 std::string relative_path = std::filesystem::relative(entry.path(), manifest_root).string();
                 
-                // 将路径转换为模型名称格式
-                std::replace(relative_path.begin(), relative_path.end(), '/', ':');
-                std::replace(relative_path.begin(), relative_path.end(), '\\', ':');
+                // 从相对路径构造ModelPath
+                // 路径格式: registry/namespace/repository/tag
+                std::replace(relative_path.begin(), relative_path.end(), '\\', '/');
                 
-                ModelManifest manifest;
-                if (readManifest(ModelPath(), manifest)) {
-                    manifests[relative_path] = manifest;
+                // 构造完整的模型路径字符串
+                std::string model_path_str = relative_path;
+                // 将最后一个/替换为:
+                size_t last_slash = model_path_str.find_last_of('/');
+                if (last_slash != std::string::npos) {
+                    model_path_str[last_slash] = ':';
+                }
+                
+                ModelPath model_path;
+                if (model_path.parseFromString(model_path_str)) {
+                    ModelManifest manifest;
+                    if (readManifest(model_path, manifest)) {
+                        manifests[model_path_str] = manifest;
+                    } else if (!continue_on_error) {
+                        std::cerr << "Error: Failed to read manifest: " << file_path << std::endl;
+                        break;
+                    }
                 } else if (!continue_on_error) {
-                    std::cerr << "Error: Failed to read manifest: " << file_path << std::endl;
+                    std::cerr << "Error: Failed to parse model path: " << model_path_str << std::endl;
                     break;
                 }
             }

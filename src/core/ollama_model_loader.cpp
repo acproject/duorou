@@ -143,7 +143,8 @@ std::string OllamaModelLoader::normalizeOllamaModelName(const std::string& model
     }
     
     // 如果没有namespace，添加默认的library namespace
-    std::regex simple_name_regex(R"(^([^:/]+://)?([^/]+)(:([^:]+))?$)");
+    // 支持repository名称包含点号，如qwen2.5vl
+    std::regex simple_name_regex(R"(^([^:/]+://)?([^/]+(?:\.[^/:]+)*)(:([^:]+))?$)");
     std::smatch matches;
     
     if (std::regex_match(normalized, matches, simple_name_regex)) {
@@ -159,8 +160,14 @@ std::string OllamaModelLoader::normalizeOllamaModelName(const std::string& model
     }
     
     // 如果没有tag，添加默认的latest tag
-    if (normalized.find(':') == std::string::npos || 
-        normalized.find(':') < normalized.find_last_of('/')) {
+    // 检查最后一个/之后是否有:，如果没有则添加:latest
+    size_t last_slash = normalized.find_last_of('/');
+    if (last_slash != std::string::npos) {
+        std::string after_slash = normalized.substr(last_slash + 1);
+        if (after_slash.find(':') == std::string::npos) {
+            normalized += ":latest";
+        }
+    } else if (normalized.find(':') == std::string::npos) {
         normalized += ":latest";
     }
     

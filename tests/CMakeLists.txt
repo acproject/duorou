@@ -88,10 +88,13 @@ foreach(test_name ${BASIC_TESTS})
                 ../src/core/model_path_manager.cpp
                 ../src/core/logger.cpp
             )
-            # 链接nlohmann_json
+            # 链接nlohmann_json和OpenSSL
             find_package(nlohmann_json REQUIRED)
+            find_package(OpenSSL REQUIRED)
             target_link_libraries(${test_name}
                 nlohmann_json::nlohmann_json
+                OpenSSL::SSL
+                OpenSSL::Crypto
             )
         endif()
         
