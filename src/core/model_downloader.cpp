@@ -13,10 +13,20 @@ using namespace duorou::core;
 #include <nlohmann/json.hpp>
 #include <openssl/sha.h>
 
+// Ensure filesystem is available
+#if __has_include(<filesystem>)
+#include <filesystem>
+namespace fs = std::filesystem;
+#elif __has_include(<experimental/filesystem>)
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#else
+#error "Filesystem library not available"
+#endif
+
 namespace duorou {
 
 using json = nlohmann::json;
-namespace fs = std::filesystem;
 
 /**
  * @brief HTTP响应数据结构

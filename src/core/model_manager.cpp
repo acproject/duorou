@@ -494,6 +494,49 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
         models.push_back(pair.second);
     }
     
+    // 如果没有注册的模型，返回一些默认的示例模型
+    if (models.empty()) {
+        ModelInfo llama_example;
+        llama_example.id = "llama-7b-example";
+        llama_example.name = "LLaMA 7B (Example)";
+        llama_example.type = ModelType::LANGUAGE_MODEL;
+        llama_example.path = "";
+        llama_example.memory_usage = 0;
+        llama_example.status = ModelStatus::NOT_LOADED;
+        llama_example.description = "Example LLaMA model - download required";
+        models.push_back(llama_example);
+        
+        ModelInfo gpt_example;
+        gpt_example.id = "gpt-3.5-turbo";
+        gpt_example.name = "GPT-3.5 Turbo";
+        gpt_example.type = ModelType::LANGUAGE_MODEL;
+        gpt_example.path = "";
+        gpt_example.memory_usage = 0;
+        gpt_example.status = ModelStatus::NOT_LOADED;
+        gpt_example.description = "OpenAI GPT-3.5 Turbo model";
+        models.push_back(gpt_example);
+        
+        ModelInfo claude_example;
+        claude_example.id = "claude-3-sonnet";
+        claude_example.name = "Claude 3 Sonnet";
+        claude_example.type = ModelType::LANGUAGE_MODEL;
+        claude_example.path = "";
+        claude_example.memory_usage = 0;
+        claude_example.status = ModelStatus::NOT_LOADED;
+        claude_example.description = "Anthropic Claude 3 Sonnet model";
+        models.push_back(claude_example);
+        
+        ModelInfo llama2_example;
+        llama2_example.id = "llama2";
+        llama2_example.name = "Llama2";
+        llama2_example.type = ModelType::LANGUAGE_MODEL;
+        llama2_example.path = "";
+        llama2_example.memory_usage = 0;
+        llama2_example.status = ModelStatus::NOT_LOADED;
+        llama2_example.description = "Meta Llama 2 model";
+        models.push_back(llama2_example);
+    }
+    
     return models;
 }
 

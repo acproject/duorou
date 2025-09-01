@@ -5,6 +5,7 @@
 #include "../media/video_frame.h"
 #include "enhanced_video_capture_window.h"
 #include "video_source_dialog.h"
+#include "../core/model_manager.h"
 #include <chrono>
 #include <gtk/gtk.h>
 #include <memory>
@@ -17,6 +18,9 @@ namespace media {
 class VideoCapture;
 class AudioCapture;
 } // namespace media
+namespace core {
+class ModelManager;
+} // namespace core
 } // namespace duorou
 
 namespace duorou {
@@ -73,10 +77,21 @@ public:
   void set_session_manager(ChatSessionManager *session_manager);
 
   /**
+   * 设置模型管理器
+   * @param model_manager 模型管理器指针
+   */
+  void set_model_manager(core::ModelManager *model_manager);
+
+  /**
    * 加载并显示指定会话的消息
    * @param session_id 会话ID
    */
   void load_session_messages(const std::string &session_id);
+
+  /**
+   * 更新模型选择器列表
+   */
+  void update_model_selector();
 
 private:
   GtkWidget *main_widget_;         // 主容器
@@ -111,8 +126,9 @@ private:
   // 防止递归调用的标志
   bool updating_button_state_; // 标记是否正在更新按钮状态
 
-  // 会话管理器
+  // 会话管理器指针
   ChatSessionManager *session_manager_; // 会话管理器指针
+  core::ModelManager *model_manager_;   // 模型管理器指针
 
   // 视频帧缓存相关
   std::shared_ptr<duorou::media::VideoFrame>

@@ -88,7 +88,7 @@ bool MainWindow::initialize() {
   // 初始化子视图
   chat_view_ = std::make_unique<ChatView>();
   image_view_ = std::make_unique<ImageView>();
-  settings_dialog_ = std::make_unique<SettingsDialog>();
+  settings_dialog_ = std::make_unique<SettingsDialog>(application_);
 
   if (!chat_view_->initialize() || !image_view_->initialize() ||
       !settings_dialog_->initialize()) {

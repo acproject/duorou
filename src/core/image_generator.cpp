@@ -6,13 +6,13 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <thread>
+#include "../../third_party/stable-diffusion.cpp/stable-diffusion.h"
 
 // 简单的图像处理函数（实际项目中可能需要使用专门的图像库）
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image.h"
-#include "stb_image_write.h"
-#include "stb_image_resize.h"
+#include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image.h"
+#include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_write.h"
+#include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_resize.h"
 
 namespace duorou {
 namespace core {
@@ -67,21 +67,23 @@ ImageGenerationResult ImageGenerator::textToImage(const std::string& prompt,
         // 转换采样器
         sample_method_t sampler = convertSampler(params.sampler);
         
+        // 设置图像生成参数
+        sd_img_gen_params_t gen_params;
+        sd_img_gen_params_init(&gen_params);
+        
+        gen_params.prompt = processed_prompt.c_str();
+        gen_params.negative_prompt = params.negative_prompt.c_str();
+        gen_params.clip_skip = params.clip_skip;
+        gen_params.guidance.txt_cfg = params.cfg_scale;
+        gen_params.width = params.width;
+        gen_params.height = params.height;
+        gen_params.sample_method = sampler;
+        gen_params.sample_steps = params.steps;
+        gen_params.seed = actual_seed;
+        gen_params.batch_count = 1;
+        
         // 调用stable-diffusion.cpp生成图像
-        sd_image_t* sd_image = txt2img(sd_ctx_,
-                                      processed_prompt.c_str(),
-                                      params.negative_prompt.c_str(),
-                                      params.clip_skip,
-                                      params.cfg_scale,
-                                      params.width,
-                                      params.height,
-                                      sampler,
-                                      params.steps,
-                                      actual_seed,
-                                      1,  // batch_count
-                                      nullptr,  // control_cond
-                                      params.control_strength,
-                                      params.vae_tiling);
+        sd_image_t* sd_image = generate_image(sd_ctx_, &gen_params);
         
         if (!sd_image) {
             result.error_message = "Failed to generate image";
@@ -174,20 +176,25 @@ ImageGenerationResult ImageGenerator::imageToImage(const std::string& prompt,
         init_image.channel = 3;  // RGB
         init_image.data = const_cast<uint8_t*>(input_image.data());
         
+        // 设置图像生成参数
+        sd_img_gen_params_t gen_params;
+        sd_img_gen_params_init(&gen_params);
+        
+        gen_params.prompt = processed_prompt.c_str();
+        gen_params.negative_prompt = params.negative_prompt.c_str();
+        gen_params.clip_skip = params.clip_skip;
+        gen_params.guidance.img_cfg = params.cfg_scale;
+        gen_params.width = params.width;
+        gen_params.height = params.height;
+        gen_params.sample_method = sampler;
+        gen_params.sample_steps = params.steps;
+        gen_params.strength = params.strength;
+        gen_params.seed = actual_seed;
+        gen_params.batch_count = 1;
+        gen_params.init_image = init_image;
+        
         // 调用stable-diffusion.cpp进行图像到图像生成
-        sd_image_t* sd_image = img2img(sd_ctx_,
-                                      init_image,
-                                      processed_prompt.c_str(),
-                                      params.negative_prompt.c_str(),
-                                      params.clip_skip,
-                                      params.cfg_scale,
-                                      params.width,
-                                      params.height,
-                                      sampler,
-                                      params.steps,
-                                      params.strength,
-                                      actual_seed,
-                                      1);
+        sd_image_t* sd_image = generate_image(sd_ctx_, &gen_params);
         
         if (!sd_image) {
             result.error_message = "Failed to generate image";

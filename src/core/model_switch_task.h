@@ -22,7 +22,7 @@ public:
      * @param priority 任务优先级
      */
     ModelSwitchTask(const std::string& id, const std::string& name, 
-                   const std::string& target_model, TaskPriority priority = TaskPriority::MEDIUM);
+                   const std::string& target_model, TaskPriority priority = TaskPriority::NORMAL);
     
     /**
      * @brief 析构函数
@@ -65,7 +65,7 @@ private:
  */
 class TextGenerationTask : public BaseTask {
 public:
-    TextGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority = TaskPriority::MEDIUM);
+    TextGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority = TaskPriority::NORMAL);
     virtual ~TextGenerationTask() = default;
     
     TaskResult execute() override;
@@ -86,7 +86,7 @@ private:
  */
 class ImageGenerationTask : public BaseTask {
 public:
-    ImageGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority = TaskPriority::MEDIUM);
+    ImageGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority = TaskPriority::NORMAL);
     virtual ~ImageGenerationTask() = default;
     
     TaskResult execute() override;

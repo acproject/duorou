@@ -47,7 +47,7 @@ TaskResult ModelSwitchTask::execute() {
         
         result.success = true;
         result.message = "Model switched to " + target_model_;
-        result.data["target_model"] = target_model_;
+        result.output_data = "target_model: " + target_model_;
         
     } catch (const std::exception& e) {
         result.success = false;
@@ -105,9 +105,7 @@ TaskResult TextGenerationTask::execute() {
         
         result.success = true;
         result.message = "Text generation completed successfully";
-        result.data["prompt"] = prompt_;
-        result.data["generated_text"] = generated_text.str();
-        result.data["model_used"] = "llama_model";
+        result.output_data = "prompt: " + prompt_ + ", generated_text: " + generated_text.str() + ", model_used: llama_model";
         
     } catch (const std::exception& e) {
         result.success = false;
@@ -165,10 +163,7 @@ TaskResult ImageGenerationTask::execute() {
         
         result.success = true;
         result.message = "Image generation completed successfully";
-        result.data["prompt"] = prompt_;
-        result.data["image_path"] = image_path.str();
-        result.data["model_used"] = "stable_diffusion_model";
-        result.data["image_size"] = "512x512";
+        result.output_data = "prompt: " + prompt_ + ", image_path: " + image_path.str() + ", model_used: stable_diffusion_model, image_size: 512x512";
         
     } catch (const std::exception& e) {
         result.success = false;

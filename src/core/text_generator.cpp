@@ -17,9 +17,14 @@ TextGenerator::TextGenerator(llama_model* model, llama_context* context)
     
     // 获取模型信息
     context_size_ = llama_n_ctx(context_);
-    vocab_size_ = llama_n_vocab(model_);
-    bos_token_ = llama_token_bos(model_);
-    eos_token_ = llama_token_eos(model_);
+    vocab_size_ = vocab_ ? llama_vocab_n_tokens(vocab_) : 0;
+    bos_token_ = vocab_ ? llama_vocab_bos(vocab_) : -1;
+    eos_token_ = vocab_ ? llama_vocab_eos(vocab_) : -1;
+    
+    // 获取vocab对象
+    if (model_) {
+        vocab_ = llama_model_get_vocab(model_);
+    }
     
     // 初始化随机数生成器
     initializeRNG(-1);
@@ -55,11 +60,14 @@ GenerationResult TextGenerator::generate(const std::string& prompt, const Genera
         }
         
         // 清空KV缓存
-        llama_kv_cache_clear(context_);
+        llama_memory_t memory = llama_get_memory(context_);
+        if (memory) {
+            llama_memory_clear(memory, true);
+        }
         
         // 处理提示词
         for (size_t i = 0; i < prompt_tokens.size(); ++i) {
-            if (llama_decode(context_, llama_batch_get_one(&prompt_tokens[i], 1, i, 0)) != 0) {
+            if (llama_decode(context_, llama_batch_get_one(&prompt_tokens[i], 1)) != 0) {
                 result.stop_reason = "Failed to process prompt";
                 result.finished = true;
                 return result;
@@ -90,7 +98,14 @@ GenerationResult TextGenerator::generate(const std::string& prompt, const Genera
             generated.push_back(next_token);
             
             // 转换token为文本
-            std::string token_text = llama_token_to_piece(context_, next_token);
+            std::string token_text;
+            if (vocab_) {
+                char buffer[256];
+                int len = llama_token_to_piece(vocab_, next_token, buffer, sizeof(buffer), 0, false);
+                if (len > 0) {
+                    token_text.assign(buffer, len);
+                }
+            }
             generated_text += token_text;
             
             // 检查停止序列
@@ -100,7 +115,7 @@ GenerationResult TextGenerator::generate(const std::string& prompt, const Genera
             }
             
             // 继续解码
-            if (llama_decode(context_, llama_batch_get_one(&next_token, 1, prompt_tokens.size() + i, 0)) != 0) {
+            if (llama_decode(context_, llama_batch_get_one(&next_token, 1)) != 0) {
                 result.stop_reason = "Decode error";
                 break;
             }
@@ -156,11 +171,14 @@ GenerationResult TextGenerator::generateStream(const std::string& prompt,
         }
         
         // 清空KV缓存
-        llama_kv_cache_clear(context_);
+        llama_memory_t memory = llama_get_memory(context_);
+        if (memory) {
+            llama_memory_clear(memory, true);
+        }
         
         // 处理提示词
         for (size_t i = 0; i < prompt_tokens.size(); ++i) {
-            if (llama_decode(context_, llama_batch_get_one(&prompt_tokens[i], 1, i, 0)) != 0) {
+            if (llama_decode(context_, llama_batch_get_one(&prompt_tokens[i], 1)) != 0) {
                 result.stop_reason = "Failed to process prompt";
                 result.finished = true;
                 callback(0, "", true);
@@ -192,7 +210,14 @@ GenerationResult TextGenerator::generateStream(const std::string& prompt,
             generated.push_back(next_token);
             
             // 转换token为文本
-            std::string token_text = llama_token_to_piece(context_, next_token);
+            std::string token_text;
+            if (vocab_) {
+                char buffer[256];
+                int32_t len = llama_token_to_piece(vocab_, next_token, buffer, sizeof(buffer), 0, true);
+                if (len > 0) {
+                    token_text = std::string(buffer, len);
+                }
+            }
             generated_text += token_text;
             
             // 流式回调
@@ -205,7 +230,7 @@ GenerationResult TextGenerator::generateStream(const std::string& prompt,
             }
             
             // 继续解码
-            if (llama_decode(context_, llama_batch_get_one(&next_token, 1, prompt_tokens.size() + i, 0)) != 0) {
+            if (llama_decode(context_, llama_batch_get_one(&next_token, 1)) != 0) {
                 result.stop_reason = "Decode error";
                 break;
             }
@@ -242,23 +267,35 @@ size_t TextGenerator::countTokens(const std::string& text) const {
 }
 
 std::string TextGenerator::tokensToText(const std::vector<llama_token>& tokens) const {
+    if (!vocab_) {
+        return "";
+    }
+    
     std::string result;
+    char buffer[256];
     for (llama_token token : tokens) {
-        result += llama_token_to_piece(context_, token);
+        int len = llama_token_to_piece(vocab_, token, buffer, sizeof(buffer), 0, false);
+        if (len > 0) {
+            result.append(buffer, len);
+        }
     }
     return result;
 }
 
 std::vector<llama_token> TextGenerator::textToTokens(const std::string& text, bool add_bos) const {
+    if (!vocab_) {
+        return {};
+    }
+    
     std::vector<llama_token> tokens;
     tokens.resize(text.length() + (add_bos ? 1 : 0));
     
-    int n_tokens = llama_tokenize(model_, text.c_str(), text.length(), 
+    int n_tokens = llama_tokenize(vocab_, text.c_str(), text.length(), 
                                  tokens.data(), tokens.size(), add_bos, false);
     
     if (n_tokens < 0) {
         tokens.resize(-n_tokens);
-        n_tokens = llama_tokenize(model_, text.c_str(), text.length(), 
+        n_tokens = llama_tokenize(vocab_, text.c_str(), text.length(), 
                                  tokens.data(), tokens.size(), add_bos, false);
     }
     
@@ -274,7 +311,10 @@ void TextGenerator::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     generated_tokens_.clear();
     if (context_) {
-        llama_kv_cache_clear(context_);
+        llama_memory_t memory = llama_get_memory(context_);
+        if (memory) {
+            llama_memory_clear(memory, true);
+        }
     }
 }
 

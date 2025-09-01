@@ -128,6 +128,22 @@ else()
     message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
 endif()
 
+# CURL 支持 (用于模型下载)
+find_package(CURL REQUIRED)
+if(CURL_FOUND)
+    message(STATUS "Found CURL: ${CURL_VERSION_STRING}")
+else()
+    message(FATAL_ERROR "CURL not found. Please install libcurl development packages.")
+endif()
+
+# OpenSSL 支持 (用于SHA256计算)
+find_package(OpenSSL REQUIRED)
+if(OPENSSL_FOUND)
+    message(STATUS "Found OpenSSL: ${OPENSSL_VERSION}")
+else()
+    message(FATAL_ERROR "OpenSSL not found. Please install OpenSSL development packages.")
+endif()
+
 # 视频和音频处理库
 # FFmpeg 支持
 find_package(PkgConfig REQUIRED)
@@ -334,6 +350,7 @@ set(DUOROU_SOURCES_LIST
     src/core/model_path_manager.cpp
     src/core/text_generator.cpp
     src/core/image_generator.cpp
+    src/core/stb_impl.cpp
     src/core/model_downloader.cpp
     src/core/ollama_model_loader.cpp
     src/core/resource_manager.cpp
@@ -443,6 +460,9 @@ if(DUOROU_SOURCES)
         ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json
+        CURL::libcurl
+        OpenSSL::SSL
+        OpenSSL::Crypto
     )
     
     # 链接视频音频处理库

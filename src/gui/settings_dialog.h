@@ -5,6 +5,9 @@
 #include <string>
 
 namespace duorou {
+namespace core {
+class Application;
+}
 namespace gui {
 
 /**
@@ -13,6 +16,7 @@ namespace gui {
 class SettingsDialog {
 public:
     SettingsDialog();
+    explicit SettingsDialog(core::Application* app);
     ~SettingsDialog();
 
     // 禁用拷贝构造和赋值
@@ -48,9 +52,13 @@ private:
     
     // 模型设置页面
     GtkWidget* model_page_;
-    GtkWidget* llama_model_entry_;
-    GtkWidget* sd_model_entry_;
+    GtkWidget* llama_model_combo_;
+    GtkWidget* sd_model_entry_;        // 主SD模型
+    GtkWidget* sd_vae_entry_;          // VAE模型
+    GtkWidget* sd_controlnet_entry_;   // ControlNet模型
+    GtkWidget* sd_lora_entry_;         // LoRA模型目录
     GtkWidget* model_path_entry_;
+    GtkWidget* ollama_path_entry_;
     
     // 性能设置页面
     GtkWidget* performance_page_;
@@ -93,12 +101,40 @@ private:
      */
     void reset_to_defaults();
 
+    /**
+     * 设置应用程序实例引用
+     * @param app 应用程序实例指针
+     */
+    void set_application(core::Application* app);
+
+    /**
+     * 刷新模型列表
+     */
+    void refresh_model_list();
+
+    // 应用程序实例引用
+    core::Application* application_;
+
     // 静态回调函数
     static void on_ok_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_cancel_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_apply_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_reset_button_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_sd_browse_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_sd_vae_browse_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_sd_controlnet_browse_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_sd_lora_browse_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_model_path_browse_clicked(GtkWidget* widget, gpointer user_data);
+    static void on_ollama_path_browse_clicked(GtkWidget* widget, gpointer user_data);
     static void on_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
+    
+    // 文件选择对话框回调函数
+    static void on_sd_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
+    static void on_sd_vae_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
+    static void on_sd_controlnet_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
+    static void on_sd_lora_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
+    static void on_model_path_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
+    static void on_ollama_path_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
 };
 
 } // namespace gui

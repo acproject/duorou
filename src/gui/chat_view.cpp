@@ -1,5 +1,6 @@
 #include "chat_view.h"
 #include "../core/logger.h"
+#include "../core/model_manager.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
 #include "chat_session_manager.h"
@@ -25,7 +26,7 @@ ChatView::ChatView()
       enhanced_video_window_(std::make_unique<EnhancedVideoCaptureWindow>()),
       video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
-      session_manager_(nullptr), cached_video_frame_(nullptr),
+      session_manager_(nullptr), model_manager_(nullptr), cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
   // 初始化增强视频窗口
@@ -406,9 +407,9 @@ void ChatView::create_input_area() {
   GtkWidget *model_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
   gtk_widget_set_halign(model_container, GTK_ALIGN_CENTER);
 
-  // 创建模型选择器
+  // 创建模型选择器（初始为空，稍后通过update_model_selector填充）
   model_selector_ = gtk_drop_down_new_from_strings(
-      (const char *[]){"gpt-3.5-turbo", "gpt-4", "claude-3", "llama2", NULL});
+      (const char *[]){"No models available", NULL});
   gtk_widget_add_css_class(model_selector_, "model-selector");
 
   // 创建模型标签
@@ -1806,6 +1807,47 @@ void ChatView::load_session_messages(const std::string &session_id) {
 
   std::cout << "Loaded " << session->get_messages().size()
             << " messages for session: " << session_id << std::endl;
+}
+
+void ChatView::set_model_manager(core::ModelManager *model_manager) {
+  model_manager_ = model_manager;
+  // 设置模型管理器后立即更新模型选择器
+  update_model_selector();
+}
+
+void ChatView::update_model_selector() {
+  if (!model_manager_ || !model_selector_) {
+    return;
+  }
+
+  // 获取可用模型列表
+  auto available_models = model_manager_->getAllModels();
+  
+  if (available_models.empty()) {
+    // 如果没有可用模型，显示提示信息
+    const char *no_models[] = {"No models available", NULL};
+    GtkStringList *string_list = gtk_string_list_new(no_models);
+    gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_), G_LIST_MODEL(string_list));
+    return;
+  }
+
+  // 创建模型名称数组
+  std::vector<const char*> model_names;
+  for (const auto &model : available_models) {
+    model_names.push_back(model.name.c_str());
+  }
+  model_names.push_back(NULL); // 以NULL结尾
+
+  // 更新下拉菜单
+  GtkStringList *string_list = gtk_string_list_new(model_names.data());
+  gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_), G_LIST_MODEL(string_list));
+  
+  // 默认选择第一个模型
+  if (!available_models.empty()) {
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(model_selector_), 0);
+  }
+  
+  std::cout << "Updated model selector with " << available_models.size() << " models" << std::endl;
 }
 
 } // namespace gui
