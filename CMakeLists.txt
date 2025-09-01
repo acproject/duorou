@@ -356,6 +356,9 @@ set(DUOROU_SOURCES_LIST
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
+    src/extensions/llama_cpp/arch_mapping.cpp
+    src/extensions/llama_cpp/gguf_modifier.cpp
+    src/extensions/llama_cpp/model_loader_wrapper.cpp
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
     src/gui/image_view.cpp

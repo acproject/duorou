@@ -87,6 +87,9 @@ foreach(test_name ${BASIC_TESTS})
                 ../src/core/ollama_model_loader.cpp
                 ../src/core/model_path_manager.cpp
                 ../src/core/logger.cpp
+                ../src/extensions/llama_cpp/arch_mapping.cpp
+                ../src/extensions/llama_cpp/gguf_modifier.cpp
+                ../src/extensions/llama_cpp/model_loader_wrapper.cpp
             )
             # 链接nlohmann_json和OpenSSL
             find_package(nlohmann_json REQUIRED)

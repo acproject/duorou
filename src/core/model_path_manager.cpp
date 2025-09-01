@@ -134,13 +134,14 @@ std::string ModelPathManager::getBlobFilePath(const std::string& digest) const {
         return "";
     }
     
-    // 使用sha256:前缀的格式
-    std::string clean_digest = digest;
-    if (clean_digest.substr(0, 7) == "sha256:") {
-        clean_digest = clean_digest.substr(7);
+    // Ollama使用sha256-格式存储blob文件
+    std::string blob_name = digest;
+    // 将sha256:替换为sha256-
+    if (blob_name.substr(0, 7) == "sha256:") {
+        blob_name = "sha256-" + blob_name.substr(7);
     }
     
-    return (std::filesystem::path(getBlobsPath()) / clean_digest).string();
+    return (std::filesystem::path(getBlobsPath()) / blob_name).string();
 }
 
 bool ModelPathManager::isValidDigest(const std::string& digest) {

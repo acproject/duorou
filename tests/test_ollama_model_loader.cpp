@@ -4,8 +4,51 @@
 #include <iostream>
 #include <memory>
 #include <filesystem>
+#include "llama.h"
 
 using namespace duorou::core;
+
+// Function to check GGUF file architecture
+void checkGGUFArchitecture(const std::string& gguf_path) {
+    std::cout << "\n=== Checking GGUF Architecture ===" << std::endl;
+    std::cout << "File: " << gguf_path << std::endl;
+    
+    // Initialize llama backend
+    llama_backend_init();
+    
+    // Load model parameters
+    llama_model_params model_params = llama_model_default_params();
+    model_params.n_gpu_layers = 0; // CPU only for metadata reading
+    
+    // Try to load the model to get architecture info
+    llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params);
+    
+    if (model) {
+        std::cout << "Model loaded successfully!" << std::endl;
+        
+        // Get model metadata
+        char arch_name[256];
+        int arch_name_len = llama_model_meta_val_str(model, "general.architecture", arch_name, sizeof(arch_name));
+        if (arch_name_len > 0) {
+            std::cout << "Architecture: " << arch_name << std::endl;
+        } else {
+            std::cout << "Could not read architecture from model" << std::endl;
+        }
+        
+        char model_name[256];
+        int model_name_len = llama_model_meta_val_str(model, "general.name", model_name, sizeof(model_name));
+        if (model_name_len > 0) {
+            std::cout << "Model name: " << model_name << std::endl;
+        }
+        
+        llama_model_free(model);
+    } else {
+        std::cout << "Failed to load model for architecture check" << std::endl;
+    }
+    
+    llama_backend_free();
+    std::cout << "=== End GGUF Architecture Check ===\n" << std::endl;
+}
 
 #define TEST_ASSERT(condition) \
     do { \
@@ -100,6 +143,8 @@ bool testLoadOllamaModel() {
     
     if (model) {
         std::cout << "Successfully loaded model: " << test_model << std::endl;
+        
+        
         
         // 获取模型信息
         // Note: llama_n_vocab API has changed, using model context instead

@@ -1,5 +1,7 @@
 #include "ollama_model_loader.h"
 #include "logger.h"
+#include "../extensions/llama_cpp/arch_mapping.h"
+#include "../extensions/llama_cpp/model_loader_wrapper.h"
 #include <filesystem>
 #include <regex>
 #include <algorithm>
@@ -48,8 +50,8 @@ struct llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_
     
     logger_.info("Loading GGUF model from: " + gguf_path);
     
-    // 使用llama.cpp加载模型
-    struct llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params);
+    // 使用ModelLoaderWrapper加载模型，支持架构映射
+    struct llama_model* model = duorou::extensions::llama_cpp::ModelLoaderWrapper::loadModelWithArchMapping(gguf_path, model_params);
     if (!model) {
         logger_.error("Failed to load GGUF model: " + gguf_path);
         return nullptr;
@@ -114,12 +116,17 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
 std::string OllamaModelLoader::getGGUFPathFromManifest(const ModelManifest& manifest) {
     // 查找模型层（GGUF文件）
     for (const auto& layer : manifest.layers) {
+        // Debug output for layer checking
+        std::cout << "Checking layer: mediaType=" << layer.media_type << ", digest=" << layer.digest << std::endl;
+        std::string blob_path = model_path_manager_->getBlobFilePath(layer.digest);
+        std::cout << "Generated blob path: " << blob_path << std::endl;
+        std::cout << "File exists: " << (std::filesystem::exists(blob_path) ? "yes" : "no") << std::endl;
+        
         // ollama中GGUF模型的media type
         if (layer.media_type == "application/vnd.ollama.image.model" ||
             layer.media_type == "application/vnd.docker.image.rootfs.diff.tar.gzip") {
             
             // 获取blob文件路径
-            std::string blob_path = model_path_manager_->getBlobFilePath(layer.digest);
             if (!blob_path.empty() && std::filesystem::exists(blob_path)) {
                 return blob_path;
             }
@@ -142,33 +149,42 @@ std::string OllamaModelLoader::normalizeOllamaModelName(const std::string& model
         normalized = "registry://" + normalized;
     }
     
-    // 如果没有namespace，添加默认的library namespace
+    // 解析模型名称格式：[scheme://][registry/][namespace/]repository[:tag]
     // 支持repository名称包含点号，如qwen2.5vl
-    std::regex simple_name_regex(R"(^([^:/]+://)?([^/]+(?:\.[^/:]+)*)(:([^:]+))?$)");
+    std::regex full_path_regex(R"(^([^:/]+://)([^/]+)/([^/]+)/([^:]+)(?::([^:]+))?$)");
     std::smatch matches;
+    
+    if (std::regex_match(normalized, matches, full_path_regex)) {
+        // 已经是完整路径格式，直接返回
+        if (matches[5].str().empty()) {
+            // 没有tag，添加默认的latest
+            normalized += ":latest";
+        }
+        return normalized;
+    }
+    
+    // 处理简单格式：repository[:tag] 或 namespace/repository[:tag]
+    std::regex simple_name_regex(R"(^([^:/]+://)?(?:([^/]+)/)?([^/:]+(?:\.[^/:]+)*)(?::([^:]+))?$)");
     
     if (std::regex_match(normalized, matches, simple_name_regex)) {
         std::string scheme = matches[1].str();
-        std::string repository = matches[2].str();
-        std::string tag_part = matches[3].str();
+        std::string namespace_part = matches[2].str();
+        std::string repository = matches[3].str();
+        std::string tag = matches[4].str();
         
         if (scheme.empty()) {
             scheme = "registry://";
         }
         
-        normalized = scheme + "registry.ollama.ai/library/" + repository + tag_part;
-    }
-    
-    // 如果没有tag，添加默认的latest tag
-    // 检查最后一个/之后是否有:，如果没有则添加:latest
-    size_t last_slash = normalized.find_last_of('/');
-    if (last_slash != std::string::npos) {
-        std::string after_slash = normalized.substr(last_slash + 1);
-        if (after_slash.find(':') == std::string::npos) {
-            normalized += ":latest";
+        if (namespace_part.empty()) {
+            namespace_part = "library";
         }
-    } else if (normalized.find(':') == std::string::npos) {
-        normalized += ":latest";
+        
+        if (tag.empty()) {
+            tag = "latest";
+        }
+        
+        normalized = scheme + "registry.ollama.ai/" + namespace_part + "/" + repository + ":" + tag;
     }
     
     return normalized;
