@@ -6,6 +6,9 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include "text_generator.h"
+#include "image_generator.h"
+#include "model_downloader.h"
 
 namespace duorou {
 namespace core {
@@ -194,6 +197,102 @@ public:
      */
     void setLoadCallback(std::function<void(const std::string&, bool)> callback);
     
+    /**
+     * @brief 获取文本生成器
+     * @param model_id 模型ID
+     * @return 文本生成器指针
+     */
+    TextGenerator* getTextGenerator(const std::string& model_id) const;
+    
+    /**
+     * @brief 获取图像生成器
+     * @param model_id 模型ID
+     * @return 图像生成器指针
+     */
+    ImageGenerator* getImageGenerator(const std::string& model_id) const;
+    
+    /**
+     * @brief 优化内存使用
+     * @return 释放的内存大小（字节）
+     */
+    size_t optimizeMemory();
+    
+    /**
+     * @brief 启用自动内存管理
+     * @param enable 是否启用
+     */
+    void enableAutoMemoryManagement(bool enable);
+    
+    /**
+     * @brief 下载模型
+     * @param model_name 模型名称（如 "llama2:7b"）
+     * @param progress_callback 进度回调函数
+     * @return 下载结果的Future
+     */
+    std::future<DownloadResult> downloadModel(const std::string& model_name, 
+                                             DownloadProgressCallback progress_callback = nullptr);
+    
+    /**
+     * @brief 同步下载模型
+     * @param model_name 模型名称
+     * @param progress_callback 进度回调函数
+     * @return 下载结果
+     */
+    DownloadResult downloadModelSync(const std::string& model_name,
+                                    DownloadProgressCallback progress_callback = nullptr);
+    
+    /**
+     * @brief 获取模型信息
+     * @param model_name 模型名称
+     * @return 模型信息
+     */
+    ModelInfo getModelInfo(const std::string& model_name);
+    
+    /**
+     * @brief 检查模型是否已下载
+     * @param model_name 模型名称
+     * @return 是否已下载
+     */
+    bool isModelDownloaded(const std::string& model_name);
+    
+    /**
+     * @brief 获取本地模型列表
+     * @return 本地模型列表
+     */
+    std::vector<std::string> getLocalModels();
+    
+    /**
+     * @brief 删除本地模型
+     * @param model_name 模型名称
+     * @return 是否成功删除
+     */
+    bool deleteLocalModel(const std::string& model_name);
+    
+    /**
+     * @brief 验证模型完整性
+     * @param model_name 模型名称
+     * @return 是否完整
+     */
+    bool verifyModel(const std::string& model_name);
+    
+    /**
+     * @brief 清理未使用的模型缓存
+     * @return 清理的字节数
+     */
+    size_t cleanupModelCache();
+    
+    /**
+     * @brief 获取模型缓存大小
+     * @return 缓存大小（字节）
+     */
+    size_t getModelCacheSize();
+    
+    /**
+     * @brief 设置最大模型缓存大小
+     * @param max_size 最大缓存大小（字节）
+     */
+    void setMaxModelCacheSize(size_t max_size);
+    
 private:
     /**
      * @brief 创建模型实例
@@ -218,9 +317,12 @@ private:
 private:
     std::unordered_map<std::string, ModelInfo> registered_models_;     ///< 已注册的模型
     std::unordered_map<std::string, std::shared_ptr<BaseModel>> loaded_models_;  ///< 已加载的模型
+    std::unordered_map<std::string, std::unique_ptr<TextGenerator>> text_generators_; ///< 文本生成器映射
     mutable std::mutex mutex_;                                         ///< 线程安全互斥锁
     size_t memory_limit_;                                              ///< 内存限制
     bool initialized_;                                                 ///< 是否已初始化
+    bool auto_memory_management_;                                      ///< 自动内存管理
+    std::unique_ptr<ModelDownloader> model_downloader_;               ///< 模型下载器
     std::function<void(const std::string&, bool)> load_callback_;     ///< 模型加载回调函数
 };
 

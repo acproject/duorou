@@ -7,10 +7,13 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <chrono>
 
 // Include llama.cpp headers
 #include "llama.h"
 #include "stable-diffusion.h"
+#include "image_generator.h"
+#include "model_downloader.h"
 
 namespace duorou {
 namespace core {
@@ -18,7 +21,7 @@ namespace core {
 // LlamaModel implementation using llama.cpp
 class LlamaModel : public BaseModel {
 public:
-    LlamaModel(const std::string& path) : model_path_(path), loaded_(false), model_(nullptr), ctx_(nullptr) {}
+    LlamaModel(const std::string& path) : model_path_(path), loaded_(false), model_(nullptr), ctx_(nullptr), text_generator_(nullptr) {}
     
     ~LlamaModel() {
         unload();
@@ -67,6 +70,17 @@ public:
             return false;
         }
         
+        // Create text generator
+        text_generator_ = TextGeneratorFactory::create(model_, ctx_);
+        if (!text_generator_) {
+            std::cerr << "Failed to create text generator" << std::endl;
+            llama_free(ctx_);
+            llama_model_free(model_);
+            ctx_ = nullptr;
+            model_ = nullptr;
+            return false;
+        }
+        
         loaded_ = true;
         
         std::cout << "Llama model loaded successfully" << std::endl;
@@ -76,6 +90,8 @@ public:
     void unload() override {
         if (loaded_) {
             std::cout << "Unloading llama model" << std::endl;
+            
+            text_generator_.reset();
             
             if (ctx_) {
                 llama_free(ctx_);
@@ -115,102 +131,32 @@ public:
     }
     
     // Additional methods for text generation
-    std::string generate(const std::string& prompt, int max_tokens = 100) {
-        if (!loaded_ || !ctx_ || !model_) {
-            std::cerr << "Model not loaded for generation" << std::endl;
-            return "";
+    GenerationResult generate(const std::string& prompt, const GenerationParams& params = GenerationParams()) {
+        if (!loaded_ || !text_generator_) {
+            GenerationResult result;
+            result.stop_reason = "Model not loaded";
+            result.finished = true;
+            return result;
         }
         
-        // Get vocabulary
-        const llama_vocab* vocab = llama_model_get_vocab(model_);
-        
-        // Tokenize input
-        std::vector<llama_token> tokens(prompt.length() + 1);
-        int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(), 
-                                     tokens.data(), tokens.size(), true, false);
-        
-        if (n_tokens < 0) {
-            std::cerr << "Failed to tokenize prompt" << std::endl;
-            return "";
+        return text_generator_->generate(prompt, params);
+    }
+    
+    GenerationResult generateStream(const std::string& prompt, 
+                                   StreamCallback callback,
+                                   const GenerationParams& params = GenerationParams()) {
+        if (!loaded_ || !text_generator_) {
+            GenerationResult result;
+            result.stop_reason = "Model not loaded";
+            result.finished = true;
+            return result;
         }
         
-        tokens.resize(n_tokens);
-        
-        // Create batch
-        llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-        
-        // Fill batch with tokens
-        for (int i = 0; i < n_tokens; i++) {
-            batch.token[i] = tokens[i];
-            batch.pos[i] = i;
-            batch.n_seq_id[i] = 1;
-            batch.seq_id[i] = new llama_seq_id[1]{0};
-            batch.logits[i] = (i == n_tokens - 1) ? 1 : 0; // Only compute logits for last token
-        }
-        batch.n_tokens = n_tokens;
-        
-        // Process prompt
-        if (llama_decode(ctx_, batch) != 0) {
-            std::cerr << "Failed to decode prompt" << std::endl;
-            llama_batch_free(batch);
-            return "";
-        }
-        
-        // Generate tokens
-        std::string result = prompt;
-        
-        for (int i = 0; i < max_tokens; i++) {
-            // Get logits
-            float* logits = llama_get_logits_ith(ctx_, -1);
-            if (!logits) {
-                break;
-            }
-            
-            // Simple greedy sampling - select token with highest probability
-             int n_vocab = llama_vocab_n_tokens(vocab);
-             llama_token next_token = 0;
-             float max_logit = logits[0];
-            
-            for (int j = 1; j < n_vocab; j++) {
-                if (logits[j] > max_logit) {
-                    max_logit = logits[j];
-                    next_token = j;
-                }
-            }
-            
-            // Check for end of sequence
-            if (next_token == llama_vocab_eos(vocab)) {
-                break;
-            }
-            
-            // Convert token to text
-            char piece[256];
-            int piece_len = llama_token_to_piece(vocab, next_token, piece, sizeof(piece), 0, false);
-            if (piece_len > 0) {
-                result.append(piece, piece_len);
-            }
-            
-            // Prepare next batch
-            batch.n_tokens = 1;
-            batch.token[0] = next_token;
-            batch.pos[0] = n_tokens + i;
-            batch.n_seq_id[0] = 1;
-            batch.seq_id[0][0] = 0;
-            batch.logits[0] = 1;
-            
-            // Decode next token
-            if (llama_decode(ctx_, batch) != 0) {
-                break;
-            }
-        }
-        
-        // Cleanup
-        for (int i = 0; i < batch.n_tokens; i++) {
-            delete[] batch.seq_id[i];
-        }
-        llama_batch_free(batch);
-        
-        return result;
+        return text_generator_->generateStream(prompt, callback, params);
+    }
+    
+    TextGenerator* getTextGenerator() const {
+        return text_generator_.get();
     }
     
 private:
@@ -218,12 +164,13 @@ private:
     bool loaded_;
     llama_model* model_;
     llama_context* ctx_;
+    std::unique_ptr<TextGenerator> text_generator_;
 };
 
 // StableDiffusionModel implementation using stable-diffusion.cpp
 class StableDiffusionModel : public BaseModel {
 public:
-    StableDiffusionModel(const std::string& path) : model_path_(path), loaded_(false), sd_ctx_(nullptr) {}
+    StableDiffusionModel(const std::string& path) : model_path_(path), loaded_(false), sd_ctx_(nullptr), image_generator_(nullptr) {}
     
     ~StableDiffusionModel() {
         unload();
@@ -265,6 +212,15 @@ public:
             return false;
         }
         
+        // Create image generator
+        image_generator_ = ImageGeneratorFactory::create(sd_ctx_);
+        if (!image_generator_) {
+            std::cerr << "Failed to create image generator" << std::endl;
+            free_sd_ctx(sd_ctx_);
+            sd_ctx_ = nullptr;
+            return false;
+        }
+        
         loaded_ = true;
         std::cout << "Stable diffusion model loaded successfully" << std::endl;
         return true;
@@ -273,6 +229,8 @@ public:
     void unload() override {
         if (loaded_) {
             std::cout << "Unloading stable diffusion model" << std::endl;
+            
+            image_generator_.reset();
             
             if (sd_ctx_) {
                 free_sd_ctx(sd_ctx_);
@@ -303,57 +261,61 @@ public:
     }
     
     // Additional methods for image generation
-    sd_image_t* generateImage(const std::string& prompt, 
-                             const std::string& negative_prompt = "",
-                             int width = 512, 
-                             int height = 512,
-                             int steps = 20,
-                             float cfg_scale = 7.5,
-                             int64_t seed = -1) {
-        if (!loaded_ || !sd_ctx_) {
-            std::cerr << "Model not loaded for generation" << std::endl;
-            return nullptr;
+    ImageGenerationResult generateImage(const std::string& prompt, 
+                                       const ImageGenerationParams& params = ImageGenerationParams()) {
+        if (!loaded_ || !image_generator_) {
+            ImageGenerationResult result;
+            result.error_message = "Model not loaded";
+            return result;
         }
         
-        // Initialize image generation parameters
-        sd_img_gen_params_t gen_params;
-        sd_img_gen_params_init(&gen_params);
-        
-        // Set generation parameters
-        gen_params.prompt = prompt.c_str();
-        gen_params.negative_prompt = negative_prompt.c_str();
-        gen_params.width = width;
-        gen_params.height = height;
-        gen_params.sample_method = EULER_A;
-        gen_params.sample_steps = steps;
-        gen_params.guidance.txt_cfg = cfg_scale;
-        gen_params.seed = seed;
-        gen_params.batch_count = 1;
-        gen_params.clip_skip = -1;
-        gen_params.strength = 0.75f;
-        
-        // Generate image
-        sd_image_t* result = generate_image(sd_ctx_, &gen_params);
-        
-        if (!result) {
-            std::cerr << "Failed to generate image" << std::endl;
-            return nullptr;
+        return image_generator_->textToImage(prompt, params);
+    }
+    
+    ImageGenerationResult generateImageWithProgress(const std::string& prompt,
+                                                   ProgressCallback callback,
+                                                   const ImageGenerationParams& params = ImageGenerationParams()) {
+        if (!loaded_ || !image_generator_) {
+            ImageGenerationResult result;
+            result.error_message = "Model not loaded";
+            return result;
         }
         
-        std::cout << "Image generated successfully: " << width << "x" << height << std::endl;
-        return result;
+        return image_generator_->textToImageWithProgress(prompt, callback, params);
+    }
+    
+    ImageGenerationResult imageToImage(const std::string& prompt,
+                                      const std::vector<uint8_t>& input_image,
+                                      int input_width,
+                                      int input_height,
+                                      const ImageGenerationParams& params = ImageGenerationParams()) {
+        if (!loaded_ || !image_generator_) {
+            ImageGenerationResult result;
+            result.error_message = "Model not loaded";
+            return result;
+        }
+        
+        return image_generator_->imageToImage(prompt, input_image, input_width, input_height, params);
+    }
+    
+    ImageGenerator* getImageGenerator() const {
+        return image_generator_.get();
     }
     
 private:
     std::string model_path_;
     bool loaded_;
     sd_ctx_t* sd_ctx_;
+    std::unique_ptr<ImageGenerator> image_generator_;
 };
 
 // ModelManager实现
 ModelManager::ModelManager()
     : memory_limit_(4ULL * 1024 * 1024 * 1024)  // 默认4GB内存限制
-    , initialized_(false) {
+    , initialized_(false)
+    , auto_memory_management_(false) {
+    // 初始化模型下载器
+    model_downloader_ = ModelDownloaderFactory::create();
 }
 
 ModelManager::~ModelManager() {
@@ -586,7 +548,194 @@ bool ModelManager::hasEnoughMemory(const std::string& model_id) const {
 
 void ModelManager::setLoadCallback(std::function<void(const std::string&, bool)> callback) {
     std::lock_guard<std::mutex> lock(mutex_);
-    load_callback_ = std::move(callback);
+    load_callback_ = callback;
+}
+
+TextGenerator* ModelManager::getTextGenerator(const std::string& model_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = loaded_models_.find(model_id);
+    if (it == loaded_models_.end()) {
+        return nullptr;
+    }
+    
+    // Try to cast to LlamaModel
+    auto llama_model = std::dynamic_pointer_cast<LlamaModel>(it->second);
+    if (llama_model) {
+        return llama_model->getTextGenerator();
+    }
+    
+    return nullptr;
+}
+
+ImageGenerator* ModelManager::getImageGenerator(const std::string& model_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = loaded_models_.find(model_id);
+    if (it == loaded_models_.end()) {
+        return nullptr;
+    }
+    
+    // Try to cast to StableDiffusionModel
+    auto sd_model = std::dynamic_pointer_cast<StableDiffusionModel>(it->second);
+    if (sd_model) {
+        return sd_model->getImageGenerator();
+    }
+    
+    return nullptr;
+}
+
+size_t ModelManager::optimizeMemory() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    size_t freed_memory = 0;
+    
+    // 获取当前内存使用情况
+    size_t current_usage = getTotalMemoryUsage();
+    
+    // 如果内存使用超过限制的80%，开始优化
+    if (current_usage > memory_limit_ * 0.8) {
+        // 按最后使用时间排序，卸载最久未使用的模型
+        std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> model_usage;
+        
+        for (const auto& pair : loaded_models_) {
+            // 这里可以添加模型最后使用时间的跟踪
+            // 暂时使用当前时间作为占位符
+            model_usage.emplace_back(pair.first, std::chrono::steady_clock::now());
+        }
+        
+        // 按使用时间排序（最久未使用的在前）
+        std::sort(model_usage.begin(), model_usage.end(),
+                 [](const auto& a, const auto& b) {
+                     return a.second < b.second;
+                 });
+        
+        // 卸载模型直到内存使用降到限制的60%以下
+        for (const auto& pair : model_usage) {
+            if (current_usage <= memory_limit_ * 0.6) {
+                break;
+            }
+            
+            size_t model_memory = loaded_models_[pair.first]->getMemoryUsage();
+            if (unloadModel(pair.first)) {
+                freed_memory += model_memory;
+                current_usage -= model_memory;
+            }
+        }
+    }
+    
+    return freed_memory;
+}
+
+void ModelManager::enableAutoMemoryManagement(bool enable) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto_memory_management_ = enable;
+    
+    if (enable) {
+        // 立即执行一次内存优化
+        optimizeMemory();
+    }
+}
+
+std::future<DownloadResult> ModelManager::downloadModel(const std::string& model_name, 
+                                                       DownloadProgressCallback progress_callback) {
+    if (model_downloader_) {
+        model_downloader_->setProgressCallback(progress_callback);
+        return model_downloader_->downloadModel(model_name);
+    }
+    
+    // 返回失败的Future
+    std::promise<DownloadResult> promise;
+    DownloadResult result;
+    result.error_message = "Model downloader not initialized";
+    promise.set_value(result);
+    return promise.get_future();
+}
+
+DownloadResult ModelManager::downloadModelSync(const std::string& model_name,
+                                              DownloadProgressCallback progress_callback) {
+    if (model_downloader_) {
+        model_downloader_->setProgressCallback(progress_callback);
+        return model_downloader_->downloadModelSync(model_name);
+    }
+    
+    DownloadResult result;
+    result.error_message = "Model downloader not initialized";
+    return result;
+}
+
+ModelInfo ModelManager::getModelInfo(const std::string& model_name) {
+    if (model_downloader_) {
+        // 获取下载器的ModelInfo（duorou命名空间）
+        auto downloader_info = model_downloader_->getModelInfo(model_name);
+        
+        // 转换为ModelManager的ModelInfo（duorou::core命名空间）
+        ModelInfo manager_info;
+        manager_info.id = downloader_info.name;
+        manager_info.name = downloader_info.name;
+        manager_info.description = downloader_info.description;
+        manager_info.type = ModelType::LANGUAGE_MODEL; // 默认为语言模型
+        manager_info.status = ModelStatus::NOT_LOADED;
+        manager_info.memory_usage = 0;
+        
+        return manager_info;
+    }
+    
+    return ModelInfo{};
+}
+
+bool ModelManager::isModelDownloaded(const std::string& model_name) {
+    if (model_downloader_) {
+        return model_downloader_->isModelDownloaded(model_name);
+    }
+    
+    return false;
+}
+
+std::vector<std::string> ModelManager::getLocalModels() {
+    if (model_downloader_) {
+        return model_downloader_->getLocalModels();
+    }
+    
+    return {};
+}
+
+bool ModelManager::deleteLocalModel(const std::string& model_name) {
+    if (model_downloader_) {
+        return model_downloader_->deleteModel(model_name);
+    }
+    
+    return false;
+}
+
+bool ModelManager::verifyModel(const std::string& model_name) {
+    if (model_downloader_) {
+        return model_downloader_->verifyModel(model_name);
+    }
+    
+    return false;
+}
+
+size_t ModelManager::cleanupModelCache() {
+    if (model_downloader_) {
+        return model_downloader_->cleanupUnusedBlobs();
+    }
+    
+    return 0;
+}
+
+size_t ModelManager::getModelCacheSize() {
+    if (model_downloader_) {
+        return model_downloader_->getCacheSize();
+    }
+    
+    return 0;
+}
+
+void ModelManager::setMaxModelCacheSize(size_t max_size) {
+    if (model_downloader_) {
+        model_downloader_->setMaxCacheSize(max_size);
+    }
 }
 
 std::shared_ptr<BaseModel> ModelManager::createModel(const ModelInfo& model_info) {

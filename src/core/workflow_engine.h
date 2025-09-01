@@ -11,6 +11,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include "resource_manager.h"
 
 namespace duorou {
 namespace core {
@@ -76,6 +77,12 @@ public:
      * @brief 取消任务
      */
     virtual void cancel();
+    
+    /**
+     * @brief 获取任务所需的模型
+     * @return 模型名称，空字符串表示不需要特定模型
+     */
+    virtual std::string getRequiredModel() const { return ""; }
     
     /**
      * @brief 获取任务ID
@@ -185,6 +192,15 @@ public:
     bool submitTask(std::shared_ptr<BaseTask> task);
     
     /**
+     * @brief 提交需要资源的任务
+     * @param task 任务指针
+     * @param required_resources 所需资源列表
+     * @param lock_mode 锁定模式
+     * @return 成功返回true，失败返回false
+     */
+    bool submitTaskWithResources(std::shared_ptr<BaseTask> task, const std::vector<std::string>& required_resources, LockMode lock_mode = LockMode::EXCLUSIVE);
+    
+    /**
      * @brief 取消任务
      * @param task_id 任务ID
      * @return 成功返回true，失败返回false
@@ -243,6 +259,30 @@ public:
     void setTaskCompletionCallback(std::function<void(const std::string&, const TaskResult&)> callback);
     
     /**
+     * @brief 获取资源管理器
+     * @return 资源管理器引用
+     */
+    ResourceManager& getResourceManager() { return *resource_manager_; }
+    
+    /**
+     * @brief 获取资源管理器（常量版本）
+     * @return 资源管理器常量引用
+     */
+    const ResourceManager& getResourceManager() const { return *resource_manager_; }
+    
+    /**
+     * @brief 启用/禁用模型切换优化
+     * @param enable 是否启用
+     */
+    void optimizeModelSwitching(bool enable = true) { optimize_model_switching_ = enable; }
+    
+    /**
+     * @brief 检查是否启用了模型切换优化
+     * @return 启用返回true，否则返回false
+     */
+    bool isModelSwitchingOptimized() const { return optimize_model_switching_; }
+    
+    /**
      * @brief 获取工作线程数量
      * @return 工作线程数量
      */
@@ -297,6 +337,15 @@ private:
     
     // 回调函数
     std::function<void(const std::string&, const TaskResult&)> completion_callback_;  ///< 任务完成回调
+    
+    // 资源管理
+    std::unique_ptr<ResourceManager> resource_manager_;                 ///< 资源管理器
+    std::unordered_map<std::string, std::vector<std::string>> task_resources_; ///< 任务资源映射
+    mutable std::mutex task_resources_mutex_;                          ///< 任务资源映射互斥锁
+    
+    /// 模型切换优化相关
+    std::atomic<bool> optimize_model_switching_;                        ///< 是否启用模型切换优化
+    std::string current_loaded_model_;                                  ///< 当前加载的模型
     
     bool initialized_;                                                  ///< 是否已初始化
 };

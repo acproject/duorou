@@ -29,6 +29,8 @@ WorkflowEngine::WorkflowEngine()
     , stop_requested_(false)
     , running_task_count_(0)
     , completed_task_count_(0)
+    , resource_manager_(std::make_unique<ResourceManager>())
+    , optimize_model_switching_(false)
     , initialized_(false) {
 }
 
@@ -66,6 +68,43 @@ bool WorkflowEngine::start() {
         std::cout << "WorkflowEngine already running" << std::endl;
         return true;
     }
+    
+    // 注册默认资源
+    ResourceInfo llama_resource;
+    llama_resource.id = "llama_model";
+    llama_resource.type = ResourceType::MODEL;
+    llama_resource.name = "LLaMA Model";
+    llama_resource.capacity = 1;
+    llama_resource.used = 0;
+    llama_resource.available = true;
+    resource_manager_->registerResource(llama_resource);
+    
+    ResourceInfo sd_resource;
+    sd_resource.id = "stable_diffusion_model";
+    sd_resource.type = ResourceType::MODEL;
+    sd_resource.name = "Stable Diffusion Model";
+    sd_resource.capacity = 1;
+    sd_resource.used = 0;
+    sd_resource.available = true;
+    resource_manager_->registerResource(sd_resource);
+    
+    ResourceInfo gpu_resource;
+    gpu_resource.id = "gpu_memory";
+    gpu_resource.type = ResourceType::GPU_MEMORY;
+    gpu_resource.name = "GPU Memory";
+    gpu_resource.capacity = 1;
+    gpu_resource.used = 0;
+    gpu_resource.available = true;
+    resource_manager_->registerResource(gpu_resource);
+    
+    ResourceInfo cpu_resource;
+    cpu_resource.id = "cpu_cores";
+    cpu_resource.type = ResourceType::COMPUTE_UNIT;
+    cpu_resource.name = "CPU Cores";
+    cpu_resource.capacity = worker_count_;
+    cpu_resource.used = 0;
+    cpu_resource.available = true;
+    resource_manager_->registerResource(cpu_resource);
     
     running_.store(true);
     stop_requested_.store(false);
@@ -143,6 +182,59 @@ bool WorkflowEngine::submitTask(std::shared_ptr<BaseTask> task) {
     queue_condition_.notify_one();
     
     std::cout << "Task submitted: " << task->getId() << " (" << task->getName() << ")" << std::endl;
+    return true;
+}
+
+bool WorkflowEngine::submitTaskWithResources(std::shared_ptr<BaseTask> task, const std::vector<std::string>& required_resources, LockMode lock_mode) {
+    if (!task) {
+        std::cerr << "Cannot submit null task" << std::endl;
+        return false;
+    }
+    
+    if (!running_.load()) {
+        std::cerr << "WorkflowEngine not running" << std::endl;
+        return false;
+    }
+    
+    // 尝试获取所需资源
+    std::vector<std::string> acquired_resources;
+    for (const auto& resource_id : required_resources) {
+        bool success = resource_manager_->acquireLock(resource_id, task->getId(), lock_mode);
+        if (!success) {
+            std::cerr << "Failed to acquire resource lock: " << resource_id << " for task: " << task->getId() << std::endl;
+            // 释放已获取的资源
+            for (const auto& acquired : acquired_resources) {
+                resource_manager_->releaseLock(acquired, task->getId());
+            }
+            return false;
+        }
+        acquired_resources.push_back(resource_id);
+    }
+    
+    // 记录任务的资源锁定
+    {
+        std::lock_guard<std::mutex> lock(task_resources_mutex_);
+        task_resources_[task->getId()] = acquired_resources;
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        
+        // 检查任务ID是否已存在
+        if (all_tasks_.find(task->getId()) != all_tasks_.end()) {
+            std::cerr << "Task with ID already exists: " << task->getId() << std::endl;
+            return false;
+        }
+        
+        // 添加到队列和映射表
+        task_queue_.push(task);
+        all_tasks_[task->getId()] = task;
+    }
+    
+    // 唤醒一个工作线程
+    queue_condition_.notify_one();
+    
+    std::cout << "Task with resources submitted: " << task->getId() << " (" << task->getName() << ")" << std::endl;
     return true;
 }
 
@@ -305,6 +397,17 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
     
     std::cout << "Executing task: " << task->getId() << " (" << task->getName() << ")" << std::endl;
     
+    // 模型切换优化逻辑
+    if (optimize_model_switching_) {
+        // 检查是否需要切换模型
+        std::string required_model = task->getRequiredModel();
+        if (!required_model.empty() && required_model != current_loaded_model_) {
+            std::cout << "Switching model from " << current_loaded_model_ << " to " << required_model << std::endl;
+            // 这里可以添加实际的模型切换逻辑
+            current_loaded_model_ = required_model;
+        }
+    }
+    
     // 记录开始时间
     auto start_time = std::chrono::steady_clock::now();
     
@@ -353,6 +456,18 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
             completion_callback_(task->getId(), result);
         } catch (const std::exception& e) {
             std::cerr << "Exception in completion callback: " << e.what() << std::endl;
+        }
+    }
+    
+    // 释放任务锁定的资源
+    {
+        std::lock_guard<std::mutex> lock(task_resources_mutex_);
+        auto it = task_resources_.find(task->getId());
+        if (it != task_resources_.end()) {
+            for (const auto& resource_id : it->second) {
+                resource_manager_->releaseLock(resource_id, task->getId());
+            }
+            task_resources_.erase(it);
         }
     }
     

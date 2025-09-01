@@ -331,7 +331,14 @@ set(DUOROU_SOURCES_LIST
     src/core/config_manager.cpp
     src/core/logger.cpp
     src/core/model_manager.cpp
+    src/core/model_path_manager.cpp
+    src/core/text_generator.cpp
+    src/core/image_generator.cpp
+    src/core/model_downloader.cpp
+    src/core/ollama_model_loader.cpp
+    src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
+    src/core/model_switch_task.cpp
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
     src/gui/image_view.cpp
@@ -360,7 +367,14 @@ set(DUOROU_HEADERS_LIST
     src/core/config_manager.h
     src/core/logger.h
     src/core/model_manager.h
+    src/core/model_path_manager.h
+    src/core/text_generator.h
+    src/core/image_generator.h
+    src/core/model_downloader.h
+    src/core/ollama_model_loader.h
+    src/core/resource_manager.h
     src/core/workflow_engine.h
+    src/core/model_switch_task.h
     src/gui/main_window.h
     src/gui/chat_view.h
     src/gui/image_view.h

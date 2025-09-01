@@ -45,10 +45,10 @@ duorou/
    - [x] CMake配置文件
 
 2. **核心模块设计**
-   - [ ] 模型管理器 (ModelManager)
-   - [ ] 工作流引擎 (WorkflowEngine)
-   - [ ] 配置管理 (ConfigManager)
-   - [ ] 日志系统 (Logger)
+   - [x] 模型管理器 (ModelManager)
+   - [x] 工作流引擎 (WorkflowEngine)
+   - [.] 配置管理 (ConfigManager)
+   - [x] 日志系统 (Logger)
 
 ### 第二阶段：模型集成 (Week 3-4)
 
