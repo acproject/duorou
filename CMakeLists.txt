@@ -353,10 +353,11 @@ set(DUOROU_SOURCES_LIST
     src/core/stb_impl.cpp
     src/core/model_downloader.cpp
     src/core/ollama_model_loader.cpp
+    src/core/modelfile_parser.cpp
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
-    src/extensions/llama_cpp/arch_mapping.cpp
+    src/extensions/llama_cpp/ggml_incremental_extension.cpp
     src/extensions/llama_cpp/gguf_modifier.cpp
     src/extensions/llama_cpp/gguf_wrapper.cpp
     src/extensions/llama_cpp/model_loader_wrapper.cpp
@@ -585,6 +586,25 @@ else()
 endif()
 
 include(CPack)
+
+# 复制GUI资源文件到build目录
+set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
+file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
+
+# 复制CSS和图片文件
+set(GUI_RESOURCE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
+)
+
+foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
+    get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
+    configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
+endforeach()
+
+message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
 
 # 显示配置摘要
 message(STATUS "")

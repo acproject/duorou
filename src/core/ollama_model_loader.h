@@ -3,8 +3,13 @@
 #include <string>
 #include <memory>
 #include "model_path_manager.h"
+#include "modelfile_parser.h"
 #include "logger.h"
 #include "llama.h"
+
+// Forward declarations
+struct llama_model;
+struct llama_model_params;
 
 namespace duorou {
 namespace core {
@@ -32,8 +37,8 @@ public:
      * @param model_params llama模型参数
      * @return 加载成功返回llama_model指针，失败返回nullptr
      */
-    struct llama_model* loadFromOllamaModel(const std::string& model_name, 
-                                           const llama_model_params& model_params);
+    llama_model* loadFromOllamaModel(const std::string& model_name, 
+                                    const llama_model_params& model_params);
     
     /**
      * @brief 从ollama模型路径加载llama模型
@@ -41,8 +46,28 @@ public:
      * @param model_params llama模型参数
      * @return 加载成功返回llama_model指针，失败返回nullptr
      */
-    struct llama_model* loadFromModelPath(const ModelPath& model_path,
-                                         const llama_model_params& model_params);
+    llama_model* loadFromModelPath(const ModelPath& model_path,
+                                  const llama_model_params& model_params);
+    
+    /**
+     * @brief 从ollama模型加载llama模型，支持LoRA适配器
+     * @param model_name ollama模型名称
+     * @param model_params llama模型参数
+     * @param enable_lora 是否启用LoRA解析
+     * @return 加载成功返回llama_model指针，失败返回nullptr
+     */
+    llama_model* loadFromOllamaModelWithLoRA(const std::string& model_name,
+                                            const llama_model_params& model_params,
+                                            bool enable_lora = false);
+    
+    /**
+     * @brief 从Modelfile配置加载模型
+     * @param config Modelfile配置
+     * @param model_params llama模型参数
+     * @return 加载成功返回llama_model指针，失败返回nullptr
+     */
+    llama_model* loadFromModelfileConfig(const ModelfileConfig& config,
+                                        const llama_model_params& model_params);
     
     /**
      * @brief 检查ollama模型是否存在
@@ -82,7 +107,16 @@ private:
     
 private:
     std::shared_ptr<ModelPathManager> model_path_manager_;
+    std::shared_ptr<ModelfileParser> modelfile_parser_;
     Logger logger_;
+    
+    /**
+     * @brief 解析manifest中的Modelfile配置
+     * @param manifest 模型manifest
+     * @param config 输出的配置信息
+     * @return 解析成功返回true
+     */
+    bool parseModelfileFromManifest(const ModelManifest& manifest, ModelfileConfig& config);
 };
 
 } // namespace core

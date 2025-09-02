@@ -120,7 +120,9 @@ void ModelConfigManager::createQwen25vlConfig() {
     // Special tokens for vision
     config->specialTokenIds = {151655, 151652, 151653}; // image, vision_start, vision_end
     
+    // 注册两个架构名称：GGUF文件中的实际名称和别名
     configs["qwen25vl"] = config;
+    configs["qwen2.5vl"] = config;  // 别名支持
 }
 
 void ModelConfigManager::createQwen3Config() {

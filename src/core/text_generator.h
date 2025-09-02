@@ -6,7 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <random>
-#include "llama.h"
+#include "../../third_party/llama.cpp/include/llama.h"
 
 namespace duorou {
 namespace core {

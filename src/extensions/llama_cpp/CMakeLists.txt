@@ -19,7 +19,7 @@ include_directories(
 
 # Define source files
 set(EXTENSION_SOURCES
-    arch_mapping.cpp
+    ggml_incremental_extension.cpp
     model_config_manager.cpp
     vision_model_handler.cpp
     attention_handler.cpp
@@ -29,7 +29,7 @@ set(EXTENSION_SOURCES
 
 # Define header files
 set(EXTENSION_HEADERS
-    arch_mapping.h
+    ggml_incremental_extension.h
     model_config_manager.h
     vision_model_handler.h
     attention_handler.h

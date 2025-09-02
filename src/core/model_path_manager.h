@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <nlohmann/json.hpp>
+#include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 namespace duorou {
 namespace core {

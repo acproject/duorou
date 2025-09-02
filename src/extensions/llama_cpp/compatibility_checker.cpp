@@ -1,5 +1,5 @@
 #include "compatibility_checker.h"
-#include "arch_mapping.h"
+#include "ggml_incremental_extension.h"
 #include "model_config_manager.h"
 #include "vision_model_handler.h"
 #include "attention_handler.h"
@@ -32,12 +32,12 @@ CompatibilityChecker::CompatibilityResult CompatibilityChecker::checkCompatibili
         return result;
     }
     
-    // Check if architecture needs mapping
-    ArchMapping archMapper;
-    if (archMapper.needsMapping(normalizedArch)) {
-        result.mappedArchitecture = archMapper.getMappedArchitecture(normalizedArch);
+    // Check if architecture needs incremental extension
+    using namespace duorou::extensions;
+    if (GGMLIncrementalExtension::isArchitectureSupported(normalizedArch)) {
+        result.mappedArchitecture = GGMLIncrementalExtension::getBaseArchitecture(normalizedArch);
         result.level = CompatibilityLevel::NEEDS_MAPPING;
-        result.requiredModifications.push_back("Architecture mapping: " + normalizedArch + " -> " + result.mappedArchitecture);
+        result.requiredModifications.push_back("GGML incremental extension: " + normalizedArch + " -> " + result.mappedArchitecture);
     } else {
         result.mappedArchitecture = normalizedArch;
     }
@@ -141,8 +141,7 @@ bool CompatibilityChecker::isArchitectureSupported(const std::string& architectu
     }
     
     // Check if can be mapped
-    ArchMapping archMapper;
-    return archMapper.needsMapping(normalizedArch);
+    return duorou::extensions::GGMLIncrementalExtension::isArchitectureSupported(normalizedArch);
 }
 
 std::vector<std::string> CompatibilityChecker::getSupportedArchitectures() {
@@ -226,10 +225,9 @@ std::vector<std::string> CompatibilityChecker::getRecommendedModifications(const
     std::vector<std::string> modifications;
     std::string normalizedArch = normalizeArchitectureName(architecture);
     
-    // Check if needs architecture mapping
-    ArchMapping archMapper;
-    if (archMapper.needsMapping(normalizedArch)) {
-        modifications.push_back("Update architecture metadata to: " + archMapper.getMappedArchitecture(normalizedArch));
+    // Check if needs incremental extension
+    if (duorou::extensions::GGMLIncrementalExtension::isArchitectureSupported(normalizedArch)) {
+        modifications.push_back("Update architecture metadata to: " + duorou::extensions::GGMLIncrementalExtension::getBaseArchitecture(normalizedArch));
     }
     
     // Check for vision models
@@ -465,9 +463,8 @@ CompatibilityChecker::CompatibilityLevel CompatibilityChecker::determineCompatib
         return CompatibilityLevel::FULLY_COMPATIBLE;
     }
     
-    // Check if needs mapping
-    ArchMapping archMapper;
-    if (archMapper.needsMapping(normalizedArch)) {
+    // Check if needs incremental extension
+    if (duorou::extensions::GGMLIncrementalExtension::isArchitectureSupported(normalizedArch)) {
         return CompatibilityLevel::NEEDS_MAPPING;
     }
     

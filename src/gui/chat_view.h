@@ -14,17 +14,17 @@
 
 // 前向声明
 namespace duorou {
-namespace media {
-class VideoCapture;
-class AudioCapture;
-} // namespace media
-namespace core {
-class ModelManager;
-} // namespace core
+  namespace media {
+    class VideoCapture;
+    class AudioCapture;
+  } // namespace media
+  namespace core {
+    class ModelManager;
+  } // namespace core
 } // namespace duorou
 
 namespace duorou {
-namespace gui {
+  namespace gui {
 
 class ChatSessionManager;
 
@@ -64,6 +64,11 @@ public:
    * @param is_user 是否为用户消息
    */
   void add_message(const std::string &message, bool is_user);
+
+  /**
+   * 移除最后一条消息
+   */
+  void remove_last_message();
 
   /**
    * 清空聊天历史

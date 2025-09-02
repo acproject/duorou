@@ -85,6 +85,7 @@ foreach(test_name ${BASIC_TESTS})
         if(test_name STREQUAL "test_ollama_model_loader")
             target_sources(${test_name} PRIVATE
                 ../src/core/ollama_model_loader.cpp
+                ../src/core/modelfile_parser.cpp
                 ../src/core/model_path_manager.cpp
                 ../src/core/text_generator.cpp
                 ../src/core/model_downloader.cpp

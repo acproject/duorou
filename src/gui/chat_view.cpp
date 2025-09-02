@@ -272,14 +272,62 @@ void ChatView::send_message(const std::string &message) {
     session_manager_->add_message_to_current_session(message, true);
   }
 
-  // 调用AI模型处理消息
-  std::string ai_response = generate_ai_response(message);
-  add_message(ai_response, false);
+  // 显示AI正在思考的指示器
+  add_message("AI正在思考中...", false);
   
-  // 保存AI回复到当前会话
-  if (session_manager_) {
-    session_manager_->add_message_to_current_session(ai_response, false);
+  // 禁用发送按钮，防止重复发送
+  if (send_button_) {
+    gtk_widget_set_sensitive(send_button_, FALSE);
   }
+  if (input_entry_) {
+    gtk_widget_set_sensitive(input_entry_, FALSE);
+  }
+
+  // 在后台线程中调用AI模型处理消息
+  std::thread([this, message]() {
+    std::string ai_response = generate_ai_response(message);
+    
+    // 创建数据结构来传递给主线程
+    struct CallbackData {
+      ChatView* chat_view;
+      std::string* response;
+    };
+    
+    CallbackData* data = new CallbackData{this, new std::string(ai_response)};
+    
+    // 使用 g_idle_add 在主线程中更新UI
+    g_idle_add([](gpointer user_data) -> gboolean {
+      CallbackData* data = static_cast<CallbackData*>(user_data);
+      ChatView* chat_view = data->chat_view;
+      std::string* response = data->response;
+      
+      if (chat_view && response) {
+        // 移除"AI正在思考中..."消息
+        chat_view->remove_last_message();
+        
+        // 添加AI回复
+        chat_view->add_message(*response, false);
+        
+        // 保存AI回复到当前会话
+        if (chat_view->session_manager_) {
+          chat_view->session_manager_->add_message_to_current_session(*response, false);
+        }
+        
+        // 重新启用发送按钮
+        if (chat_view->send_button_) {
+          gtk_widget_set_sensitive(chat_view->send_button_, TRUE);
+        }
+        if (chat_view->input_entry_) {
+          gtk_widget_set_sensitive(chat_view->input_entry_, TRUE);
+        }
+      }
+      
+      // 清理内存
+      delete response;
+      delete data;
+      return G_SOURCE_REMOVE;
+    }, data);
+  }).detach();
 }
 
 void ChatView::add_message(const std::string &message, bool is_user) {
@@ -367,6 +415,16 @@ void ChatView::clear_chat() {
       GtkWidget *next = gtk_widget_get_next_sibling(child);
       gtk_box_remove(GTK_BOX(chat_box_), child);
       child = next;
+    }
+  }
+}
+
+void ChatView::remove_last_message() {
+  if (chat_box_) {
+    // 获取最后一个子组件
+    GtkWidget *last_child = gtk_widget_get_last_child(chat_box_);
+    if (last_child) {
+      gtk_box_remove(GTK_BOX(chat_box_), last_child);
     }
   }
 }

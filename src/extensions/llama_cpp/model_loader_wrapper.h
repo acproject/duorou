@@ -1,10 +1,11 @@
 #pragma once
 
 #include "llama.h"
-#include "arch_mapping.h"
+#include "ggml_incremental_extension.h"
 #include <string>
 #include <vector>
 #include <memory>
+#include "../../core/modelfile_parser.h"
 
 namespace duorou {
 namespace extensions {
@@ -24,6 +25,30 @@ public:
      */
     static struct llama_model* loadModelWithArchMapping(
         const std::string& model_path,
+        llama_model_params params
+    );
+    
+    /**
+     * 加载模型并应用LoRA适配器
+     * @param model_path 模型文件路径
+     * @param params 模型参数
+     * @param lora_adapters LoRA适配器列表
+     * @return 加载的模型指针，失败返回nullptr
+     */
+    static struct llama_model* loadModelWithLoRA(
+        const std::string& model_path,
+        llama_model_params params,
+        const std::vector<duorou::core::LoRAAdapter>& lora_adapters
+    );
+    
+    /**
+     * 从Modelfile配置加载模型
+     * @param config Modelfile配置
+     * @param params 模型参数
+     * @return 加载的模型指针，失败返回nullptr
+     */
+    static struct llama_model* loadModelFromConfig(
+        const duorou::core::ModelfileConfig& config,
         llama_model_params params
     );
 

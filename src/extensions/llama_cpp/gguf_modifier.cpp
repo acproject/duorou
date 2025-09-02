@@ -1,5 +1,5 @@
 #include "gguf_modifier.h"
-#include "arch_mapping.h"
+#include "ggml_incremental_extension.h"
 #include "model_config_manager.h"
 #include "vision_model_handler.h"
 #include "attention_handler.h"
@@ -23,7 +23,7 @@ bool GGUFModifier::modifyArchitectureIfNeeded(const std::string& gguf_path) {
     
     // Check if architecture mapping is needed
     if (needsArchitectureModification(gguf_path)) {
-        std::string mapped_arch = ArchMapping::getMappedArchitecture(current_arch);
+        std::string mapped_arch = duorou::extensions::GGMLIncrementalExtension::getBaseArchitecture(current_arch);
         if (mapped_arch != current_arch) {
             std::cout << "Mapping architecture '" << current_arch << "' to '" << mapped_arch << "'" << std::endl;
             success &= modifyArchitectureField(gguf_path, mapped_arch);
@@ -52,7 +52,7 @@ bool GGUFModifier::createModifiedGGUF(const std::string& original_path, const st
 
 bool GGUFModifier::needsArchitectureModification(const std::string& gguf_path) {
     std::string arch = getGGUFArchitecture(gguf_path);
-    return !arch.empty() && ArchMapping::needsMapping(arch);
+    return !arch.empty() && duorou::extensions::GGMLIncrementalExtension::isArchitectureSupported(arch);
 }
 
 std::string GGUFModifier::getGGUFArchitecture(const std::string& gguf_path) {
@@ -177,10 +177,42 @@ bool GGUFModifier::addMissingQwen25VLKeys(const std::string& gguf_path) {
                 return false;
             }
             
-            // Add dimension_sections array [64, 64, 64] - typical for qwen2vl
-            std::vector<uint32_t> dimension_sections = {64, 64, 64};
-            gguf_set_arr_data(ctx, "qwen2vl.rope.dimension_sections", GGUF_TYPE_UINT32, 
-                             dimension_sections.data(), dimension_sections.size());
+            // 检查是否存在qwen25vl.rope.mrope_section，如果存在则读取并映射到qwen2vl.rope.dimension_sections
+            int mrope_index = gguf_find_key(ctx, "qwen25vl.rope.mrope_section");
+            std::vector<uint32_t> dimension_sections;
+            
+            if (mrope_index >= 0) {
+                // 读取原始的mrope_section数组
+                enum gguf_type mrope_type = gguf_get_kv_type(ctx, mrope_index);
+                if (mrope_type == GGUF_TYPE_ARRAY) {
+                    enum gguf_type arr_type = gguf_get_arr_type(ctx, mrope_index);
+                    uint64_t arr_size = gguf_get_arr_n(ctx, mrope_index);
+                    
+                    if (arr_type == GGUF_TYPE_INT32 && arr_size == 3) {
+                        const int32_t* mrope_data = (const int32_t*)gguf_get_arr_data(ctx, mrope_index);
+                        if (mrope_data != nullptr) {
+                            // 将int32转换为uint32
+                            for (uint64_t i = 0; i < arr_size; i++) {
+                                dimension_sections.push_back(static_cast<uint32_t>(mrope_data[i]));
+                            }
+                            std::cout << "Mapped mrope_section [" << mrope_data[0] << ", " << mrope_data[1] << ", " << mrope_data[2] << "] to dimension_sections" << std::endl;
+                        }
+                    }
+                }
+            }
+            
+            // 如果没有找到mrope_section或读取失败，使用默认值
+            if (dimension_sections.empty()) {
+                dimension_sections = {64, 64, 64};  // qwen2vl的默认值
+                std::cout << "Using default dimension_sections [64, 64, 64]" << std::endl;
+            }
+            
+            // 只有当键不存在时才添加dimension_sections数组
+            if (!hasKey(gguf_path, "qwen2vl.rope.dimension_sections")) {
+                gguf_set_arr_data(ctx, "qwen2vl.rope.dimension_sections", GGUF_TYPE_UINT32, 
+                                 dimension_sections.data(), dimension_sections.size());
+                std::cout << "Added qwen2vl.rope.dimension_sections" << std::endl;
+            }
             
             // Add layer_norm_rms_epsilon if missing
             if (!hasKey(gguf_path, "qwen2vl.attention.layer_norm_rms_epsilon")) {
@@ -189,17 +221,13 @@ bool GGUFModifier::addMissingQwen25VLKeys(const std::string& gguf_path) {
             }
             
             // Write the modified GGUF file
-            if (!gguf_write_to_file(ctx, temp_path.c_str(), false)) {
+            if (!gguf_write_to_file(ctx, gguf_path.c_str(), false)) {
                 std::cerr << "Failed to write modified GGUF file" << std::endl;
                 gguf_free(ctx);
-                std::filesystem::remove(temp_path);
                 return false;
             }
             
             gguf_free(ctx);
-            
-            // Replace original file with modified version
-            std::filesystem::rename(temp_path, gguf_path);
             
             std::cout << "Successfully added missing keys to GGUF file" << std::endl;
             return true;

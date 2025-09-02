@@ -38,13 +38,17 @@ TextGenerator::~TextGenerator() {
 GenerationResult TextGenerator::generate(const std::string& prompt, const GenerationParams& params) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    std::cout << "[DEBUG] TextGenerator::generate() started with prompt: " << prompt.substr(0, 50) << "..." << std::endl;
+    
     auto start_time = std::chrono::high_resolution_clock::now();
     GenerationResult result;
     
     try {
         // 将提示词转换为tokens
+        std::cout << "[DEBUG] Converting prompt to tokens..." << std::endl;
         auto prompt_tokens = textToTokens(prompt, true);
         result.prompt_tokens = prompt_tokens.size();
+        std::cout << "[DEBUG] Prompt tokens count: " << prompt_tokens.size() << std::endl;
         
         if (prompt_tokens.empty()) {
             result.stop_reason = "Empty prompt";
@@ -65,26 +69,45 @@ GenerationResult TextGenerator::generate(const std::string& prompt, const Genera
             llama_memory_clear(memory, true);
         }
         
+        // 检查是否为 vocab_only 模式
+        bool vocab_only = llama_model_has_decoder(model_) == false;
+        if (vocab_only) {
+            std::cout << "[DEBUG] Model is in vocab_only mode, skipping decode operations" << std::endl;
+            result.text = "[VOCAB_ONLY_MODE] Model loaded in vocabulary-only mode. Full text generation requires complete model loading.";
+            result.stop_reason = "vocab_only_mode";
+            result.finished = true;
+            return result;
+        }
+        
         // 处理提示词
+        std::cout << "[DEBUG] Processing prompt tokens..." << std::endl;
         for (size_t i = 0; i < prompt_tokens.size(); ++i) {
+            std::cout << "[DEBUG] Processing token " << (i+1) << "/" << prompt_tokens.size() << std::endl;
             if (llama_decode(context_, llama_batch_get_one(&prompt_tokens[i], 1)) != 0) {
+                std::cout << "[DEBUG] Failed to decode prompt token at index " << i << std::endl;
                 result.stop_reason = "Failed to process prompt";
                 result.finished = true;
                 return result;
             }
         }
+        std::cout << "[DEBUG] Prompt processing completed" << std::endl;
         
         // 生成tokens
+        std::cout << "[DEBUG] Starting token generation, max_tokens: " << params.max_tokens << std::endl;
         std::vector<llama_token> generated;
         std::string generated_text;
         
         for (int i = 0; i < params.max_tokens; ++i) {
+            std::cout << "[DEBUG] Generating token " << (i+1) << "/" << params.max_tokens << std::endl;
             // 获取logits
+            std::cout << "[DEBUG] Getting logits..." << std::endl;
             float* logits = llama_get_logits_ith(context_, -1);
             if (!logits) {
+                std::cout << "[DEBUG] Failed to get logits" << std::endl;
                 result.stop_reason = "Failed to get logits";
                 break;
             }
+            std::cout << "[DEBUG] Logits obtained successfully" << std::endl;
             
             // 采样下一个token
             llama_token next_token = sampleToken(logits, params);
