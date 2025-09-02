@@ -9,6 +9,8 @@
 #include "text_generator.h"
 #include "image_generator.h"
 #include "model_downloader.h"
+#include "ollama_model_loader.h"
+#include "model_path_manager.h"
 
 namespace duorou {
 namespace core {

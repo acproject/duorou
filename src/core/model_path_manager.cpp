@@ -216,12 +216,32 @@ std::unordered_map<std::string, ModelManifest> ModelPathManager::enumerateManife
     }
     
     try {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(manifest_root)) {
-            if (entry.is_regular_file()) {
+        std::error_code ec;
+        auto iterator = std::filesystem::recursive_directory_iterator(manifest_root, ec);
+        if (ec) {
+            std::cerr << "Error: Failed to create directory iterator: " << ec.message() << std::endl;
+            return manifests;
+        }
+        
+        for (const auto& entry : iterator) {
+            if (ec) {
+                std::cerr << "Error: Directory iteration failed: " << ec.message() << std::endl;
+                if (!continue_on_error) break;
+                continue;
+            }
+            
+            if (entry.is_regular_file(ec) && !ec) {
                 std::string file_path = entry.path().string();
                 
                 // 解析模型路径
-                std::string relative_path = std::filesystem::relative(entry.path(), manifest_root).string();
+                std::string relative_path;
+                try {
+                    relative_path = std::filesystem::relative(entry.path(), manifest_root).string();
+                } catch (const std::exception& e) {
+                    std::cerr << "Warning: Failed to get relative path for: " << file_path << ", error: " << e.what() << std::endl;
+                    if (!continue_on_error) break;
+                    continue;
+                }
                 
                 // 从相对路径构造ModelPath
                 // 路径格式: registry/namespace/repository/tag

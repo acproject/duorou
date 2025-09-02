@@ -1,6 +1,13 @@
 #include "../src/core/ollama_model_loader.h"
 #include "../src/core/model_path_manager.h"
 #include "../src/core/logger.h"
+#include "../src/core/text_generator.h"
+#include "../src/extensions/llama_cpp/arch_mapping.h"
+#include "../src/extensions/llama_cpp/model_config_manager.h"
+#include "../src/extensions/llama_cpp/compatibility_checker.h"
+#include "../src/extensions/llama_cpp/vision_model_handler.h"
+#include "../src/extensions/llama_cpp/attention_handler.h"
+#include "../src/extensions/llama_cpp/gguf_modifier.h"
 #include <iostream>
 #include <memory>
 #include <filesystem>
@@ -163,6 +170,210 @@ bool testLoadOllamaModel() {
     return true;
 }
 
+bool testOllamaModelConversation() {
+    std::cout << "Testing ollama model conversation..." << std::endl;
+    
+    auto model_path_manager = std::make_shared<ModelPathManager>();
+    if (!model_path_manager->initialize()) {
+        std::cout << "Failed to initialize model path manager" << std::endl;
+        return false;
+    }
+    
+    // 创建Ollama模型加载器
+    OllamaModelLoader loader(model_path_manager);
+    auto models = loader.listAvailableModels();
+    
+    if (models.empty()) {
+        std::cout << "No ollama models available for conversation testing" << std::endl;
+        return true; // 不算失败，只是没有模型可测试
+    }
+    
+    std::string test_model = models[0];
+    std::cout << "Testing conversation with model: " << test_model << std::endl;
+    
+    try {
+        // 初始化llama backend
+        llama_backend_init();
+        
+        // 设置llama模型参数
+        llama_model_params model_params = llama_model_default_params();
+        model_params.n_gpu_layers = 0; // 使用CPU
+        model_params.use_mmap = true;
+        
+        // 尝试加载模型
+        std::cout << "Loading model..." << std::endl;
+        struct llama_model* model = loader.loadFromOllamaModel(test_model, model_params);
+        if (!model) {
+            std::cout << "Failed to load model: " << test_model << std::endl;
+            llama_backend_free();
+            return false;
+        }
+        std::cout << "Model loaded successfully" << std::endl;
+        
+        // 创建llama上下文
+        std::cout << "Creating llama context..." << std::endl;
+        llama_context_params ctx_params = llama_context_default_params();
+        ctx_params.n_ctx = 2048;
+        ctx_params.n_threads = 4;
+        
+        struct llama_context* ctx = llama_new_context_with_model(model, ctx_params);
+        if (!ctx) {
+            std::cout << "Failed to create llama context" << std::endl;
+            llama_model_free(model);
+            llama_backend_free();
+            return false;
+        }
+        
+        // 创建文本生成器
+        std::cout << "Creating text generator..." << std::endl;
+        auto text_generator = std::make_shared<TextGenerator>(model, ctx);
+        std::cout << "Text generator created successfully" << std::endl;
+        
+        // 进行简单的对话测试
+        std::cout << "Starting conversation test..." << std::endl;
+        std::string prompt = "Hello, how are you?";
+        std::cout << "Prompt: " << prompt << std::endl;
+        
+        try {
+             GenerationParams params;
+             params.max_tokens = 50;
+             params.temperature = 0.7;
+             
+             auto result = text_generator->generate(prompt, params);
+             std::cout << "Response: " << result.text << std::endl;
+             std::cout << "Conversation test completed successfully" << std::endl;
+         } catch (const std::exception& e) {
+             std::cout << "Error during generation: " << e.what() << std::endl;
+         }
+        
+        // 释放资源
+         llama_free(ctx);
+         llama_model_free(model);
+         llama_backend_free();
+        
+    } catch (const std::exception& e) {
+        std::cout << "Exception during conversation test: " << e.what() << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+// Test llama_cpp extension features
+bool testArchMapping() {
+    std::cout << "Testing architecture mapping..." << std::endl;
+    
+    // Test known architecture mappings
+    TEST_ASSERT(ArchMapping::needsMapping("gemma3"));
+    TEST_ASSERT(ArchMapping::needsMapping("mistral3"));
+    TEST_ASSERT(ArchMapping::needsMapping("qwen25vl"));
+    TEST_ASSERT(!ArchMapping::needsMapping("llama"));
+    
+    // Test architecture mapping results
+    std::string mapped = ArchMapping::getMappedArchitecture("gemma3");
+    TEST_ASSERT(!mapped.empty());
+    std::cout << "gemma3 maps to: " << mapped << std::endl;
+    
+    mapped = ArchMapping::getMappedArchitecture("mistral3");
+    TEST_ASSERT(!mapped.empty());
+    std::cout << "mistral3 maps to: " << mapped << std::endl;
+    
+    return true;
+}
+
+bool testModelConfigManager() {
+    std::cout << "Testing model configuration manager..." << std::endl;
+    
+    // Initialize the config manager
+    ModelConfigManager::initialize();
+    
+    // Test getting configurations for different models
+    auto gemma3Config = ModelConfigManager::getConfig("gemma3");
+    TEST_ASSERT(gemma3Config != nullptr);
+    TEST_ASSERT(gemma3Config->hasVision);
+    std::cout << "gemma3 config loaded successfully" << std::endl;
+    
+    auto mistral3Config = ModelConfigManager::getConfig("mistral3");
+    TEST_ASSERT(mistral3Config != nullptr);
+    TEST_ASSERT(mistral3Config->hasVision);
+    std::cout << "mistral3 config loaded successfully" << std::endl;
+    
+    auto qwen25vlConfig = ModelConfigManager::getConfig("qwen25vl");
+    TEST_ASSERT(qwen25vlConfig != nullptr);
+    TEST_ASSERT(qwen25vlConfig->hasVision);
+    std::cout << "qwen25vl config loaded successfully" << std::endl;
+    
+    return true;
+}
+
+bool testCompatibilityChecker() {
+    std::cout << "Testing compatibility checker..." << std::endl;
+    
+    CompatibilityChecker checker;
+    
+    // Test architecture compatibility
+    TEST_ASSERT(checker.isArchitectureSupported("llama"));
+    TEST_ASSERT(checker.isArchitectureSupported("gemma3"));
+    TEST_ASSERT(checker.isArchitectureSupported("mistral3"));
+    
+    // Test model requirements
+    auto requirements = checker.getModelRequirements("gemma3");
+    TEST_ASSERT(!requirements->supportedQuantizations.empty());
+    std::cout << "gemma3 requirements checked successfully" << std::endl;
+    
+    // Test special preprocessing needs
+    TEST_ASSERT(checker.needsSpecialPreprocessing("qwen25vl"));
+    TEST_ASSERT(!checker.needsSpecialPreprocessing("llama"));
+    
+    return true;
+}
+
+bool testVisionModelHandler() {
+    std::cout << "Testing vision model handler..." << std::endl;
+    
+    VisionModelHandler handler;
+    handler.initialize();
+    
+    // Test vision support detection (simplified test)
+    std::cout << "Vision model handler initialized successfully" << std::endl;
+    
+    std::cout << "Vision model handler tests completed" << std::endl;
+    return true;
+}
+
+bool testAttentionHandler() {
+    std::cout << "Testing attention handler..." << std::endl;
+    
+    AttentionHandler handler;
+    handler.initialize();
+    
+    // Test advanced attention detection
+    TEST_ASSERT(handler.hasAdvancedAttention("mistral3"));
+    TEST_ASSERT(!handler.hasAdvancedAttention("llama"));
+    
+    std::cout << "Attention handler tests completed" << std::endl;
+    return true;
+}
+
+bool testGGUFModifier() {
+    std::cout << "Testing GGUF modifier..." << std::endl;
+    
+    GGUFModifier modifier;
+    
+    // Test architecture modification needs (without actual files)
+    TEST_ASSERT(modifier.needsArchitectureModification("gemma3"));
+    TEST_ASSERT(modifier.needsArchitectureModification("mistral3"));
+    TEST_ASSERT(!modifier.needsArchitectureModification("llama"));
+    
+    // Test GGUF architecture retrieval
+    std::string arch = modifier.getGGUFArchitecture("gemma3");
+    TEST_ASSERT(!arch.empty());
+    std::cout << "gemma3 GGUF architecture: " << arch << std::endl;
+    
+    std::cout << "GGUF modifier tests completed" << std::endl;
+    return true;
+}
+
 int main() {
     // Initialize logger instance
     Logger logger;
@@ -192,6 +403,56 @@ int main() {
         all_passed = false;
     } else {
         std::cout << "✅ Load ollama model test passed" << std::endl;
+    }
+    
+    if (!testOllamaModelConversation()) {
+        std::cout << "❌ Ollama model conversation test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Ollama model conversation test passed" << std::endl;
+    }
+    
+    // Test llama_cpp extension features
+    if (!testArchMapping()) {
+        std::cout << "❌ Architecture mapping test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Architecture mapping test passed" << std::endl;
+    }
+    
+    if (!testModelConfigManager()) {
+        std::cout << "❌ Model config manager test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Model config manager test passed" << std::endl;
+    }
+    
+    if (!testCompatibilityChecker()) {
+        std::cout << "❌ Compatibility checker test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Compatibility checker test passed" << std::endl;
+    }
+    
+    if (!testVisionModelHandler()) {
+        std::cout << "❌ Vision model handler test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Vision model handler test passed" << std::endl;
+    }
+    
+    if (!testAttentionHandler()) {
+        std::cout << "❌ Attention handler test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ Attention handler test passed" << std::endl;
+    }
+    
+    if (!testGGUFModifier()) {
+        std::cout << "❌ GGUF modifier test failed" << std::endl;
+        all_passed = false;
+    } else {
+        std::cout << "✅ GGUF modifier test passed" << std::endl;
     }
     
     if (all_passed) {

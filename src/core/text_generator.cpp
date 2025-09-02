@@ -15,16 +15,16 @@ TextGenerator::TextGenerator(llama_model* model, llama_context* context)
         throw std::invalid_argument("Model and context cannot be null");
     }
     
+    // 获取vocab对象
+    if (model_) {
+        vocab_ = llama_model_get_vocab(model_);
+    }
+    
     // 获取模型信息
     context_size_ = llama_n_ctx(context_);
     vocab_size_ = vocab_ ? llama_vocab_n_tokens(vocab_) : 0;
     bos_token_ = vocab_ ? llama_vocab_bos(vocab_) : -1;
     eos_token_ = vocab_ ? llama_vocab_eos(vocab_) : -1;
-    
-    // 获取vocab对象
-    if (model_) {
-        vocab_ = llama_model_get_vocab(model_);
-    }
     
     // 初始化随机数生成器
     initializeRNG(-1);

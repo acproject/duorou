@@ -1,8 +1,10 @@
 #include "model_loader_wrapper.h"
+#include "gguf_wrapper.h"
 #include "ggml.h"
 #include "gguf.h"
 #include <iostream>
 #include <cstring>
+#include <filesystem>
 
 namespace duorou {
 namespace extensions {
@@ -18,12 +20,18 @@ struct llama_model* ModelLoaderWrapper::loadModelWithArchMapping(
     bool needs_mapping = checkArchitectureMapping(model_path, original_arch, mapped_arch);
     
     std::vector<llama_model_kv_override> overrides;
+    std::string actual_model_path = model_path;
+    std::string temp_file_path;
     
     if (needs_mapping) {
         std::cout << "Architecture mapping detected: " << original_arch << " -> " << mapped_arch << std::endl;
         
+        // 参考Ollama的做法，qwen25vl直接映射到qwen2vl架构
+        // 不需要修改模型文件，在代码层面处理架构差异
+        std::cout << "Using direct architecture mapping without file modification" << std::endl;
+        
         // 创建kv_overrides来覆盖架构字段
-        overrides = createArchOverrides(mapped_arch);
+        overrides = createArchOverrides(mapped_arch, model_path);
         
         std::cout << "Loading model with architecture override: " << mapped_arch << std::endl;
     } else {
@@ -37,7 +45,13 @@ struct llama_model* ModelLoaderWrapper::loadModelWithArchMapping(
     
     // 使用llama.cpp加载模型
     
-    struct llama_model* model = llama_model_load_from_file(model_path.c_str(), params);
+    struct llama_model* model = llama_model_load_from_file(actual_model_path.c_str(), params);
+    
+    // 清理临时文件
+    if (!temp_file_path.empty() && std::filesystem::exists(temp_file_path)) {
+        std::filesystem::remove(temp_file_path);
+        std::cout << "Cleaned up temporary file: " << temp_file_path << std::endl;
+    }
     
     // 记录加载结果
     if (model) {
@@ -115,7 +129,8 @@ bool ModelLoaderWrapper::checkArchitectureMapping(
 }
 
 std::vector<llama_model_kv_override> ModelLoaderWrapper::createArchOverrides(
-    const std::string& mapped_arch) {
+    const std::string& mapped_arch,
+    const std::string& model_path) {
     
     std::vector<llama_model_kv_override> overrides;
     
@@ -130,6 +145,73 @@ std::vector<llama_model_kv_override> ModelLoaderWrapper::createArchOverrides(
     
     overrides.push_back(arch_override);
     
+    // 参考Ollama的做法，为qwen25vl->qwen2vl映射添加必要的基础参数
+    if (mapped_arch == "qwen2vl") {
+        // 添加context_length - 这是qwen2vl架构必需的参数
+        llama_model_kv_override context_override = {};
+        strcpy(context_override.key, "qwen2vl.context_length");
+        context_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        context_override.val_i64 = 128000;  // qwen2.5vl的默认上下文长度
+        overrides.push_back(context_override);
+        
+        // 添加embedding_length - qwen2vl架构必需的参数
+        llama_model_kv_override embedding_override = {};
+        strcpy(embedding_override.key, "qwen2vl.embedding_length");
+        embedding_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        embedding_override.val_i64 = 3584;  // qwen2.5vl的embedding维度
+        overrides.push_back(embedding_override);
+        
+        // 添加block_count - qwen2vl架构必需的参数
+        llama_model_kv_override block_count_override = {};
+        strcpy(block_count_override.key, "qwen2vl.block_count");
+        block_count_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        block_count_override.val_i64 = 28;  // qwen2.5vl的层数
+        overrides.push_back(block_count_override);
+        
+        // 添加attention相关参数
+        llama_model_kv_override head_count_override = {};
+        strcpy(head_count_override.key, "qwen2vl.attention.head_count");
+        head_count_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        head_count_override.val_i64 = 28;
+        overrides.push_back(head_count_override);
+        
+        llama_model_kv_override head_count_kv_override = {};
+        strcpy(head_count_kv_override.key, "qwen2vl.attention.head_count_kv");
+        head_count_kv_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        head_count_kv_override.val_i64 = 4;
+        overrides.push_back(head_count_kv_override);
+        
+        // 添加feed_forward_length参数
+        llama_model_kv_override feed_forward_override = {};
+        strcpy(feed_forward_override.key, "qwen2vl.feed_forward_length");
+        feed_forward_override.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+        feed_forward_override.val_i64 = 18944;
+        overrides.push_back(feed_forward_override);
+        
+        // 添加rope相关参数
+        llama_model_kv_override rope_freq_override = {};
+        strcpy(rope_freq_override.key, "qwen2vl.rope.freq_base");
+        rope_freq_override.tag = LLAMA_KV_OVERRIDE_TYPE_FLOAT;
+        rope_freq_override.val_f64 = 1000000.0;
+        overrides.push_back(rope_freq_override);
+        
+        // 添加rope.dimension_sections - qwen2vl的关键参数
+        // 这是一个数组参数，需要特殊处理
+        // 注意：llama_model_kv_override不直接支持数组，这里先尝试单个值
+        llama_model_kv_override rope_dim_override = {};
+        strcpy(rope_dim_override.key, "qwen2vl.rope.dimension_sections");
+        rope_dim_override.tag = LLAMA_KV_OVERRIDE_TYPE_STR;
+        strcpy(rope_dim_override.val_str, "[128,128,128]");  // qwen2.5vl的rope维度分段
+        overrides.push_back(rope_dim_override);
+        
+        // 添加attention.layer_norm_rms_epsilon参数
+        llama_model_kv_override rms_epsilon_override = {};
+        strcpy(rms_epsilon_override.key, "qwen2vl.attention.layer_norm_rms_epsilon");
+        rms_epsilon_override.tag = LLAMA_KV_OVERRIDE_TYPE_FLOAT;
+        rms_epsilon_override.val_f64 = 1e-6;
+        overrides.push_back(rms_epsilon_override);
+    }
+    
     // 添加终止符 - llama.cpp需要NULL终止的数组
     llama_model_kv_override terminator = {};
     terminator.key[0] = '\0';  // 空键表示终止
@@ -137,6 +219,8 @@ std::vector<llama_model_kv_override> ModelLoaderWrapper::createArchOverrides(
     
     return overrides;
 }
+
+
 
 } // namespace llama_cpp
 } // namespace extensions

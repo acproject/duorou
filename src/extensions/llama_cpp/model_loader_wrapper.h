@@ -44,11 +44,15 @@ private:
     /**
      * 创建kv_overrides数组来覆盖架构字段
      * @param mapped_arch 映射后的架构名称
+     * @param model_path 模型文件路径，用于读取原始键值
      * @return kv_overrides数组
      */
     static std::vector<llama_model_kv_override> createArchOverrides(
-        const std::string& mapped_arch
+        const std::string& mapped_arch,
+        const std::string& model_path
     );
+
+
 };
 
 } // namespace llama_cpp

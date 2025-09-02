@@ -132,24 +132,8 @@ int Application::run() {
   }
 
   if (service_mode_) {
-    // 服务模式：启动API服务器
+    // 服务模式：运行服务循环
     std::cout << "Service mode started. Press Ctrl+C to stop." << std::endl;
-
-    // 创建并启动API服务器
-    std::cout << "Creating API server..." << std::endl;
-
-    api_server_ = std::make_unique<::duorou::ApiServer>(
-        std::shared_ptr<core::ModelManager>(model_manager_.get(),
-                                            [](core::ModelManager *) {}),
-        std::shared_ptr<core::Logger>(logger_.get(), [](core::Logger *) {}));
-
-    if (!api_server_->start()) {
-      std::cerr << "Failed to start API server" << std::endl;
-      return -1;
-    }
-
-    std::cout << "API server started on port " << api_server_->getPort()
-              << std::endl;
 
     // 记录启动信息
     if (logger_) {
@@ -288,9 +272,25 @@ bool Application::initializeComponents() {
     }
     std::cout << "Workflow engine initialized successfully" << std::endl;
 
-    // 在服务模式下初始化API服务器
+    // 启动API服务器（无论是否服务模式）
+    std::cout << "Creating API server..." << std::endl;
+    api_server_ = std::make_unique<::duorou::ApiServer>(
+        std::shared_ptr<core::ModelManager>(model_manager_.get(),
+                                            [](core::ModelManager *) {}),
+        std::shared_ptr<core::Logger>(logger_.get(), [](core::Logger *) {}));
+
+    if (!api_server_->start()) {
+      logger_->error("Failed to start API server");
+      return false;
+    }
+    
+    std::cout << "API server started on port " << api_server_->getPort() << std::endl;
+    logger_->info("API server started on port " + std::to_string(api_server_->getPort()));
+    
     if (service_mode_) {
-      std::cout << "API server will be started in service mode" << std::endl;
+      std::cout << "Running in service mode" << std::endl;
+    } else {
+      std::cout << "API server started for GUI mode" << std::endl;
     }
 
     // 初始化系统托盘（仅在非服务模式下）

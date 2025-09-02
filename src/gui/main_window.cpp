@@ -101,6 +101,11 @@ bool MainWindow::initialize() {
     chat_view_->set_session_manager(session_manager_.get());
   }
 
+  // 为ChatView设置模型管理器
+  if (chat_view_ && application_) {
+    chat_view_->set_model_manager(application_->getModelManager());
+  }
+
   // 将子视图添加到堆栈
   gtk_stack_add_named(GTK_STACK(content_stack_), chat_view_->get_widget(),
                       "chat");

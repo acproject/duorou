@@ -358,6 +358,7 @@ set(DUOROU_SOURCES_LIST
     src/core/model_switch_task.cpp
     src/extensions/llama_cpp/arch_mapping.cpp
     src/extensions/llama_cpp/gguf_modifier.cpp
+    src/extensions/llama_cpp/gguf_wrapper.cpp
     src/extensions/llama_cpp/model_loader_wrapper.cpp
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
@@ -453,6 +454,9 @@ if(DUOROU_SOURCES)
     list(LENGTH DUOROU_SOURCES DUOROU_SOURCES_COUNT)
     message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
+    # 添加llama_cpp扩展子目录
+    add_subdirectory(src/extensions/llama_cpp)
+    
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
@@ -460,6 +464,7 @@ if(DUOROU_SOURCES)
     target_link_libraries(duorou
         llama
         stable-diffusion
+        llama_cpp_extension
         ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json

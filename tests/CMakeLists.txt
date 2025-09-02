@@ -86,18 +86,23 @@ foreach(test_name ${BASIC_TESTS})
             target_sources(${test_name} PRIVATE
                 ../src/core/ollama_model_loader.cpp
                 ../src/core/model_path_manager.cpp
+                ../src/core/text_generator.cpp
+                ../src/core/model_downloader.cpp
                 ../src/core/logger.cpp
-                ../src/extensions/llama_cpp/arch_mapping.cpp
-                ../src/extensions/llama_cpp/gguf_modifier.cpp
+                ../src/extensions/llama_cpp/gguf_wrapper.cpp
                 ../src/extensions/llama_cpp/model_loader_wrapper.cpp
             )
-            # 链接nlohmann_json和OpenSSL
+            # 链接nlohmann_json、OpenSSL、curl和llama_cpp_extension
             find_package(nlohmann_json REQUIRED)
             find_package(OpenSSL REQUIRED)
+            find_package(CURL REQUIRED)
             target_link_libraries(${test_name}
+                llama_cpp_extension
+                stable-diffusion
                 nlohmann_json::nlohmann_json
                 OpenSSL::SSL
                 OpenSSL::Crypto
+                CURL::libcurl
             )
         endif()
         

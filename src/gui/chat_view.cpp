@@ -272,10 +272,8 @@ void ChatView::send_message(const std::string &message) {
     session_manager_->add_message_to_current_session(message, true);
   }
 
-  // TODO: 这里应该调用AI模型处理消息
-  // 暂时添加一个模拟回复
-  std::string ai_response = "This is a placeholder response. AI integration will be "
-                           "implemented later.";
+  // 调用AI模型处理消息
+  std::string ai_response = generate_ai_response(message);
   add_message(ai_response, false);
   
   // 保存AI回复到当前会话
@@ -1848,6 +1846,60 @@ void ChatView::update_model_selector() {
   }
   
   std::cout << "Updated model selector with " << available_models.size() << " models" << std::endl;
+}
+
+std::string ChatView::generate_ai_response(const std::string &message) {
+  if (!model_manager_) {
+    return "Error: Model manager not available.";
+  }
+
+  // 获取当前选中的模型
+  if (!model_selector_) {
+    return "Error: Model selector not available.";
+  }
+
+  // 获取选中的模型索引
+  guint selected_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));
+  
+  // 获取可用模型列表
+  auto available_models = model_manager_->getAllModels();
+  
+  if (available_models.empty()) {
+    return "Error: No models available for text generation.";
+  }
+  
+  if (selected_index >= available_models.size()) {
+    return "Error: Invalid model selection.";
+  }
+
+  // 获取选中的模型
+  const auto& selected_model = available_models[selected_index];
+  std::string model_id = selected_model.name;
+
+  try {
+    // 首先尝试加载模型
+    bool model_loaded = model_manager_->loadModel(model_id);
+    if (!model_loaded) {
+      return "Error: Failed to load model: " + model_id;
+    }
+    
+    // 获取文本生成器
+    auto text_generator = model_manager_->getTextGenerator(model_id);
+    if (!text_generator) {
+      return "Error: Failed to get text generator for model: " + model_id;
+    }
+
+    // 生成回复
+    auto generation_result = text_generator->generate(message);
+              
+    if (!generation_result.finished || generation_result.text.empty()) {
+      return "Error: Failed to generate response. Reason: " + generation_result.stop_reason;
+    }
+
+    return generation_result.text;
+  } catch (const std::exception &e) {
+    return "Error generating response: " + std::string(e.what());
+  }
 }
 
 } // namespace gui

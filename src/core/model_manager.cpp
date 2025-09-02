@@ -34,11 +34,6 @@ public:
         
         std::cout << "Loading llama model from: " << model_path << std::endl;
         
-        if (!std::filesystem::exists(model_path)) {
-            std::cerr << "Model file not found: " << model_path << std::endl;
-            return false;
-        }
-        
         // Initialize llama backend
         llama_backend_init();
         
@@ -47,9 +42,24 @@ public:
         model_params.n_gpu_layers = 0; // Use CPU for now
         model_params.use_mmap = true;
         model_params.use_mlock = false;
+        model_params.vocab_only = true; // Only load vocabulary for initial testing
         
-        // Load model
-        model_ = llama_model_load_from_file(model_path.c_str(), model_params);
+        // Check if this is an Ollama model (starts with registry.ollama.ai)
+        if (model_path.find("registry.ollama.ai") != std::string::npos) {
+            std::cout << "Detected Ollama model, using OllamaModelLoader" << std::endl;
+            auto path_manager = std::make_shared<ModelPathManager>();
+            path_manager->initialize();
+            OllamaModelLoader ollama_loader(path_manager);
+            model_ = ollama_loader.loadFromOllamaModel(model_path, model_params);
+        } else {
+            // Regular file-based model loading
+            if (!std::filesystem::exists(model_path)) {
+                std::cerr << "Model file not found: " << model_path << std::endl;
+                return false;
+            }
+            model_ = llama_model_load_from_file(model_path.c_str(), model_params);
+        }
+        
         if (!model_) {
             std::cerr << "Failed to load llama model: " << model_path << std::endl;
             return false;
@@ -315,7 +325,13 @@ ModelManager::ModelManager()
     , initialized_(false)
     , auto_memory_management_(false) {
     // 初始化模型下载器
+    std::cout << "[DEBUG] Creating ModelDownloader..." << std::endl;
     model_downloader_ = ModelDownloaderFactory::create();
+    if (model_downloader_) {
+        std::cout << "[DEBUG] ModelDownloader created successfully" << std::endl;
+    } else {
+        std::cout << "[DEBUG] Failed to create ModelDownloader!" << std::endl;
+    }
 }
 
 ModelManager::~ModelManager() {
@@ -375,8 +391,33 @@ bool ModelManager::loadModel(const std::string& model_id) {
     // 检查模型是否已注册
     auto it = registered_models_.find(model_id);
     if (it == registered_models_.end()) {
-        std::cerr << "Model not registered: " << model_id << std::endl;
-        return false;
+        // 如果模型未注册，检查是否为Ollama模型
+        if (model_downloader_) {
+            auto local_models = model_downloader_->getLocalModels();
+            bool is_ollama_model = std::find(local_models.begin(), local_models.end(), model_id) != local_models.end();
+            
+            if (is_ollama_model) {
+                std::cout << "[DEBUG] Dynamically registering Ollama model: " << model_id << std::endl;
+                // 动态注册Ollama模型
+                ModelInfo ollama_model;
+                ollama_model.id = model_id;
+                ollama_model.name = model_id;
+                ollama_model.type = ModelType::LANGUAGE_MODEL;
+                ollama_model.path = model_id; // 对于Ollama模型，path就是model_id
+                ollama_model.memory_usage = 0;
+                ollama_model.status = ModelStatus::NOT_LOADED;
+                ollama_model.description = "Ollama model: " + model_id;
+                
+                registered_models_[model_id] = ollama_model;
+                it = registered_models_.find(model_id);
+            } else {
+                std::cerr << "Model not registered: " << model_id << std::endl;
+                return false;
+            }
+        } else {
+            std::cerr << "Model not registered: " << model_id << std::endl;
+            return false;
+        }
     }
     
     // 检查模型是否已加载
@@ -489,12 +530,38 @@ ModelInfo ModelManager::getModelInfo(const std::string& model_id) const {
 std::vector<ModelInfo> ModelManager::getAllModels() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    std::cout << "[DEBUG] ModelManager::getAllModels() called" << std::endl;
+    
     std::vector<ModelInfo> models;
+    
+    // 添加已注册的模型
+    std::cout << "[DEBUG] Registered models count: " << registered_models_.size() << std::endl;
     for (const auto& pair : registered_models_) {
         models.push_back(pair.second);
     }
     
-    // 如果没有注册的模型，返回一些默认的示例模型
+    // 添加ollama模型
+    if (model_downloader_) {
+        std::cout << "[DEBUG] ModelDownloader exists, getting local models..." << std::endl;
+        auto local_models = model_downloader_->getLocalModels();
+        std::cout << "[DEBUG] Found " << local_models.size() << " local ollama models" << std::endl;
+        for (const auto& model_name : local_models) {
+            std::cout << "[DEBUG] Adding ollama model: " << model_name << std::endl;
+            ModelInfo ollama_model;
+            ollama_model.id = model_name;
+            ollama_model.name = model_name;
+            ollama_model.type = ModelType::LANGUAGE_MODEL;
+            ollama_model.path = "";
+            ollama_model.memory_usage = 0;
+            ollama_model.status = ModelStatus::NOT_LOADED;
+            ollama_model.description = "Ollama model: " + model_name;
+            models.push_back(ollama_model);
+        }
+    } else {
+        std::cout << "[DEBUG] ModelDownloader is null!" << std::endl;
+    }
+    
+    // 如果没有任何模型，返回一些默认的示例模型
     if (models.empty()) {
         ModelInfo llama_example;
         llama_example.id = "llama-7b-example";

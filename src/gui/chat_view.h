@@ -89,11 +89,17 @@ public:
   void load_session_messages(const std::string &session_id);
 
   /**
-   * 更新模型选择器列表
+   * 更新模型选择器
    */
   void update_model_selector();
 
 private:
+  /**
+   * 生成AI回复
+   * @param message 用户输入的消息
+   * @return AI生成的回复
+   */
+  std::string generate_ai_response(const std::string &message);
   GtkWidget *main_widget_;         // 主容器
   GtkWidget *chat_scrolled_;       // 滚动窗口
   GtkWidget *chat_box_;            // 聊天消息容器
