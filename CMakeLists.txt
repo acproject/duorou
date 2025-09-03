@@ -455,6 +455,14 @@ if(DUOROU_SOURCES)
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
+    # 设置包含目录
+    target_include_directories(duorou PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
+        ${GTK4_INCLUDE_DIRS}
+    )
+    
     # 链接库
     target_link_libraries(duorou
         llama
