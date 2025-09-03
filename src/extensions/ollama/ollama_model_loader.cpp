@@ -1,7 +1,9 @@
 #include "ollama_model_loader.h"
+#include "gguf_modifier.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <ctime>
 #include "../../../third_party/llama.cpp/include/llama.h"
 
 namespace duorou {
@@ -126,6 +128,41 @@ void* OllamaModelLoader::loadFromGGUFPath(const std::string& gguf_path,
     }
     std::cout << "[DEBUG] Architecture compatibility check passed. Original: " << original_arch << ", Mapped: " << mapped_arch << std::endl;
     
+    // Handle architecture mapping using GGUFModifier if needed
+    std::string final_gguf_path = gguf_path;
+    std::string temp_file_path;
+    if (original_arch != mapped_arch) {
+        std::cout << "[DEBUG] Architecture mapping needed: " << original_arch << " -> " << mapped_arch << std::endl;
+        
+        // Create temporary file path
+        temp_file_path = gguf_path + ".temp_" + std::to_string(std::time(nullptr));
+        
+        // Use GGUFModifier to create modified version
+        GGUFModifier modifier(true); // verbose mode
+        if (!modifier.loadFile(gguf_path)) {
+            std::cout << "[ERROR] Failed to load GGUF file for modification: " << gguf_path << std::endl;
+            return nullptr;
+        }
+        
+        // Apply architecture mapping with key renaming
+        // Use the actual GGUF architecture name for mapping
+        std::string gguf_arch = modifier.getCurrentArchitecture();
+        auto mapping = modifier.createArchitectureMapping(gguf_arch, mapped_arch);
+        if (!modifier.applyArchitectureMapping(mapping)) {
+            std::cout << "[ERROR] Failed to apply architecture mapping from " << gguf_arch << " to " << mapped_arch << std::endl;
+            return nullptr;
+        }
+        
+        // Save modified file
+        if (!modifier.saveFile(temp_file_path)) {
+            std::cout << "[ERROR] Failed to save modified GGUF file: " << temp_file_path << std::endl;
+            return nullptr;
+        }
+        
+        final_gguf_path = temp_file_path;
+        std::cout << "[DEBUG] Created temporary modified GGUF file: " << temp_file_path << std::endl;
+    }
+    
     // Initialize llama backend if not already done
     static bool backend_initialized = false;
     if (!backend_initialized) {
@@ -142,19 +179,26 @@ void* OllamaModelLoader::loadFromGGUFPath(const std::string& gguf_path,
     
     std::cout << "[DEBUG] Loading model with llama_load_model_from_file..." << std::endl;
     
-    // Load the model
-    llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params_llama);
+    // Load the model using final_gguf_path (which may be modified)
+    llama_model* model = llama_model_load_from_file(final_gguf_path.c_str(), model_params_llama);
+    
+    // Clean up temporary file if it was created
+    if (!temp_file_path.empty()) {
+        std::filesystem::remove(temp_file_path);
+        std::cout << "[DEBUG] Cleaned up temporary file: " << temp_file_path << std::endl;
+    }
+    
     if (!model) {
-        std::cout << "[ERROR] Failed to load model from: " << gguf_path << std::endl;
+        std::cout << "[ERROR] Failed to load model from: " << final_gguf_path << std::endl;
         if (verbose_) {
-            log("ERROR", "Failed to load model from: " + gguf_path);
+            log("ERROR", "Failed to load model from: " + final_gguf_path);
         }
         return nullptr;
     }
     
-    std::cout << "[DEBUG] Model loaded successfully: " << gguf_path << std::endl;
+    std::cout << "[DEBUG] Model loaded successfully: " << final_gguf_path << std::endl;
     if (verbose_) {
-        log("INFO", "Model loaded successfully: " + gguf_path);
+        log("INFO", "Model loaded successfully: " + final_gguf_path);
     }
     
     return static_cast<void*>(model);
@@ -166,7 +210,10 @@ bool OllamaModelLoader::checkArchitectureMapping(const std::string& gguf_path,
     CompatibilityResult result = compatibility_checker_->checkCompatibility(gguf_path);
     
     original_arch = architectureToString(result.detected_arch);
-    mapped_arch = result.arch_name;
+    // Use mapToLlamaCppArchitecture to get the correct mapped name
+    mapped_arch = compatibility_checker_->mapToLlamaCppArchitecture(result.arch_name);
+    
+    std::cout << "[DEBUG] Architecture mapping: " << result.arch_name << " -> " << mapped_arch << std::endl;
     
     return result.is_compatible;
 }

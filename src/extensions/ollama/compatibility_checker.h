@@ -103,6 +103,10 @@ private:
     std::string normalizeArchitectureName(const std::string& name);
     void log(const std::string& level, const std::string& message);
     bool fileExists(const std::string& path);
+    
+    // GGUF解析辅助函数
+    void skipGGUFValue(std::ifstream& file, uint32_t value_type);
+    std::string readGGUFValue(std::ifstream& file, uint32_t value_type);
 
 private:
     bool verbose_;

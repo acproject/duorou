@@ -64,14 +64,21 @@ CompatibilityResult CompatibilityChecker::checkCompatibility(const std::string& 
     result.is_compatible = false;
     result.detected_arch = ModelArchitecture::UNKNOWN;
     
+    std::cout << "[DEBUG] CompatibilityChecker::checkCompatibility called with: " << model_path << std::endl;
+    
     if (!fileExists(model_path)) {
+        std::cout << "[DEBUG] Model file not found: " << model_path << std::endl;
         result.errors.push_back("Model file not found: " + model_path);
         return result;
     }
     
     // 检查文件扩展名
     std::string extension = std::filesystem::path(model_path).extension().string();
-    if (extension == ".gguf") {
+    std::cout << "[DEBUG] File extension: '" << extension << "'" << std::endl;
+    
+    // Ollama blob文件没有扩展名，但是GGUF格式，直接尝试作为GGUF处理
+    if (extension == ".gguf" || extension.empty()) {
+        std::cout << "[DEBUG] Treating as GGUF file" << std::endl;
         return checkCompatibilityFromGGUF(model_path);
     }
     
@@ -87,6 +94,8 @@ CompatibilityResult CompatibilityChecker::checkCompatibilityFromGGUF(const std::
     try {
         // 从GGUF文件提取架构信息
         std::string arch_name = extractArchitectureFromGGUF(gguf_path);
+        std::cout << "[DEBUG] Extracted architecture from GGUF: '" << arch_name << "'" << std::endl;
+        
         if (arch_name.empty()) {
             result.errors.push_back("Failed to extract architecture from GGUF file");
             return result;
@@ -94,6 +103,8 @@ CompatibilityResult CompatibilityChecker::checkCompatibilityFromGGUF(const std::
         
         result.detected_arch = detectArchitecture(arch_name);
         result.arch_name = arch_name;
+        
+        std::cout << "[DEBUG] Detected architecture: " << static_cast<int>(result.detected_arch) << " (" << architectureToString(result.detected_arch) << ")" << std::endl;
         
         // 检查架构支持
         if (!checkArchitectureSupport(result.detected_arch, result)) {
@@ -135,6 +146,12 @@ ModelArchitecture CompatibilityChecker::detectArchitecture(const std::string& ar
 }
 
 std::string CompatibilityChecker::mapToLlamaCppArchitecture(const std::string& ollama_arch) {
+    // 特殊映射：qwen25vl -> qwen2vl
+    if (ollama_arch == "qwen25vl") {
+        std::cout << "[DEBUG] Mapping qwen25vl to qwen2vl for llama.cpp compatibility" << std::endl;
+        return "qwen2vl";
+    }
+    
     ModelArchitecture arch = detectArchitecture(ollama_arch);
     const ArchitectureInfo* info = getArchitectureInfo(arch);
     
@@ -277,7 +294,7 @@ void CompatibilityChecker::initializeBuiltinArchitectures() {
     qwen_info.arch = ModelArchitecture::QWEN;
     qwen_info.ollama_name = "qwen";
     qwen_info.llama_cpp_name = "qwen2";
-    qwen_info.aliases = {"qwen2", "qwen2.5"};
+    qwen_info.aliases = {"qwen2", "qwen2.5", "qwen25vl"};
     qwen_info.supported = true;
     qwen_info.version = "1.0";
     registerArchitecture(qwen_info);
@@ -313,11 +330,9 @@ void CompatibilityChecker::initializeParameterConversions() {
 }
 
 std::string CompatibilityChecker::extractArchitectureFromGGUF(const std::string& gguf_path) {
-    // 简化的GGUF架构提取实现
-    // 在实际项目中应该使用专业的GGUF解析库
-    
     std::ifstream file(gguf_path, std::ios::binary);
     if (!file.is_open()) {
+        std::cout << "[DEBUG] Failed to open GGUF file: " << gguf_path << std::endl;
         return "";
     }
     
@@ -325,23 +340,120 @@ std::string CompatibilityChecker::extractArchitectureFromGGUF(const std::string&
     char magic[4];
     file.read(magic, 4);
     
+    std::cout << "[DEBUG] GGUF magic: " << std::string(magic, 4) << std::endl;
+    
     if (std::string(magic, 4) != "GGUF") {
+        std::cout << "[DEBUG] Invalid GGUF magic" << std::endl;
         return "";
     }
     
-    // 这里应该实现完整的GGUF解析
-    // 暂时返回一个默认值
-    return "llama";
+    // 读取版本号
+    uint32_t version;
+    file.read(reinterpret_cast<char*>(&version), sizeof(version));
+    std::cout << "[DEBUG] GGUF version: " << version << std::endl;
+    
+    // 读取tensor数量
+    uint64_t tensor_count;
+    file.read(reinterpret_cast<char*>(&tensor_count), sizeof(tensor_count));
+    std::cout << "[DEBUG] Tensor count: " << tensor_count << std::endl;
+    
+    // 读取metadata键值对数量
+    uint64_t metadata_kv_count;
+    file.read(reinterpret_cast<char*>(&metadata_kv_count), sizeof(metadata_kv_count));
+    std::cout << "[DEBUG] Metadata KV count: " << metadata_kv_count << std::endl;
+    
+    // 解析metadata键值对
+    for (uint64_t i = 0; i < metadata_kv_count; ++i) {
+        std::cout << "[DEBUG] Processing metadata KV pair " << i << "/" << metadata_kv_count << std::endl;
+        
+        // 读取key长度
+        uint64_t key_len;
+        file.read(reinterpret_cast<char*>(&key_len), sizeof(key_len));
+        std::cout << "[DEBUG] Key length: " << key_len << std::endl;
+        
+        // 读取key
+        std::string key(key_len, '\0');
+        file.read(&key[0], key_len);
+        std::cout << "[DEBUG] Key: '" << key << "'" << std::endl;
+        
+        // 读取value类型
+        uint32_t value_type;
+        file.read(reinterpret_cast<char*>(&value_type), sizeof(value_type));
+        std::cout << "[DEBUG] Value type: " << value_type << std::endl;
+        
+        // 如果是架构相关的key，读取value
+        if (key == "general.architecture") {
+            std::cout << "[DEBUG] Found general.architecture key!" << std::endl;
+            if (value_type == 8) { // GGUF_TYPE_STRING
+                uint64_t value_len;
+                file.read(reinterpret_cast<char*>(&value_len), sizeof(value_len));
+                std::cout << "[DEBUG] Architecture value length: " << value_len << std::endl;
+                
+                std::string architecture(value_len, '\0');
+                file.read(&architecture[0], value_len);
+                std::cout << "[DEBUG] Architecture value: '" << architecture << "'" << std::endl;
+                
+                return architecture;
+            } else {
+                std::cout << "[DEBUG] Unexpected value type for architecture: " << value_type << std::endl;
+            }
+        } else {
+            // 跳过其他值
+            skipGGUFValue(file, value_type);
+        }
+    }
+    
+    return "";
 }
 
 std::unordered_map<std::string, std::string> CompatibilityChecker::extractMetadataFromGGUF(const std::string& gguf_path) {
     std::unordered_map<std::string, std::string> metadata;
     
-    // 简化的GGUF元数据提取实现
-    // 在实际项目中应该使用专业的GGUF解析库
+    std::ifstream file(gguf_path, std::ios::binary);
+    if (!file.is_open()) {
+        return metadata;
+    }
     
-    metadata["architecture"] = "llama";
-    metadata["version"] = "1.0";
+    // 读取GGUF头部
+    char magic[4];
+    file.read(magic, 4);
+    
+    if (std::string(magic, 4) != "GGUF") {
+        return metadata;
+    }
+    
+    // 读取版本号
+    uint32_t version;
+    file.read(reinterpret_cast<char*>(&version), sizeof(version));
+    
+    // 读取tensor数量
+    uint64_t tensor_count;
+    file.read(reinterpret_cast<char*>(&tensor_count), sizeof(tensor_count));
+    
+    // 读取metadata键值对数量
+    uint64_t metadata_kv_count;
+    file.read(reinterpret_cast<char*>(&metadata_kv_count), sizeof(metadata_kv_count));
+    
+    // 解析metadata键值对
+    for (uint64_t i = 0; i < metadata_kv_count; ++i) {
+        // 读取key长度
+        uint64_t key_len;
+        file.read(reinterpret_cast<char*>(&key_len), sizeof(key_len));
+        
+        // 读取key
+        std::string key(key_len, '\0');
+        file.read(&key[0], key_len);
+        
+        // 读取value类型
+        uint32_t value_type;
+        file.read(reinterpret_cast<char*>(&value_type), sizeof(value_type));
+        
+        // 读取value并存储
+        std::string value = readGGUFValue(file, value_type);
+        if (!value.empty()) {
+            metadata[key] = value;
+        }
+    }
     
     return metadata;
 }
@@ -399,6 +511,149 @@ std::string CompatibilityChecker::normalizeArchitectureName(const std::string& n
     std::string normalized = name;
     std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
     return normalized;
+}
+
+void CompatibilityChecker::skipGGUFValue(std::ifstream& file, uint32_t value_type) {
+    switch (value_type) {
+        case 0: // GGUF_TYPE_UINT8
+            file.seekg(1, std::ios::cur);
+            break;
+        case 1: // GGUF_TYPE_INT8
+            file.seekg(1, std::ios::cur);
+            break;
+        case 2: // GGUF_TYPE_UINT16
+            file.seekg(2, std::ios::cur);
+            break;
+        case 3: // GGUF_TYPE_INT16
+            file.seekg(2, std::ios::cur);
+            break;
+        case 4: // GGUF_TYPE_UINT32
+            file.seekg(4, std::ios::cur);
+            break;
+        case 5: // GGUF_TYPE_INT32
+            file.seekg(4, std::ios::cur);
+            break;
+        case 6: // GGUF_TYPE_FLOAT32
+            file.seekg(4, std::ios::cur);
+            break;
+        case 7: // GGUF_TYPE_BOOL
+            file.seekg(1, std::ios::cur);
+            break;
+        case 8: // GGUF_TYPE_STRING
+            {
+                uint64_t len;
+                file.read(reinterpret_cast<char*>(&len), sizeof(len));
+                file.seekg(len, std::ios::cur);
+            }
+            break;
+        case 9: // GGUF_TYPE_ARRAY
+            {
+                uint32_t array_type;
+                file.read(reinterpret_cast<char*>(&array_type), sizeof(array_type));
+                uint64_t array_len;
+                file.read(reinterpret_cast<char*>(&array_len), sizeof(array_len));
+                for (uint64_t i = 0; i < array_len; ++i) {
+                    skipGGUFValue(file, array_type);
+                }
+            }
+            break;
+        case 10: // GGUF_TYPE_UINT64
+            file.seekg(8, std::ios::cur);
+            break;
+        case 11: // GGUF_TYPE_INT64
+            file.seekg(8, std::ios::cur);
+            break;
+        case 12: // GGUF_TYPE_FLOAT64
+            file.seekg(8, std::ios::cur);
+            break;
+        default:
+            // Unknown type, skip 8 bytes as fallback
+            file.seekg(8, std::ios::cur);
+            break;
+    }
+}
+
+std::string CompatibilityChecker::readGGUFValue(std::ifstream& file, uint32_t value_type) {
+    switch (value_type) {
+        case 0: // GGUF_TYPE_UINT8
+            {
+                uint8_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 1: // GGUF_TYPE_INT8
+            {
+                int8_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 2: // GGUF_TYPE_UINT16
+            {
+                uint16_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 3: // GGUF_TYPE_INT16
+            {
+                int16_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 4: // GGUF_TYPE_UINT32
+            {
+                uint32_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 5: // GGUF_TYPE_INT32
+            {
+                int32_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 6: // GGUF_TYPE_FLOAT32
+            {
+                float val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 7: // GGUF_TYPE_BOOL
+            {
+                uint8_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return val ? "true" : "false";
+            }
+        case 8: // GGUF_TYPE_STRING
+            {
+                uint64_t len;
+                file.read(reinterpret_cast<char*>(&len), sizeof(len));
+                std::string val(len, '\0');
+                file.read(&val[0], len);
+                return val;
+            }
+        case 10: // GGUF_TYPE_UINT64
+            {
+                uint64_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 11: // GGUF_TYPE_INT64
+            {
+                int64_t val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        case 12: // GGUF_TYPE_FLOAT64
+            {
+                double val;
+                file.read(reinterpret_cast<char*>(&val), sizeof(val));
+                return std::to_string(val);
+            }
+        default:
+            // For unsupported types like arrays, skip and return empty
+            skipGGUFValue(file, value_type);
+            return "";
+    }
 }
 
 void CompatibilityChecker::log(const std::string& level, const std::string& message) {

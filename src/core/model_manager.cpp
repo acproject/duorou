@@ -40,10 +40,10 @@ public:
     duorou::core::Logger logger;
     logger.info("[OLLAMA] Loading model: " + model_path);
     
-    // 使用OllamaModelLoader加载GGUF模型
+    // 使用OllamaModelLoader加载ollama模型
      auto path_manager = std::make_shared<duorou::extensions::ollama::ModelPathManager>();
      duorou::extensions::ollama::OllamaModelLoader loader(path_manager);
-     void* model_ptr = loader.loadFromGGUFPath(model_path, nullptr);
+     void* model_ptr = loader.loadFromModelPath(model_path, nullptr);
      
      if (!model_ptr) {
        std::cerr << "[ERROR] Failed to load Ollama model from: " << model_path << std::endl;

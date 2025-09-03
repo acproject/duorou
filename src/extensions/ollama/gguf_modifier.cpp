@@ -344,6 +344,25 @@ ArchitectureMapping GGUFModifier::createArchitectureMapping(
         mapping.key_mappings["mistral.rope.dimension_count"] = "llama.rope.dimension_count";
         mapping.key_mappings["mistral.rope.freq_base"] = "llama.rope.freq_base";
         mapping.key_mappings["mistral.attention.layer_norm_rms_epsilon"] = "llama.attention.layer_norm_rms_epsilon";
+    } else if (source_arch == "qwen25vl" && target_arch == "qwen2vl") {
+        // Qwen2.5VL到Qwen2VL的映射
+        mapping.key_mappings["qwen25vl.context_length"] = "qwen2vl.context_length";
+        mapping.key_mappings["qwen25vl.embedding_length"] = "qwen2vl.embedding_length";
+        mapping.key_mappings["qwen25vl.block_count"] = "qwen2vl.block_count";
+        mapping.key_mappings["qwen25vl.feed_forward_length"] = "qwen2vl.feed_forward_length";
+        mapping.key_mappings["qwen25vl.attention.head_count"] = "qwen2vl.attention.head_count";
+        mapping.key_mappings["qwen25vl.attention.head_count_kv"] = "qwen2vl.attention.head_count_kv";
+        mapping.key_mappings["qwen25vl.attention.layer_norm_rms_epsilon"] = "qwen2vl.attention.layer_norm_rms_epsilon";
+        mapping.key_mappings["qwen25vl.rope.dimension_count"] = "qwen2vl.rope.dimension_count";
+        mapping.key_mappings["qwen25vl.rope.freq_base"] = "qwen2vl.rope.freq_base";
+        mapping.key_mappings["qwen25vl.rope.mrope_section"] = "qwen2vl.rope.mrope_section";
+        mapping.key_mappings["qwen25vl.rope.dimension_sections"] = "qwen2vl.rope.dimension_sections";
+        mapping.key_mappings["qwen25vl.vision.patch_size"] = "qwen2vl.vision.patch_size";
+        mapping.key_mappings["qwen25vl.vision.spatial_patch_size"] = "qwen2vl.vision.spatial_patch_size";
+        mapping.key_mappings["qwen25vl.vision.fullatt_block_indexes"] = "qwen2vl.vision.fullatt_block_indexes";
+        
+        // 添加llama.cpp期望但原始文件中可能缺失的键
+        mapping.additional_keys["qwen2vl.rope.dimension_sections"] = GGUFKeyValue::createInt32("qwen2vl.rope.dimension_sections", 128);
     }
     
     return mapping;
@@ -473,9 +492,50 @@ GGUFKeyValue GGUFModifier::readKeyValue(std::ifstream& file) {
             break;
         }
         
-        case GGUFType::ARRAY:
-            // 简化处理：跳过数组类型
-            throw std::runtime_error("Array type not supported yet");
+        case GGUFType::ARRAY: {
+            // 读取数组元素类型
+            uint32_t array_type;
+            file.read(reinterpret_cast<char*>(&array_type), 4);
+            
+            // 读取数组长度
+            uint64_t array_length;
+            file.read(reinterpret_cast<char*>(&array_length), 8);
+            
+            log("DEBUG", "Skipping array with type " + std::to_string(array_type) + " and length " + std::to_string(array_length));
+            
+            // 跳过数组数据
+            for (uint64_t i = 0; i < array_length; ++i) {
+                switch (array_type) {
+                    case 0: case 1: case 7: // UINT8, INT8, BOOL
+                        file.seekg(1, std::ios::cur);
+                        break;
+                    case 2: case 3: // UINT16, INT16
+                        file.seekg(2, std::ios::cur);
+                        break;
+                    case 4: case 5: case 6: // UINT32, INT32, FLOAT32
+                        file.seekg(4, std::ios::cur);
+                        break;
+                    case 10: case 11: case 12: // UINT64, INT64, FLOAT64
+                        file.seekg(8, std::ios::cur);
+                        break;
+                    case 8: { // STRING
+                        std::string str = readString(file);
+                        break;
+                    }
+                    default:
+                        log("WARNING", "Unknown array element type: " + std::to_string(array_type));
+                        // 尝试跳过，假设是8字节
+                        file.seekg(8, std::ios::cur);
+                        break;
+                }
+            }
+            
+            // 为数组创建一个占位符数据
+            kv.data.resize(12); // 4字节类型 + 8字节长度
+            std::memcpy(kv.data.data(), &array_type, 4);
+            std::memcpy(kv.data.data() + 4, &array_length, 8);
+            break;
+        }
             
         default:
             throw std::runtime_error("Unknown GGUF type: " + std::to_string(static_cast<uint32_t>(kv.type)));
@@ -492,8 +552,36 @@ void GGUFModifier::writeKeyValue(std::ofstream& file, const GGUFKeyValue& kv) co
     uint32_t type_value = static_cast<uint32_t>(kv.type);
     file.write(reinterpret_cast<const char*>(&type_value), 4);
     
-    // 写入数据
-    file.write(reinterpret_cast<const char*>(kv.data.data()), kv.data.size());
+    // 对于数组类型，需要特殊处理
+    if (kv.type == GGUFType::ARRAY) {
+        // 数组数据格式：4字节元素类型 + 8字节数组长度 + 实际数据
+        // 但我们只保存了占位符数据，所以直接写入0长度数组
+        if (kv.data.size() >= 12) {
+            // 写入元素类型和长度（从占位符数据中读取）
+            uint32_t array_type;
+            uint64_t array_length;
+            std::memcpy(&array_type, kv.data.data(), 4);
+            std::memcpy(&array_length, kv.data.data() + 4, 8);
+            
+            file.write(reinterpret_cast<const char*>(&array_type), 4);
+            
+            // 写入0长度，因为我们跳过了原始数组数据
+            uint64_t zero_length = 0;
+            file.write(reinterpret_cast<const char*>(&zero_length), 8);
+            
+            log("DEBUG", "Writing empty array for key: " + kv.key + ", original length: " + std::to_string(array_length));
+        } else {
+            log("ERROR", "Invalid array data size for key: " + kv.key);
+            // 写入默认的空数组
+            uint32_t default_type = 8; // STRING
+            uint64_t zero_length = 0;
+            file.write(reinterpret_cast<const char*>(&default_type), 4);
+            file.write(reinterpret_cast<const char*>(&zero_length), 8);
+        }
+    } else {
+        // 写入数据
+        file.write(reinterpret_cast<const char*>(kv.data.data()), kv.data.size());
+    }
 }
 
 size_t GGUFModifier::calculateMetadataSize() const {

@@ -90,9 +90,13 @@ bool ModelManifest::parseFromJSON(const std::string& json_str) {
         // 使用nlohmann/json解析JSON
         nlohmann::json json_data = nlohmann::json::parse(json_str);
         
-        // 解析schema_version
+        // 解析schema_version (可能是数字或字符串)
         if (json_data.contains("schemaVersion")) {
-            schema_version = json_data["schemaVersion"].get<std::string>();
+            if (json_data["schemaVersion"].is_number()) {
+                schema_version = std::to_string(json_data["schemaVersion"].get<int>());
+            } else {
+                schema_version = json_data["schemaVersion"].get<std::string>();
+            }
         }
         
         // 解析media_type
@@ -159,10 +163,18 @@ ModelPathManager::~ModelPathManager() = default;
 bool ModelPathManager::readManifest(const ModelPath& model_path, ModelManifest& manifest) {
     std::string manifest_path = getManifestPath(model_path);
     
+    // 添加调试信息
+    std::cout << "[DEBUG] Looking for manifest at: " << manifest_path << std::endl;
+    std::cout << "[DEBUG] Model path components - registry: '" << model_path.registry 
+              << "', namespace: '" << model_path.namespace_ 
+              << "', model: '" << model_path.model 
+              << "', tag: '" << model_path.tag << "'" << std::endl;
+    
     if (!fileExists(manifest_path)) {
         if (verbose_) {
             log("ERROR", "Manifest file not found: " + manifest_path);
         }
+        std::cout << "[ERROR] Manifest file not found: " << manifest_path << std::endl;
         return false;
     }
     
@@ -194,13 +206,22 @@ std::string ModelPathManager::getModelDirectory(const ModelPath& model_path) {
 }
 
 std::string ModelPathManager::getBlobPath(const std::string& blob_sha256) {
-    if (blob_sha256.length() < 2) {
+    if (blob_sha256.empty()) {
         return "";
     }
     
-    // Ollama使用前两个字符作为子目录
-    std::string prefix = blob_sha256.substr(0, 2);
-    return models_dir_ + "/blobs/sha256-" + prefix + "/sha256-" + blob_sha256;
+    // 移除sha256:前缀（如果存在）
+    std::string clean_hash = blob_sha256;
+    if (clean_hash.substr(0, 7) == "sha256:") {
+        clean_hash = clean_hash.substr(7);
+    }
+    
+    if (clean_hash.empty()) {
+        return "";
+    }
+    
+    // Ollama直接将blob文件存储在blobs目录下，文件名为sha256-{hash}
+    return models_dir_ + "/blobs/sha256-" + clean_hash;
 }
 
 std::vector<std::string> ModelPathManager::listAvailableModels() {
