@@ -19,13 +19,8 @@ public:
      */
     static bool modifyArchitectureIfNeeded(const std::string& gguf_path);
     
-    /**
-     * Create a temporary modified GGUF file
-     * @param original_path Path to original GGUF file
-     * @param temp_path Path where temporary file will be created
-     * @return true if successful, false on error
-     */
-    static bool createModifiedGGUF(const std::string& original_path, const std::string& temp_path);
+    // Note: createModifiedGGUF function removed as it's no longer needed
+    // Model architecture mapping is now handled through kv_override mechanism
     
     /**
      * Check if GGUF file needs architecture modification

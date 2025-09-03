@@ -37,18 +37,8 @@ bool GGUFModifier::modifyArchitectureIfNeeded(const std::string& gguf_path) {
     return success;
 }
 
-bool GGUFModifier::createModifiedGGUF(const std::string& original_path, const std::string& temp_path) {
-    // Copy original file to temporary location
-    try {
-        std::filesystem::copy_file(original_path, temp_path, std::filesystem::copy_options::overwrite_existing);
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to copy GGUF file: " << e.what() << std::endl;
-        return false;
-    }
-    
-    // Modify the temporary file
-    return modifyArchitectureIfNeeded(temp_path);
-}
+// createModifiedGGUF function removed - no longer needed
+// Model architecture mapping is now handled through kv_override mechanism
 
 bool GGUFModifier::needsArchitectureModification(const std::string& gguf_path) {
     std::string arch = getGGUFArchitecture(gguf_path);

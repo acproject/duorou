@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <memory>
 #include "model_path_manager.h"
-#include "nlohmann/json.hpp"
+#include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 namespace duorou {
 namespace core {

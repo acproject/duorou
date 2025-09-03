@@ -351,13 +351,13 @@ bool testOllamaModelConversation() {
                         }
                         
                         // 检查是否是结束token
-                        if (next_token == llama_token_eos(model_vocab)) {
+                        if (next_token == llama_vocab_eos(model_vocab)) {
                             break;
                         }
                         
                         // 将token转换为文本
                         char token_str[256];
-                        int len = llama_token_to_piece(vocab, next_token, token_str, sizeof(token_str), 0, false);
+                        int len = llama_token_to_piece(model_vocab, next_token, token_str, sizeof(token_str), 0, false);
                         if (len > 0) {
                             std::string token_text(token_str, len);
                             response += token_text;
