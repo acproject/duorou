@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include "../../../third_party/llama.cpp/include/llama.h"
 
 namespace duorou {
 namespace extensions {
@@ -62,63 +63,101 @@ OllamaModelLoader::~OllamaModelLoader() = default;
 
 void* OllamaModelLoader::loadFromModelPath(const std::string& model_path, 
                                            const void* model_params) {
+    std::cout << "[DEBUG] OllamaModelLoader::loadFromModelPath() called with: " << model_path << std::endl;
+    
     ModelPath parsed_path;
     if (!parsed_path.parseFromString(model_path)) {
+        std::cout << "[ERROR] Failed to parse model path: " << model_path << std::endl;
         if (verbose_) {
             log("ERROR", "Failed to parse model path: " + model_path);
         }
         return nullptr;
     }
+    std::cout << "[DEBUG] Model path parsed successfully" << std::endl;
     
     // Get GGUF file path from manifest
     ModelManifest manifest;
     if (!model_path_manager_->readManifest(parsed_path, manifest)) {
+        std::cout << "[ERROR] Failed to read manifest for: " << model_path << std::endl;
         if (verbose_) {
             log("ERROR", "Failed to read manifest for: " + model_path);
         }
         return nullptr;
     }
+    std::cout << "[DEBUG] Manifest read successfully" << std::endl;
     
     std::string gguf_path = getGGUFPathFromManifest(manifest);
     if (gguf_path.empty()) {
+        std::cout << "[ERROR] No GGUF file found in manifest" << std::endl;
         if (verbose_) {
             log("ERROR", "No GGUF file found in manifest");
         }
         return nullptr;
     }
+    std::cout << "[DEBUG] GGUF path found: " << gguf_path << std::endl;
     
     return loadFromGGUFPath(gguf_path, model_params);
 }
 
 void* OllamaModelLoader::loadFromGGUFPath(const std::string& gguf_path,
                                           const void* model_params) {
+    std::cout << "[DEBUG] OllamaModelLoader::loadFromGGUFPath() called with: " << gguf_path << std::endl;
+    
     // Check if file exists
     std::ifstream file(gguf_path);
     if (!file.good()) {
+        std::cout << "[ERROR] GGUF file not found: " << gguf_path << std::endl;
         if (verbose_) {
             log("ERROR", "GGUF file not found: " + gguf_path);
         }
         return nullptr;
     }
     file.close();
+    std::cout << "[DEBUG] GGUF file exists and is readable" << std::endl;
     
     // Check architecture compatibility
     std::string original_arch, mapped_arch;
     if (!checkArchitectureMapping(gguf_path, original_arch, mapped_arch)) {
+        std::cout << "[ERROR] Architecture compatibility check failed for: " << gguf_path << std::endl;
         if (verbose_) {
             log("ERROR", "Architecture compatibility check failed for: " + gguf_path);
         }
         return nullptr;
     }
+    std::cout << "[DEBUG] Architecture compatibility check passed. Original: " << original_arch << ", Mapped: " << mapped_arch << std::endl;
     
-    // For now, return a placeholder - actual loading would be implemented
-    // when integrating with the main text generator
-    if (verbose_) {
-        log("INFO", "Model architecture check passed for: " + gguf_path);
+    // Initialize llama backend if not already done
+    static bool backend_initialized = false;
+    if (!backend_initialized) {
+        llama_backend_init();
+        backend_initialized = true;
+        std::cout << "[DEBUG] Llama backend initialized" << std::endl;
     }
     
-    // Return a non-null placeholder to indicate success
-    return reinterpret_cast<void*>(0x1);
+    // Set up model parameters
+    llama_model_params model_params_llama = llama_model_default_params();
+    model_params_llama.n_gpu_layers = 0; // CPU only for now
+    model_params_llama.use_mmap = true;
+    model_params_llama.use_mlock = false;
+    
+    std::cout << "[DEBUG] Loading model with llama_load_model_from_file..." << std::endl;
+    
+    // Load the model
+    llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params_llama);
+    if (!model) {
+        std::cout << "[ERROR] Failed to load model from: " << gguf_path << std::endl;
+        if (verbose_) {
+            log("ERROR", "Failed to load model from: " + gguf_path);
+        }
+        return nullptr;
+    }
+    
+    std::cout << "[DEBUG] Model loaded successfully: " << gguf_path << std::endl;
+    if (verbose_) {
+        log("INFO", "Model loaded successfully: " + gguf_path);
+    }
+    
+    return static_cast<void*>(model);
 }
 
 bool OllamaModelLoader::checkArchitectureMapping(const std::string& gguf_path,

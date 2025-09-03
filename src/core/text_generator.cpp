@@ -25,6 +25,9 @@ TextGenerator::~TextGenerator() {
 // 生成文本
 GenerationResult TextGenerator::generate(const std::string &prompt,
                                          const GenerationParams &params) {
+  std::cout << "[DEBUG] TextGenerator::generate() called with prompt: " << prompt.substr(0, 50) << "..." << std::endl;
+  std::cout << "[DEBUG] TextGenerator current state: DISABLED (llama.cpp integration not implemented)" << std::endl;
+  
   std::lock_guard<std::mutex> lock(mutex_);
 
   GenerationResult result;
@@ -35,6 +38,7 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
   result.generated_tokens = 0;
   result.generation_time = 0.0;
 
+  std::cout << "[DEBUG] TextGenerator returning DISABLED result" << std::endl;
   return result;
 }
 
@@ -42,6 +46,9 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
 GenerationResult TextGenerator::generateStream(const std::string &prompt,
                                                StreamCallback callback,
                                                const GenerationParams &params) {
+  std::cout << "[DEBUG] TextGenerator::generateStream() called with prompt: " << prompt.substr(0, 50) << "..." << std::endl;
+  std::cout << "[DEBUG] TextGenerator stream generation state: DISABLED (llama.cpp integration not implemented)" << std::endl;
+  
   std::lock_guard<std::mutex> lock(mutex_);
 
   GenerationResult result;
@@ -54,9 +61,11 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
 
   // 调用回调函数通知完成
   if (callback) {
+    std::cout << "[DEBUG] Calling stream callback with DISABLED result" << std::endl;
     callback(0, result.text, true);
   }
 
+  std::cout << "[DEBUG] TextGenerator returning DISABLED stream result" << std::endl;
   return result;
 }
 
@@ -68,6 +77,7 @@ size_t TextGenerator::countTokens(const std::string &text) const {
 
 // 检查是否可以生成
 bool TextGenerator::canGenerate() const {
+  std::cout << "[DEBUG] TextGenerator::canGenerate() called - returning false (functionality disabled)" << std::endl;
   // 目前返回false，因为功能被禁用
   return false;
 }

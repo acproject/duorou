@@ -1907,55 +1907,78 @@ void ChatView::update_model_selector() {
 }
 
 std::string ChatView::generate_ai_response(const std::string &message) {
+  std::cout << "[DEBUG] ChatView::generate_ai_response() called with message: " << message.substr(0, 50) << "..." << std::endl;
+  
   if (!model_manager_) {
+    std::cout << "[DEBUG] ChatView: Model manager not available" << std::endl;
     return "Error: Model manager not available.";
   }
+  std::cout << "[DEBUG] ChatView: Model manager is available" << std::endl;
 
   // 获取当前选中的模型
   if (!model_selector_) {
+    std::cout << "[DEBUG] ChatView: Model selector not available" << std::endl;
     return "Error: Model selector not available.";
   }
+  std::cout << "[DEBUG] ChatView: Model selector is available" << std::endl;
 
   // 获取选中的模型索引
   guint selected_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));
+  std::cout << "[DEBUG] ChatView: Selected model index: " << selected_index << std::endl;
   
   // 获取可用模型列表
   auto available_models = model_manager_->getAllModels();
+  std::cout << "[DEBUG] ChatView: Available models count: " << available_models.size() << std::endl;
   
   if (available_models.empty()) {
+    std::cout << "[DEBUG] ChatView: No models available" << std::endl;
     return "Error: No models available for text generation.";
   }
   
   if (selected_index >= available_models.size()) {
+    std::cout << "[DEBUG] ChatView: Invalid model selection - index " << selected_index << " >= " << available_models.size() << std::endl;
     return "Error: Invalid model selection.";
   }
 
   // 获取选中的模型
   const auto& selected_model = available_models[selected_index];
   std::string model_id = selected_model.name;
+  std::cout << "[DEBUG] ChatView: Selected model ID: " << model_id << std::endl;
 
   try {
     // 首先尝试加载模型
+    std::cout << "[DEBUG] ChatView: Attempting to load model: " << model_id << std::endl;
     bool model_loaded = model_manager_->loadModel(model_id);
     if (!model_loaded) {
+      std::cout << "[DEBUG] ChatView: Failed to load model: " << model_id << std::endl;
       return "Error: Failed to load model: " + model_id;
     }
+    std::cout << "[DEBUG] ChatView: Model loaded successfully: " << model_id << std::endl;
     
     // 获取文本生成器
+    std::cout << "[DEBUG] ChatView: Getting text generator for model: " << model_id << std::endl;
     auto text_generator = model_manager_->getTextGenerator(model_id);
     if (!text_generator) {
+      std::cout << "[DEBUG] ChatView: Failed to get text generator for model: " << model_id << std::endl;
       return "Error: Failed to get text generator for model: " + model_id;
     }
+    std::cout << "[DEBUG] ChatView: Text generator obtained successfully" << std::endl;
 
     // 生成回复
+    std::cout << "[DEBUG] ChatView: Calling text_generator->generate()" << std::endl;
     auto generation_result = text_generator->generate(message);
+    std::cout << "[DEBUG] ChatView: Generation completed. Result text: " << generation_result.text.substr(0, 50) << "..." << std::endl;
+    std::cout << "[DEBUG] ChatView: Generation finished: " << (generation_result.finished ? "true" : "false") << ", stop_reason: " << generation_result.stop_reason << std::endl;
               
     if (!generation_result.finished || generation_result.text.empty()) {
+      std::cout << "[DEBUG] ChatView: Generation failed or empty result" << std::endl;
       return "Error: Failed to generate response. Reason: " + generation_result.stop_reason;
     }
 
+    std::cout << "[DEBUG] ChatView: Returning successful generation result" << std::endl;
     return generation_result.text;
   } catch (const std::exception &e) {
+    std::cout << "[DEBUG] ChatView: Exception caught: " << e.what() << std::endl;
     return "Error generating response: " + std::string(e.what());
   }
 }

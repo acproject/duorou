@@ -6,6 +6,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
+#include "../../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 namespace duorou {
 namespace extensions {
@@ -85,13 +86,46 @@ std::string ModelPath::toString() const {
 
 // ModelManifest 实现
 bool ModelManifest::parseFromJSON(const std::string& json_str) {
-    // 简单的JSON解析实现
-    // 在实际项目中应该使用专业的JSON库如nlohmann/json
-    
-    // 这里提供一个基础实现
-    // TODO: 使用更robust的JSON解析库
-    
-    return true; // 暂时返回true
+    try {
+        // 使用nlohmann/json解析JSON
+        nlohmann::json json_data = nlohmann::json::parse(json_str);
+        
+        // 解析schema_version
+        if (json_data.contains("schemaVersion")) {
+            schema_version = json_data["schemaVersion"].get<std::string>();
+        }
+        
+        // 解析media_type
+        if (json_data.contains("mediaType")) {
+            media_type = json_data["mediaType"].get<std::string>();
+        }
+        
+        // 解析config
+        if (json_data.contains("config")) {
+            auto config_obj = json_data["config"];
+            if (config_obj.contains("digest")) {
+                config["digest"] = config_obj["digest"].get<std::string>();
+            }
+            if (config_obj.contains("mediaType")) {
+                config["mediaType"] = config_obj["mediaType"].get<std::string>();
+            }
+        }
+        
+        // 解析layers
+        if (json_data.contains("layers") && json_data["layers"].is_array()) {
+            layers.clear();
+            for (const auto& layer : json_data["layers"]) {
+                if (layer.contains("digest")) {
+                    layers.push_back(layer["digest"].get<std::string>());
+                }
+            }
+        }
+        
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing JSON manifest: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 std::string ModelManifest::getConfigBlob() const {

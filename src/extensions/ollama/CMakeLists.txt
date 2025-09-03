@@ -6,6 +6,7 @@ set(OLLAMA_EXTENSION_NAME "duorou_ollama_extension")
 # 收集源文件
 set(OLLAMA_EXTENSION_SOURCES
     ollama_model_loader.cpp
+    ollama_text_generator.cpp
     model_path_manager.cpp
     modelfile_parser.cpp
     compatibility_checker.cpp
@@ -16,6 +17,7 @@ set(OLLAMA_EXTENSION_SOURCES
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
     ollama_model_loader.h
+    ollama_text_generator.h
     model_path_manager.h
     modelfile_parser.h
     compatibility_checker.h
