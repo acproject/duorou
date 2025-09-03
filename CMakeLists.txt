@@ -329,6 +329,9 @@ add_subdirectory(third_party/llama.cpp)
 add_subdirectory(third_party/stable-diffusion.cpp)
 # MiniMemory作为独立服务运行，不需要编译到主项目中
 
+# 添加扩展模块
+add_subdirectory(src/extensions)
+
 # 创建源文件目录（如果不存在）
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/models)
