@@ -6,7 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <random>
-#include "../../third_party/llama.cpp/include/llama.h"
+// #include "../../third_party/llama.cpp/include/llama.h"  // 注释：暂时禁用llama相关功能
 
 namespace duorou {
 namespace core {
@@ -33,7 +33,7 @@ struct GenerationParams {
  */
 struct GenerationResult {
     std::string text;              ///< 生成的文本
-    std::vector<llama_token> tokens;  ///< 生成的token序列
+    // std::vector<llama_token> tokens;  ///< 生成的token序列 - 暂时禁用
     bool finished;                 ///< 是否完成生成
     std::string stop_reason;       ///< 停止原因
     size_t prompt_tokens;          ///< 提示词token数
@@ -49,7 +49,7 @@ struct GenerationResult {
  * @param text 对应的文本片段
  * @param finished 是否完成
  */
-using StreamCallback = std::function<void(llama_token token, const std::string& text, bool finished)>;
+// using StreamCallback = std::function<void(llama_token token, const std::string& text, bool finished)>;  // 暂时禁用
 
 /**
  * @brief 文本生成器类
@@ -63,7 +63,7 @@ public:
      * @param model llama模型指针
      * @param context llama上下文指针
      */
-    TextGenerator(llama_model* model, llama_context* context);
+    // TextGenerator(llama_model* model, llama_context* context);  // 暂时禁用
     
     /**
      * @brief 析构函数
@@ -79,15 +79,15 @@ public:
     GenerationResult generate(const std::string& prompt, const GenerationParams& params = GenerationParams());
     
     /**
-     * @brief 流式生成文本
+     * @brief 流式生成文本 - 暂时禁用
      * @param prompt 输入提示词
      * @param callback 流式回调函数
      * @param params 生成参数
      * @return 最终生成结果
      */
-    GenerationResult generateStream(const std::string& prompt, 
-                                   StreamCallback callback,
-                                   const GenerationParams& params = GenerationParams());
+    // GenerationResult generateStream(const std::string& prompt, 
+    //                                StreamCallback callback,
+    //                                const GenerationParams& params = GenerationParams());  // 暂时禁用
     
     /**
      * @brief 计算文本的token数量
@@ -101,7 +101,7 @@ public:
      * @param tokens token序列
      * @return 文本字符串
      */
-    std::string tokensToText(const std::vector<llama_token>& tokens) const;
+    // std::string tokensToText(const std::vector<llama_token>& tokens) const;  // 暂时禁用
     
     /**
      * @brief 将文本转换为token序列
@@ -109,7 +109,7 @@ public:
      * @param add_bos 是否添加开始token
      * @return token序列
      */
-    std::vector<llama_token> textToTokens(const std::string& text, bool add_bos = true) const;
+    // std::vector<llama_token> textToTokens(const std::string& text, bool add_bos = true) const;  // 暂时禁用
     
     /**
      * @brief 检查是否可以生成
@@ -141,7 +141,7 @@ private:
      * @param params 生成参数
      * @return 采样得到的token
      */
-    llama_token sampleToken(float* logits, const GenerationParams& params);
+    // llama_token sampleToken(float* logits, const GenerationParams& params);  // 暂时禁用
     
     /**
      * @brief 应用重复惩罚
@@ -149,9 +149,9 @@ private:
      * @param last_tokens 最近的token序列
      * @param penalty 惩罚系数
      */
-    void applyRepeatPenalty(float* logits, 
-                           const std::vector<llama_token>& last_tokens, 
-                           float penalty);
+    // void applyRepeatPenalty(float* logits, 
+    //                        const std::vector<llama_token>& last_tokens, 
+    //                        float penalty);  // 暂时禁用
     
     /**
      * @brief Top-k采样
@@ -190,11 +190,11 @@ private:
     void initializeRNG(int64_t seed);
     
 private:
-    llama_model* model_;            ///< llama模型指针
-    llama_context* context_;        ///< llama上下文指针
-    const llama_vocab* vocab_;      ///< 词汇表指针
-    
-    std::vector<llama_token> generated_tokens_;  ///< 已生成的token序列
+    // llama_model* model_;            ///< llama模型指针 - 暂时禁用
+    // llama_context* context_;        ///< llama上下文指针 - 暂时禁用
+    // const llama_vocab* vocab_;      ///< 词汇表指针 - 暂时禁用
+
+    // std::vector<llama_token> generated_tokens_;  ///< 已生成的token序列 - 暂时禁用
     std::mt19937 rng_;              ///< 随机数生成器
     
     mutable std::mutex mutex_;      ///< 线程安全互斥锁
@@ -202,8 +202,8 @@ private:
     // 缓存的模型信息
     int context_size_;              ///< 上下文大小
     int vocab_size_;                ///< 词汇表大小
-    llama_token bos_token_;         ///< 开始token
-    llama_token eos_token_;         ///< 结束token
+    // llama_token bos_token_;         ///< 开始token - 暂时禁用
+    // llama_token eos_token_;         ///< 结束token - 暂时禁用
 };
 
 /**
@@ -217,7 +217,7 @@ public:
      * @param context llama上下文指针
      * @return 文本生成器智能指针
      */
-    static std::unique_ptr<TextGenerator> create(llama_model* model, llama_context* context);
+    // static std::unique_ptr<TextGenerator> create(llama_model* model, llama_context* context);  // 暂时禁用
 };
 
 } // namespace core

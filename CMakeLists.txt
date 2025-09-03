@@ -355,6 +355,7 @@ set(DUOROU_SOURCES_LIST
     src/core/image_generator.cpp
     src/core/stb_impl.cpp
     src/core/model_downloader.cpp
+
     src/core/ollama_model_loader.cpp
     src/core/modelfile_parser.cpp
     src/core/resource_manager.cpp
@@ -372,7 +373,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/video_display_window.cpp
     src/gui/enhanced_video_capture_window.cpp
     src/gui/video_source_dialog.cpp
-    src/api/api_server.cpp
+    # src/api/api_server.cpp  # 注释：暂时禁用API服务器
     src/media/video_capture.cpp
     src/media/audio_capture.cpp
 )
@@ -393,6 +394,7 @@ set(DUOROU_HEADERS_LIST
     src/core/text_generator.h
     src/core/image_generator.h
     src/core/model_downloader.h
+
     src/core/ollama_model_loader.h
     src/core/resource_manager.h
     src/core/workflow_engine.h
@@ -470,6 +472,7 @@ if(DUOROU_SOURCES)
     target_link_libraries(duorou
         llama
         stable-diffusion
+        duorou_ollama_extension
         ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json

@@ -9,6 +9,7 @@ using namespace duorou::core;
 #include <chrono>
 #include <filesystem>
 #include <regex>
+#include <algorithm>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <openssl/sha.h>
@@ -416,6 +417,55 @@ bool ModelDownloader::isModelDownloaded(const std::string& model_name) {
     } catch (const std::exception&) {
         return false;
     }
+}
+
+bool ModelDownloader::isOllamaModel(const std::string& model_name) {
+    // 检查模型名称是否符合Ollama模型的命名规范
+    // Ollama模型通常格式为: model_name[:tag] 或 namespace/model_name[:tag]
+    
+    // 简单的启发式检查：
+    // 1. 包含冒号的可能是Ollama模型（如 llama2:7b, qwen2.5:latest）
+    // 2. 包含斜杠的可能是命名空间模型（如 microsoft/phi-3）
+    // 3. 常见的Ollama模型名称模式
+    
+    std::regex ollama_pattern(R"(^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)?(:[a-zA-Z0-9._-]+)?$)");
+    
+    if (!std::regex_match(model_name, ollama_pattern)) {
+        return false;
+    }
+    
+    // 检查是否为已知的Ollama模型前缀
+    std::vector<std::string> ollama_prefixes = {
+        "llama", "qwen", "gemma", "mistral", "phi", "codellama", 
+        "vicuna", "alpaca", "orca", "wizard", "dolphin", "neural",
+        "tinyllama", "deepseek", "yi", "baichuan", "chatglm"
+    };
+    
+    std::string model_base = model_name;
+    // 移除标签部分（冒号后的内容）
+    size_t colon_pos = model_base.find(':');
+    if (colon_pos != std::string::npos) {
+        model_base = model_base.substr(0, colon_pos);
+    }
+    
+    // 移除命名空间部分（斜杠前的内容）
+    size_t slash_pos = model_base.find('/');
+    if (slash_pos != std::string::npos) {
+        model_base = model_base.substr(slash_pos + 1);
+    }
+    
+    // 转换为小写进行比较
+    std::transform(model_base.begin(), model_base.end(), model_base.begin(), ::tolower);
+    
+    // 检查是否匹配已知前缀
+    for (const auto& prefix : ollama_prefixes) {
+        if (model_base.find(prefix) == 0) {
+            return true;
+        }
+    }
+    
+    // 如果模型已经在本地下载，也认为是Ollama模型
+    return isModelDownloaded(model_name);
 }
 
 std::vector<std::string> ModelDownloader::getLocalModels() {

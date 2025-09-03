@@ -98,6 +98,13 @@ public:
     bool isModelDownloaded(const std::string& model_name);
     
     /**
+     * @brief 检查是否为Ollama模型
+     * @param model_name 模型名称
+     * @return 是否为Ollama模型
+     */
+    bool isOllamaModel(const std::string& model_name);
+    
+    /**
      * @brief 获取本地模型列表
      * @return 本地模型列表
      */

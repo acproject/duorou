@@ -1,5 +1,5 @@
 #include "application.h"
-#include "../api/api_server.h"
+// #include "../api/api_server.h"  // 注释：暂时禁用API服务器
 #include "../gui/main_window.h"
 #include "../gui/system_tray.h"
 #include "config_manager.h"
@@ -273,6 +273,8 @@ bool Application::initializeComponents() {
     std::cout << "Workflow engine initialized successfully" << std::endl;
 
     // 启动API服务器（无论是否服务模式）
+    // 注释：暂时禁用API服务器以解决调试问题
+    /*
     std::cout << "Creating API server..." << std::endl;
     api_server_ = std::make_unique<::duorou::ApiServer>(
         std::shared_ptr<core::ModelManager>(model_manager_.get(),
@@ -292,6 +294,7 @@ bool Application::initializeComponents() {
     } else {
       std::cout << "API server started for GUI mode" << std::endl;
     }
+    */
 
     // 初始化系统托盘（仅在非服务模式下）
     // 暂时禁用系统托盘以调试其他组件的段错误问题
@@ -331,10 +334,13 @@ void Application::cleanup() {
   stopMiniMemoryServer();
 
   // 停止API服务器
+  // 注释：API服务器已被禁用
+  /*
   if (api_server_) {
     api_server_->stop();
     api_server_.reset();
   }
+  */
 
 #ifdef __APPLE__
   // 清理 ScreenCaptureKit 资源
@@ -414,10 +420,13 @@ void Application::onShutdown(GtkApplication *app, gpointer user_data) {
       application->logger_->info("Cleaning up application resources...");
     }
     
+    // 注释：API服务器已被禁用
+    /*
     if (application->api_server_) {
       application->api_server_->stop();
       application->api_server_.reset();
     }
+    */
     application->main_window_.reset();
     application->system_tray_.reset();
     application->workflow_engine_.reset();

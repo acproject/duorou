@@ -12,9 +12,12 @@ typedef struct _GtkApplication GtkApplication;
 typedef void *gpointer;
 
 // API相关前向声明 - 在duorou命名空间中
+// 注释：暂时禁用API服务器
+/*
 namespace duorou {
 class ApiServer;
 }
+*/
 
 namespace duorou {
 namespace core {
@@ -245,7 +248,8 @@ private:
   std::unique_ptr<WorkflowEngine> workflow_engine_;
 
   // API服务器
-  std::unique_ptr<::duorou::ApiServer> api_server_;
+  // 注释：暂时禁用API服务器
+  // std::unique_ptr<::duorou::ApiServer> api_server_;
 
   // GUI组件
   std::unique_ptr<::duorou::gui::SystemTray> system_tray_;
