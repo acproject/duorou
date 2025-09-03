@@ -13,267 +13,65 @@
 #include <vector>
 
 // Include necessary headers for model loading
+#include "../extensions/ollama/model_path_manager.h"
+#include "../extensions/ollama/ollama_model_loader.h"
 #include "image_generator.h"
 #include "model_downloader.h"
 #include "model_path_manager.h"
-#include "../extensions/ollama/ollama_model_loader.h"
-#include "../extensions/ollama/model_path_manager.h"
 #include "stable-diffusion.h"
 #include "text_generator.h"
 
 // Simple Ollama model implementation using extensions
 class OllamaModelImpl : public duorou::core::BaseModel {
 public:
-    explicit OllamaModelImpl(const std::string& model_path) 
-        : model_path_(model_path), loaded_(false), memory_usage_(0) {
-        model_info_.name = model_path;
-        model_info_.type = duorou::core::ModelType::LANGUAGE_MODEL;
-        model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
-        model_info_.memory_usage = 0;
-        model_info_.path = model_path;
-    }
-    
-    bool load(const std::string& model_path) override {
-        duorou::core::Logger logger;
-        logger.info("[OLLAMA] Loading model: " + model_path);
-        loaded_ = true;
-        memory_usage_ = 1024 * 1024 * 1024; // 1GB estimate
-        model_info_.status = duorou::core::ModelStatus::LOADED;
-        model_info_.memory_usage = memory_usage_;
-        return true;
-    }
-    
-    void unload() override {
-        loaded_ = false;
-        memory_usage_ = 0;
-        model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
-        model_info_.memory_usage = 0;
-    }
-    
-    bool isLoaded() const override { return loaded_; }
-    duorou::core::ModelInfo getInfo() const override { return model_info_; }
-    size_t getMemoryUsage() const override { return memory_usage_; }
-    
-private:
-    std::string model_path_;
-    bool loaded_;
-    size_t memory_usage_;
-    duorou::core::ModelInfo model_info_;
-};
+  explicit OllamaModelImpl(const std::string &model_path)
+      : model_path_(model_path), loaded_(false), memory_usage_(0) {
+    model_info_.name = model_path;
+    model_info_.type = duorou::core::ModelType::LANGUAGE_MODEL;
+    model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    model_info_.memory_usage = 0;
+    model_info_.path = model_path;
 
-
-
-namespace duorou {
-namespace core {
-
-// LlamaModel implementation using llama.cpp - DISABLED due to missing llama.h
-/*
-class LlamaModel : public BaseModel {
-public:
-  LlamaModel(const std::string &path)
-      : model_path_(path), loaded_(false), model_(nullptr), ctx_(nullptr),
-        text_generator_(nullptr) {}
-
-  ~LlamaModel() { unload(); }
+    // 创建TextGenerator实例
+    text_generator_ = std::make_unique<duorou::core::TextGenerator>(model_path);
+  }
 
   bool load(const std::string &model_path) override {
-    if (loaded_) {
-      return true;
-    }
-
-    std::cout << "\n=== Loading Llama Model with Extensions ===" << std::endl;
-    std::cout << "Model path: " << model_path << std::endl;
-
-    // Initialize llama backend
-    llama_backend_init();
-
-    // Set model parameters
-    llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = 0; // Use CPU for now
-    model_params.use_mmap = true;
-    model_params.use_mlock = false;
-    model_params.vocab_only = false; // Load full model for text generation
-
-    std::cout << "Model parameters configured:" << std::endl;
-    std::cout << "  - GPU layers: " << model_params.n_gpu_layers << std::endl;
-    std::cout << "  - Use mmap: " << (model_params.use_mmap ? "true" : "false") << std::endl;
-    std::cout << "  - Vocab only: " << (model_params.vocab_only ? "true" : "false") << std::endl;
-
-    // Check if this is an Ollama model (starts with registry.ollama.ai)
-    if (model_path.find("registry.ollama.ai") != std::string::npos) {
-      std::cout << "\n=== Detected Ollama Model ===" << std::endl;
-      std::cout << "Using OllamaModelLoader for: " << model_path << std::endl;
-      
-      // Extract model name for extension testing
-      std::string model_name = model_path;
-      if (model_name.find("/") != std::string::npos) {
-        model_name = model_name.substr(model_name.find_last_of("/") + 1);
-      }
-      std::cout << "Extracted model name: " << model_name << std::endl;
-      
-      // Test extensions with detected model
-      std::cout << "\n=== Testing Extensions ===" << std::endl;
-      
-      // 1. Test GGML incremental extension
-      std::string arch = "qwen25vl"; // Default for qwen2.5vl models
-      if (model_name.find("qwen") != std::string::npos) {
-        arch = "qwen25vl";
-      } else if (model_name.find("gemma") != std::string::npos) {
-        arch = "gemma3";
-      } else if (model_name.find("mistral") != std::string::npos) {
-        arch = "mistral3";
-      } else if (model_name.find("llama") != std::string::npos) {
-        arch = "llama";
-      }
-      
-      std::cout << "Detected architecture: " << arch << std::endl;
-      
-      std::cout << "\n=== Loading Ollama Model ===" << std::endl;
-      auto path_manager = std::make_shared<ModelPathManager>();
-      path_manager->initialize();
-      OllamaModelLoader ollama_loader(path_manager);
-      model_ = ollama_loader.loadFromOllamaModel(model_path, model_params);
-    } else {
-      std::cout << "\n=== Detected Regular File Model ===" << std::endl;
-      // Regular file-based model loading
-      if (!std::filesystem::exists(model_path)) {
-        std::cerr << "❌ Model file not found: " << model_path << std::endl;
-        return false;
-      }
-      std::cout << "Loading model directly with llama.cpp" << std::endl;
-      // Use standard llama.cpp loading
-      model_ = llama_model_load_from_file(model_path.c_str(), model_params);
-    }
-
-    if (!model_) {
-      std::cerr << "❌ Failed to load llama model: " << model_path << std::endl;
-      return false;
-    }
-    
-    std::cout << "✅ Model loaded successfully!" << std::endl;
-
-    std::cout << "\n=== Creating Model Context ===" << std::endl;
-    // Set context parameters
-    llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 2048; // Context size
-    ctx_params.n_threads = std::thread::hardware_concurrency();
-    ctx_params.n_threads_batch = std::thread::hardware_concurrency();
-    
-    std::cout << "Context parameters:" << std::endl;
-    std::cout << "  - Context size: " << ctx_params.n_ctx << std::endl;
-    std::cout << "  - Threads: " << ctx_params.n_threads << std::endl;
-    std::cout << "  - Batch threads: " << ctx_params.n_threads_batch << std::endl;
-
-    // Create context
-    ctx_ = llama_init_from_model(model_, ctx_params);
-    if (!ctx_) {
-      std::cerr << "❌ Failed to create llama context" << std::endl;
-      llama_model_free(model_);
-      model_ = nullptr;
-      return false;
-    }
-    std::cout << "✅ Model context created successfully" << std::endl;
-
-    std::cout << "\n=== Creating Text Generator ===" << std::endl;
-    // Create text generator - 暂时禁用
-    // text_generator_ = TextGeneratorFactory::create(model_, ctx_);
-    // if (!text_generator_) {
-    //   std::cerr << "❌ Failed to create text generator" << std::endl;
-    //   llama_free(ctx_);
-    //   llama_model_free(model_);
-    //   ctx_ = nullptr;
-    //   model_ = nullptr;
-    //   return false;
-    // }
-    // std::cout << "✅ Text generator created successfully" << std::endl;
-
+    duorou::core::Logger logger;
+    logger.info("[OLLAMA] Loading model: " + model_path);
     loaded_ = true;
-
-    std::cout << "\n🎉 === Model Loading Complete ===" << std::endl;
-    std::cout << "✅ Model is ready for text generation!" << std::endl;
-    std::cout << "📊 Model memory usage: " << (getMemoryUsage() / (1024 * 1024)) << " MB" << std::endl;
-    std::cout << "=== End Model Loading ===\n" << std::endl;
+    memory_usage_ = 1024 * 1024 * 1024; // 1GB estimate
+    model_info_.status = duorou::core::ModelStatus::LOADED;
+    model_info_.memory_usage = memory_usage_;
     return true;
   }
 
   void unload() override {
-    if (loaded_) {
-      std::cout << "Unloading llama model" << std::endl;
-
-      text_generator_.reset();
-
-      if (ctx_) {
-        llama_free(ctx_);
-        ctx_ = nullptr;
-      }
-
-      if (model_) {
-        llama_model_free(model_);
-        model_ = nullptr;
-      }
-
-      llama_backend_free();
-
-      loaded_ = false;
-    }
+    loaded_ = false;
+    memory_usage_ = 0;
+    model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    model_info_.memory_usage = 0;
   }
 
   bool isLoaded() const override { return loaded_; }
+  duorou::core::ModelInfo getInfo() const override { return model_info_; }
+  size_t getMemoryUsage() const override { return memory_usage_; }
 
-  ModelInfo getInfo() const override {
-    ModelInfo info;
-    info.name = std::filesystem::path(model_path_).filename().string();
-    info.path = model_path_;
-    info.type = ModelType::LANGUAGE_MODEL;
-    info.status = loaded_ ? ModelStatus::LOADED : ModelStatus::NOT_LOADED;
-    info.memory_usage = getMemoryUsage();
-    return info;
+  // 添加getTextGenerator方法
+  duorou::core::TextGenerator *getTextGenerator() const {
+    return text_generator_.get();
   }
-
-  size_t getMemoryUsage() const override {
-    if (!loaded_ || !model_) {
-      return 0;
-    }
-    return llama_model_size(model_);
-  }
-
-  // Additional methods for text generation
-  GenerationResult
-  generate(const std::string &prompt,
-           const GenerationParams &params = GenerationParams()) {
-    if (!loaded_ || !text_generator_) {
-      GenerationResult result;
-      result.stop_reason = "Model not loaded";
-      result.finished = true;
-      return result;
-    }
-
-    return text_generator_->generate(prompt, params);
-  }
-
-  // GenerationResult
-  // generateStream(const std::string &prompt, StreamCallback callback,
-  //                const GenerationParams &params = GenerationParams()) {
-  //   if (!loaded_ || !text_generator_) {
-  //     GenerationResult result;
-  //     result.stop_reason = "Model not loaded";
-  //     result.finished = true;
-  //     return result;
-  //   }
-  //
-  //   return text_generator_->generateStream(prompt, callback, params);
-  // }  // 暂时禁用
-
-  TextGenerator *getTextGenerator() const { return text_generator_.get(); }
 
 private:
   std::string model_path_;
   bool loaded_;
-  llama_model *model_;
-  llama_context *ctx_;
-  std::unique_ptr<TextGenerator> text_generator_;
+  size_t memory_usage_;
+  duorou::core::ModelInfo model_info_;
+  std::unique_ptr<duorou::core::TextGenerator> text_generator_;
 };
-*/
+
+namespace duorou {
+namespace core {
 
 // StableDiffusionModel implementation using stable-diffusion.cpp
 class StableDiffusionModel : public BaseModel {
@@ -434,28 +232,32 @@ ModelManager::ModelManager()
 ModelManager::~ModelManager() {
   // 使用try_lock避免析构时的死锁
   std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
-  
+
   if (lock.try_lock()) {
     // 成功获取锁，正常卸载所有模型
     for (auto &pair : loaded_models_) {
       try {
         pair.second->unload();
         updateModelStatus(pair.first, ModelStatus::NOT_LOADED);
-      } catch (const std::exception& e) {
-        std::cerr << "Error unloading model " << pair.first << ": " << e.what() << std::endl;
+      } catch (const std::exception &e) {
+        std::cerr << "Error unloading model " << pair.first << ": " << e.what()
+                  << std::endl;
       }
     }
     loaded_models_.clear();
     std::cout << "All models unloaded in destructor" << std::endl;
   } else {
     // 无法获取锁，可能存在死锁风险，强制清理
-    std::cerr << "Warning: Could not acquire lock in destructor, forcing cleanup" << std::endl;
+    std::cerr
+        << "Warning: Could not acquire lock in destructor, forcing cleanup"
+        << std::endl;
     // 不加锁直接清理，避免死锁
     for (auto &pair : loaded_models_) {
       try {
         pair.second->unload();
-      } catch (const std::exception& e) {
-        std::cerr << "Error force-unloading model " << pair.first << ": " << e.what() << std::endl;
+      } catch (const std::exception &e) {
+        std::cerr << "Error force-unloading model " << pair.first << ": "
+                  << e.what() << std::endl;
       }
     }
     loaded_models_.clear();
@@ -563,8 +365,9 @@ bool ModelManager::loadModel(const std::string &model_id) {
   std::cout << "[DEBUG] Creating model instance for: " << model_id << std::endl;
   auto model = createModel(it->second);
   if (!model) {
-    std::cerr << "[ERROR] Failed to create model instance: " << model_id 
-              << " (type: " << static_cast<int>(it->second.type) << ")" << std::endl;
+    std::cerr << "[ERROR] Failed to create model instance: " << model_id
+              << " (type: " << static_cast<int>(it->second.type) << ")"
+              << std::endl;
     updateModelStatus(model_id, ModelStatus::ERROR);
     return false;
   }
@@ -575,27 +378,30 @@ bool ModelManager::loadModel(const std::string &model_id) {
 
   // 记录开始时间
   auto start_time = std::chrono::steady_clock::now();
-  
+
   // 加载模型（带超时处理）
   bool success = false;
   std::string error_message;
-  
+
   try {
-     // 直接同步加载，但添加详细的错误信息
-     // 注意：异步加载在这个上下文中可能不安全，因为涉及到共享状态
-     success = model->load(it->second.path);
-   } catch (const std::exception& e) {
+    // 直接同步加载，但添加详细的错误信息
+    // 注意：异步加载在这个上下文中可能不安全，因为涉及到共享状态
+    success = model->load(it->second.path);
+  } catch (const std::exception &e) {
     error_message = "Exception during model loading: " + std::string(e.what());
-    std::cerr << "[ERROR] " << error_message << " for model: " << model_id << std::endl;
+    std::cerr << "[ERROR] " << error_message << " for model: " << model_id
+              << std::endl;
   } catch (...) {
     error_message = "Unknown exception during model loading";
-    std::cerr << "[ERROR] " << error_message << " for model: " << model_id << std::endl;
+    std::cerr << "[ERROR] " << error_message << " for model: " << model_id
+              << std::endl;
   }
-  
+
   // 计算加载时间
   auto end_time = std::chrono::steady_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-  
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      end_time - start_time);
+
   if (success) {
     loaded_models_[model_id] = model;
     updateModelStatus(model_id, ModelStatus::LOADED);
@@ -605,7 +411,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
       load_callback_(model_id, true);
     }
 
-    std::cout << "[SUCCESS] Model loaded successfully: " << model_id 
+    std::cout << "[SUCCESS] Model loaded successfully: " << model_id
               << " (took " << duration.count() << "ms)" << std::endl;
   } else {
     updateModelStatus(model_id, ModelStatus::ERROR);
@@ -615,17 +421,18 @@ bool ModelManager::loadModel(const std::string &model_id) {
       load_callback_(model_id, false);
     }
 
-    std::cerr << "[ERROR] Failed to load model: " << model_id 
-              << " (took " << duration.count() << "ms)";
+    std::cerr << "[ERROR] Failed to load model: " << model_id << " (took "
+              << duration.count() << "ms)";
     if (!error_message.empty()) {
       std::cerr << " - " << error_message;
     }
     std::cerr << std::endl;
-    
+
     // 记录详细的错误信息
-    std::cerr << "[DEBUG] Model details - Path: " << it->second.path 
+    std::cerr << "[DEBUG] Model details - Path: " << it->second.path
               << ", Type: " << static_cast<int>(it->second.type)
-              << ", Memory limit: " << memory_limit_ / (1024*1024) << "MB" << std::endl;
+              << ", Memory limit: " << memory_limit_ / (1024 * 1024) << "MB"
+              << std::endl;
   }
 
   return success;
@@ -658,8 +465,9 @@ void ModelManager::unloadAllModels() {
     try {
       pair.second->unload();
       updateModelStatus(pair.first, ModelStatus::NOT_LOADED);
-    } catch (const std::exception& e) {
-      std::cerr << "Error unloading model " << pair.first << ": " << e.what() << std::endl;
+    } catch (const std::exception &e) {
+      std::cerr << "Error unloading model " << pair.first << ": " << e.what()
+                << std::endl;
     }
   }
 
@@ -718,7 +526,8 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
       std::cout << "[DEBUG] Found " << local_models.size()
                 << " local ollama models" << std::endl;
       for (const auto &model_name : local_models) {
-        std::cout << "[DEBUG] Processing ollama model: " << model_name << std::endl;
+        std::cout << "[DEBUG] Processing ollama model: " << model_name
+                  << std::endl;
         ModelInfo ollama_model;
         ollama_model.id = model_name;
         ollama_model.name = model_name;
@@ -731,8 +540,9 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
         std::cout << "[DEBUG] Added ollama model: " << model_name << std::endl;
       }
       std::cout << "[DEBUG] Finished processing all ollama models" << std::endl;
-    } catch (const std::exception& e) {
-      std::cout << "[DEBUG] Exception in getLocalModels: " << e.what() << std::endl;
+    } catch (const std::exception &e) {
+      std::cout << "[DEBUG] Exception in getLocalModels: " << e.what()
+                << std::endl;
     }
   } else {
     std::cout << "[DEBUG] ModelDownloader is null!" << std::endl;
@@ -849,13 +659,11 @@ ModelManager::getTextGenerator(const std::string &model_id) const {
     return nullptr;
   }
 
-  // Try to cast to LlamaModel - DISABLED due to missing llama.h
-  /*
-  auto llama_model = std::dynamic_pointer_cast<LlamaModel>(it->second);
-  if (llama_model) {
-    return llama_model->getTextGenerator();
+  // Try to cast to OllamaModelImpl first
+  auto ollama_model = std::dynamic_pointer_cast<OllamaModelImpl>(it->second);
+  if (ollama_model) {
+    return ollama_model->getTextGenerator();
   }
-  */
 
   return nullptr;
 }
@@ -1036,12 +844,14 @@ std::shared_ptr<BaseModel>
 ModelManager::createModel(const ModelInfo &model_info) {
   if (model_info.type == ModelType::LANGUAGE_MODEL) {
     // 检查是否为Ollama模型
-    if (model_downloader_ && model_downloader_->isOllamaModel(model_info.name)) {
+    if (model_downloader_ &&
+        model_downloader_->isOllamaModel(model_info.name)) {
       Logger logger;
       logger.info("Creating Ollama model for: " + model_info.name);
       return std::make_shared<OllamaModelImpl>(model_info.name);
     } else {
-      // return std::make_shared<LlamaModel>(model_info.path);  // Disabled - llama.h not found
+      // return std::make_shared<LlamaModel>(model_info.path);  // Disabled -
+      // llama.h not found
       Logger logger;
       logger.warning("LlamaModel creation disabled - llama.h not found");
       return nullptr;
@@ -1049,7 +859,7 @@ ModelManager::createModel(const ModelInfo &model_info) {
   } else if (model_info.type == ModelType::DIFFUSION_MODEL) {
     return std::make_shared<StableDiffusionModel>(model_info.path);
   }
-  
+
   Logger logger;
   logger.error("Unknown model type");
   return nullptr;
