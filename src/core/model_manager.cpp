@@ -19,11 +19,7 @@
 #include "ollama_model_loader.h"
 #include "stable-diffusion.h"
 #include "text_generator.h"
-#include "../extensions/llama_cpp/model_loader_wrapper.h"
-#include "../extensions/llama_cpp/ggml_incremental_extension.h"
-#include "../extensions/llama_cpp/model_config_manager.h"
-#include "../extensions/llama_cpp/compatibility_checker.h"
-#include "../extensions/llama_cpp/vision_model_handler.h"
+
 
 
 namespace duorou {
@@ -90,41 +86,6 @@ public:
       
       std::cout << "Detected architecture: " << arch << std::endl;
       
-      if (duorou::extensions::GGMLIncrementalExtension::isArchitectureSupported(arch)) {
-        std::string mapped_arch = duorou::extensions::GGMLIncrementalExtension::getBaseArchitecture(arch);
-        std::cout << "✅ GGML incremental extension: " << arch << " -> " << mapped_arch << std::endl;
-      } else {
-        std::cout << "ℹ️  Architecture " << arch << " does not need incremental extension" << std::endl;
-      }
-      
-      // 2. Test model config manager
-       ModelConfigManager::initialize();
-       auto config = ModelConfigManager::getConfig(arch);
-      if (config) {
-        std::cout << "✅ Model config loaded - hasVision: " << (config->hasVision ? "true" : "false") << std::endl;
-        std::cout << "   Model config - imageSize: " << config->imageSize << std::endl;
-      } else {
-        std::cout << "ℹ️  No specific config found for architecture: " << arch << std::endl;
-      }
-      
-      // 3. Test compatibility checker
-       CompatibilityChecker checker;
-      if (checker.isArchitectureSupported(arch)) {
-        std::cout << "✅ Architecture " << arch << " is supported by compatibility checker" << std::endl;
-        
-        auto requirements = checker.getModelRequirements(arch);
-        if (requirements) {
-          std::cout << "   Model requirements loaded successfully" << std::endl;
-        }
-      } else {
-        std::cout << "ℹ️  Architecture " << arch << " not found in compatibility checker" << std::endl;
-      }
-      
-      // 4. Test vision model handler
-       VisionModelHandler visionHandler;
-      visionHandler.initialize();
-      std::cout << "✅ Vision model handler initialized" << std::endl;
-      
       std::cout << "\n=== Loading Ollama Model ===" << std::endl;
       auto path_manager = std::make_shared<ModelPathManager>();
       path_manager->initialize();
@@ -137,9 +98,9 @@ public:
         std::cerr << "❌ Model file not found: " << model_path << std::endl;
         return false;
       }
-      std::cout << "Using ModelLoaderWrapper for enhanced loading with architecture mapping" << std::endl;
-      // Use ModelLoaderWrapper for enhanced model loading with architecture mapping
-      model_ = duorou::extensions::llama_cpp::ModelLoaderWrapper::loadModelWithArchMapping(model_path, model_params);
+      std::cout << "Loading model directly with llama.cpp" << std::endl;
+      // Use standard llama.cpp loading
+      model_ = llama_model_load_from_file(model_path.c_str(), model_params);
     }
 
     if (!model_) {

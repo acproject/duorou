@@ -65,7 +65,7 @@ option(DUOROU_ENABLE_CUDA "Enable CUDA support" OFF)
 option(DUOROU_ENABLE_METAL "Enable Metal support (macOS only)" OFF)
 option(DUOROU_ENABLE_VULKAN "Enable Vulkan support" OFF)
 option(DUOROU_ENABLE_OPENCL "Enable OpenCL support" OFF)
-option(DUOROU_BUILD_TESTS "Build tests" OFF)
+
 option(DUOROU_BUILD_EXAMPLES "Build examples" OFF)
 
 # 自动启用平台特定选项
@@ -357,10 +357,7 @@ set(DUOROU_SOURCES_LIST
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
-    src/extensions/llama_cpp/ggml_incremental_extension.cpp
-    src/extensions/llama_cpp/gguf_modifier.cpp
-    src/extensions/llama_cpp/gguf_wrapper.cpp
-    src/extensions/llama_cpp/model_loader_wrapper.cpp
+
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
     src/gui/image_view.cpp
@@ -455,9 +452,6 @@ if(DUOROU_SOURCES)
     list(LENGTH DUOROU_SOURCES DUOROU_SOURCES_COUNT)
     message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
-    # 添加llama_cpp扩展子目录
-    add_subdirectory(src/extensions/llama_cpp)
-    
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
@@ -465,7 +459,6 @@ if(DUOROU_SOURCES)
     target_link_libraries(duorou
         llama
         stable-diffusion
-        llama_cpp_extension
         ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json
@@ -559,11 +552,7 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
-# 测试配置
-if(DUOROU_BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
+
 
 # 示例配置
 if(DUOROU_BUILD_EXAMPLES)
@@ -618,6 +607,6 @@ message(STATUS "  CUDA Support: ${DUOROU_ENABLE_CUDA}")
 message(STATUS "  Metal Support: ${DUOROU_ENABLE_METAL}")
 message(STATUS "  Vulkan Support: ${DUOROU_ENABLE_VULKAN}")
 message(STATUS "  OpenCL Support: ${DUOROU_ENABLE_OPENCL}")
-message(STATUS "  Build Tests: ${DUOROU_BUILD_TESTS}")
+
 message(STATUS "  Build Examples: ${DUOROU_BUILD_EXAMPLES}")
 message(STATUS "")

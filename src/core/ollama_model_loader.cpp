@@ -1,7 +1,5 @@
 #include "ollama_model_loader.h"
 #include "logger.h"
-#include "../extensions/llama_cpp/ggml_incremental_extension.h"
-#include "../extensions/llama_cpp/model_loader_wrapper.h"
 #include <filesystem>
 #include <regex>
 #include <fstream>
@@ -19,8 +17,7 @@ OllamaModelLoader::OllamaModelLoader(std::shared_ptr<ModelPathManager> model_pat
     // 初始化ModelfileParser
     modelfile_parser_ = std::make_shared<ModelfileParser>(model_path_manager_);
     
-    // 初始化GGML增量扩展以支持新架构
-    duorou::extensions::GGMLIncrementalExtension::initialize();
+    // 初始化完成
 }
 
 llama_model* OllamaModelLoader::loadFromOllamaModel(const std::string& model_name, 
@@ -72,9 +69,9 @@ llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_path,
     
     logger_.info("[OllamaModelLoader] Loading GGUF model from: " + gguf_path);
     
-    // 使用ModelLoaderWrapper加载模型，支持架构映射
-    logger_.info("[OllamaModelLoader] Calling ModelLoaderWrapper::loadModelWithArchMapping...");
-    struct llama_model* model = duorou::extensions::llama_cpp::ModelLoaderWrapper::loadModelWithArchMapping(gguf_path, model_params);
+    // 使用标准llama.cpp加载模型
+    logger_.info("[OllamaModelLoader] Loading model with llama.cpp...");
+    struct llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params);
     if (!model) {
         logger_.error("[OllamaModelLoader] Failed to load GGUF model: " + gguf_path);
         return nullptr;
@@ -258,8 +255,8 @@ llama_model* OllamaModelLoader::loadFromModelfileConfig(
     logger_.info("Base model: " + config.base_model);
     logger_.info("LoRA adapters: " + std::to_string(config.lora_adapters.size()));
     
-    // 使用ModelLoaderWrapper加载模型
-    return duorou::extensions::llama_cpp::ModelLoaderWrapper::loadModelFromConfig(config, model_params);
+    // 使用标准llama.cpp加载模型
+    return llama_model_load_from_file(config.base_model.c_str(), model_params);
 }
 
 bool OllamaModelLoader::parseModelfileFromManifest(
