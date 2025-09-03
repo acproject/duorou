@@ -57,6 +57,21 @@ struct GGUFHeader {
     uint64_t metadata_kv_count; // 元数据键值对数量
 };
 
+// GGUF张量信息结构
+struct GGUFTensorInfo {
+    std::string name;         // 张量名称
+    uint32_t n_dimensions;    // 维度数量
+    std::vector<uint64_t> dimensions; // 各维度大小
+    GGUFType type;           // 张量数据类型
+    uint64_t offset;         // 张量数据偏移量
+};
+
+// 跳过的张量信息结构
+struct SkippedTensorInfo {
+    uint64_t offset;         // 原始偏移量
+    size_t size;            // 张量数据大小
+};
+
 // 架构映射规则
 struct ArchitectureMapping {
     std::string source_arch;      // 源架构名称
@@ -85,6 +100,13 @@ public:
      * @return 成功返回true
      */
     bool saveFile(const std::string& output_path);
+    
+    /**
+     * 创建优化的临时文件，只修改header和metadata，tensor data使用符号链接或文件拼接
+     * @param output_path 输出文件路径
+     * @return 成功返回true，失败返回false
+     */
+    bool saveOptimizedFile(const std::string& output_path);
     
     /**
      * 应用架构映射
@@ -171,6 +193,13 @@ private:
     bool readMetadata(std::ifstream& file);
     
     /**
+     * 读取张量信息
+     * @param file 文件流
+     * @return 成功返回true
+     */
+    bool readTensorInfo(std::ifstream& file);
+    
+    /**
      * 写入GGUF文件头
      * @param file 文件流
      * @return 成功返回true
@@ -183,6 +212,13 @@ private:
      * @return 成功返回true
      */
     bool writeMetadata(std::ofstream& file) const;
+    
+    /**
+     * 写入张量信息
+     * @param file 文件流
+     * @return 成功返回true
+     */
+    bool writeTensorInfo(std::ofstream& file) const;
     
     /**
      * 复制张量数据
@@ -237,7 +273,9 @@ private:
     std::string file_path_;                                    // 当前文件路径
     GGUFHeader header_;                                        // GGUF文件头
     std::unordered_map<std::string, GGUFKeyValue> metadata_;   // 元数据映射
+    std::vector<GGUFTensorInfo> tensor_infos_;                 // 张量信息列表
     std::vector<uint8_t> tensor_data_;                         // 张量数据
+    std::vector<SkippedTensorInfo> skipped_tensors_;           // 跳过的张量信息
     size_t tensor_data_offset_;                                // 张量数据偏移量
     bool verbose_;                                             // 详细输出模式
     bool file_loaded_;                                         // 文件是否已加载

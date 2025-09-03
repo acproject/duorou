@@ -153,9 +153,9 @@ void* OllamaModelLoader::loadFromGGUFPath(const std::string& gguf_path,
             return nullptr;
         }
         
-        // Save modified file
-        if (!modifier.saveFile(temp_file_path)) {
-            std::cout << "[ERROR] Failed to save modified GGUF file: " << temp_file_path << std::endl;
+        // Save modified file using optimized method
+        if (!modifier.saveOptimizedFile(temp_file_path)) {
+            std::cout << "[ERROR] Failed to save optimized GGUF file: " << temp_file_path << std::endl;
             return nullptr;
         }
         
