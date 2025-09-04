@@ -1,250 +1,374 @@
-#ifndef DUOROU_EXTENSIONS_OLLAMA_QWEN25VL_INFERENCE_ENGINE_H
-#define DUOROU_EXTENSIONS_OLLAMA_QWEN25VL_INFERENCE_ENGINE_H
+#ifndef QWEN25VL_INFERENCE_ENGINE_H
+#define QWEN25VL_INFERENCE_ENGINE_H
 
-#include <cstdint>
-#include <fstream>
-#include <memory>
-#include <string>
 #include <vector>
+#include <cstdint>
+#include <string>
+#include <memory>
 #include <unordered_map>
+#include <iostream>
+#include <fstream>
+#include <cmath>
+#include <algorithm>
+#include <random>
+#include <chrono>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <queue>
+#include <atomic>
+#include <cassert>
+#include <cstring>
+#include <sstream>
+#include <iomanip>
+#include <limits>
+#include <numeric>
+#include <map>
+#include <set>
+#include <array>
+#include <functional>
 #include "gguf_parser.h"
+
+// Forward declarations
+struct ModelArchitecture;
+
+// SIMD support detection
+#if defined(__x86_64__) || defined(_M_X64)
+    #include <immintrin.h>
+    #define SIMD_ENABLED
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    #include <arm_neon.h>
+    #define SIMD_ENABLED
+#endif
+
+// OpenBLAS support
+#ifdef USE_OPENBLAS
+    #include <cblas.h>
+    #define BLAS_ENABLED
+#endif
 
 namespace duorou {
 namespace extensions {
 namespace ollama {
 
-// 前向声明
-struct Tensor;
-struct AttentionWeights;
-struct FeedForwardWeights;
-struct LayerWeights;
-
-// 张量数据结构
+// 张量结构
 struct Tensor {
     std::vector<float> data;
-    std::vector<uint64_t> shape;
-    uint64_t size;
+    std::vector<uint32_t> shape;
+    uint32_t size;
     
     Tensor() : size(0) {}
-    Tensor(const std::vector<uint64_t>& dims);
     
-    // 张量操作
-    void reshape(const std::vector<uint64_t>& new_shape);
-    uint64_t getElementCount() const;
-    float* getData() { return data.data(); }
-    const float* getData() const { return data.data(); }
-};
-
-// 注意力权重
-struct AttentionWeights {
-    Tensor q_proj;  // query projection
-    Tensor k_proj;  // key projection  
-    Tensor v_proj;  // value projection
-    Tensor o_proj;  // output projection
+    Tensor(const std::vector<uint32_t>& s) : shape(s), size(1) {
+        for (uint32_t dim : shape) {
+            size *= dim;
+        }
+        data.resize(size);
+    }
     
-    // RoPE相关
-    Tensor rope_freqs;
+    void reshape(const std::vector<uint32_t>& new_shape) {
+        shape = new_shape;
+        size = 1;
+        for (uint32_t dim : shape) {
+            size *= dim;
+        }
+        data.resize(size);
+    }
     
-    bool isValid() const {
-        return q_proj.size > 0 && k_proj.size > 0 && 
-               v_proj.size > 0 && o_proj.size > 0;
+    float& operator[](size_t index) {
+        return data[index];
+    }
+    
+    const float& operator[](size_t index) const {
+        return data[index];
     }
 };
 
-// 前馈网络权重
-struct FeedForwardWeights {
-    Tensor gate_proj;  // gate projection
-    Tensor up_proj;    // up projection
-    Tensor down_proj;  // down projection
+// 注意力头结构
+struct AttentionHead {
+    Tensor query_weights;
+    Tensor key_weights;
+    Tensor value_weights;
+    Tensor output_weights;
     
-    bool isValid() const {
-        return gate_proj.size > 0 && up_proj.size > 0 && down_proj.size > 0;
+    Tensor query_bias;
+    Tensor key_bias;
+    Tensor value_bias;
+    Tensor output_bias;
+};
+
+// Transformer层结构
+struct TransformerLayer {
+    // 多头注意力
+    std::vector<AttentionHead> attention_heads;
+    Tensor attention_norm_weights;
+    Tensor attention_norm_bias;
+    
+    // 前馈网络
+    Tensor ffn_gate_weights;
+    Tensor ffn_up_weights;
+    Tensor ffn_down_weights;
+    Tensor ffn_gate_bias;
+    Tensor ffn_up_bias;
+    Tensor ffn_down_bias;
+    
+    // 层归一化
+    Tensor ffn_norm_weights;
+    Tensor ffn_norm_bias;
+};
+
+// 视觉编码器结构
+struct VisionEncoder {
+    // 卷积层
+    std::vector<Tensor> conv_weights;
+    std::vector<Tensor> conv_biases;
+    
+    // 位置编码
+    Tensor position_embeddings;
+    
+    // Transformer层
+    std::vector<TransformerLayer> layers;
+    
+    // 输出投影
+    Tensor output_projection;
+    Tensor output_bias;
+};
+
+// 模型配置结构
+struct ModelConfig {
+    uint32_t vocab_size;
+    uint32_t hidden_size;
+    uint32_t num_layers;
+    uint32_t num_attention_heads;
+    uint32_t intermediate_size;
+    uint32_t max_position_embeddings;
+    uint32_t rope_theta;
+    float layer_norm_eps;
+    
+    // 视觉相关配置
+    uint32_t vision_hidden_size;
+    uint32_t vision_num_layers;
+    uint32_t vision_num_attention_heads;
+    uint32_t vision_intermediate_size;
+    uint32_t image_size;
+    uint32_t patch_size;
+    
+    ModelConfig() {
+        vocab_size = 151936;
+        hidden_size = 3584;
+        num_layers = 28;
+        num_attention_heads = 28;
+        intermediate_size = 18944;
+        max_position_embeddings = 32768;
+        rope_theta = 1000000;
+        layer_norm_eps = 1e-6;
+        
+        vision_hidden_size = 1280;
+        vision_num_layers = 32;
+        vision_num_attention_heads = 16;
+        vision_intermediate_size = 5120;
+        image_size = 448;
+        patch_size = 14;
     }
 };
 
-// 层权重
-struct LayerWeights {
-    AttentionWeights attention;
-    FeedForwardWeights feed_forward;
+// KV缓存结构
+struct KVCache {
+    std::vector<Tensor> key_cache;
+    std::vector<Tensor> value_cache;
+    uint32_t current_length;
+    uint32_t max_length;
     
-    Tensor input_layernorm;
-    Tensor post_attention_layernorm;
+    KVCache() : current_length(0), max_length(0) {}
     
-    bool isValid() const {
-        return attention.isValid() && feed_forward.isValid() &&
-               input_layernorm.size > 0 && post_attention_layernorm.size > 0;
+    void resize(uint32_t num_layers, uint32_t max_seq_len, uint32_t hidden_size) {
+        max_length = max_seq_len;
+        current_length = 0;
+        key_cache.resize(num_layers);
+        value_cache.resize(num_layers);
+        
+        for (uint32_t i = 0; i < num_layers; ++i) {
+            key_cache[i].reshape({max_seq_len, hidden_size});
+            value_cache[i].reshape({max_seq_len, hidden_size});
+        }
+    }
+    
+    void clear() {
+        current_length = 0;
     }
 };
 
-// 视觉编码器权重（用于多模态）
-struct VisionWeights {
-    Tensor patch_embedding;
-    Tensor position_embedding;
-    std::vector<LayerWeights> layers;
-    Tensor final_layernorm;
-    
-    bool isValid() const {
-        return patch_embedding.size > 0 && !layers.empty();
-    }
-};
-
-// 模型权重
-struct ModelWeights {
-    Tensor token_embedding;
-    std::vector<LayerWeights> layers;
-    Tensor output_norm;
-    Tensor output;
-    
-    // 视觉相关权重（可选）
-    std::unique_ptr<VisionWeights> vision;
-    
-    bool isValid() const {
-        return token_embedding.size > 0 && !layers.empty() && 
-               output_norm.size > 0 && output.size > 0;
-    }
-};
-
-// 推理状态
-struct InferenceState {
-    std::vector<int32_t> tokens;
-    std::vector<std::vector<float>> kv_cache_k;  // key cache for each layer
-    std::vector<std::vector<float>> kv_cache_v;  // value cache for each layer
-    uint32_t sequence_length;
-    uint32_t max_sequence_length;
-    
-    InferenceState(uint32_t max_seq_len, uint32_t num_layers, uint32_t head_dim);
-    void reset();
-    void addToken(int32_t token);
-};
-
-// Qwen2.5VL推理引擎
+// Qwen2.5VL推理引擎类
 class Qwen25VLInferenceEngine {
 public:
-    explicit Qwen25VLInferenceEngine(bool verbose = false);
+    // 构造函数和析构函数
+    Qwen25VLInferenceEngine();
+    explicit Qwen25VLInferenceEngine(bool verbose);
     ~Qwen25VLInferenceEngine();
     
-    // 模型加载
-    bool loadModel(const std::string& gguf_file_path);
-    bool isModelLoaded() const { return model_loaded_; }
-    
-    // 推理接口
-    std::vector<float> forward(const std::vector<int32_t>& input_tokens);
-    std::vector<float> forwardWithImages(const std::vector<int32_t>& input_tokens,
-                                        const std::vector<std::vector<float>>& image_features);
+    // 模型加载和管理
+    bool loadModel(const std::string& model_path);
+    bool unloadModel();
+    bool isModelLoaded() const;
     
     // 文本生成
-    std::string generateText(const std::string& prompt, uint32_t max_tokens = 512);
-    std::string generateTextWithImages(const std::string& prompt,
-                                      const std::vector<std::vector<float>>& image_features,
-                                      uint32_t max_tokens = 512);
+    std::string generateText(const std::string& prompt, int max_tokens = 100);
+    std::string generateTextWithImage(const std::string& prompt, const std::string& image_path, int max_tokens = 100);
     
-    // 采样
-    int32_t sampleToken(const std::vector<float>& logits, float temperature = 0.7f, float top_p = 0.9f);
+    // 批量生成
+    std::vector<std::string> generateBatch(const std::vector<std::string>& prompts);
     
-    // 模型信息
-    const ModelArchitecture& getArchitecture() const { return architecture_; }
-    uint32_t getVocabSize() const { return vocab_size_; }
-    uint32_t getContextLength() const { return architecture_.context_length; }
+    // 流式生成
+    void generateStream(const std::string& prompt, std::function<void(const std::string&)> callback, int max_tokens = 100);
+    
+    // 多模态生成（图像+文本）
+    std::string generateTextWithImages(const std::string& prompt, const std::vector<std::vector<float>>& image_features, int max_tokens = 100);
+    
+    // 分词方法
+    std::vector<int32_t> tokenize(const std::string& text);
+    
+    // 模型状态保存和加载
+    bool saveState(const std::string& state_path) const;
+    bool loadState(const std::string& state_path);
+    
+    // 性能优化
+    void enableKVCache(bool enable = true);
+    void setMaxSequenceLength(uint32_t max_length);
+    void optimizeMemoryLayout();
+    void optimizeComputationGraph();
+    void warmupModel();
+    
+    // 量化支持
+    bool enableQuantization(const std::string& quant_type = "q4_0");
+    bool disableQuantization();
+    
+    // 并行处理
+    void setNumThreads(uint32_t num_threads);
+    void enableParallelProcessing(bool enable = true);
+    
+    // 采样参数设置
+    void setTemperature(float temperature);
+    void setTopP(float top_p);
+    void setTopK(int top_k);
+    void setRepetitionPenalty(float penalty);
+    
+    // 模型信息获取
+    ModelConfig getModelConfig() const;
+    std::string getModelInfo() const;
+    size_t getModelSize() const;
+    size_t calculateModelSize() const;
+    
+    // 性能统计
+    double getInferenceTime() const;
+    uint64_t getTokensGenerated() const;
+    double getTokensPerSecond() const;
+    void resetStatistics();
     
     // 词汇表操作
-    std::vector<int32_t> tokenize(const std::string& text);
     std::string detokenize(const std::vector<int32_t>& tokens);
+    int32_t getVocabSize() const;
+    std::string getTokenString(int32_t token_id) const;
+    int32_t getTokenId(const std::string& token) const;
     
-private:
-    // 模型加载辅助函数
-    bool loadWeights(const GGUFParser& parser);
-    bool loadTokenEmbedding(const GGUFParser& parser);
-    bool loadLayers(const GGUFParser& parser);
-    bool loadOutputWeights(const GGUFParser& parser);
-    bool loadVisionWeights(const GGUFParser& parser);
-    bool loadVocabulary(const GGUFParser& parser);
-    
-    // 张量加载
-    bool loadTensorFromGGUF(const GGUFParser& parser, const std::string& tensor_name, Tensor& tensor);
-    bool convertGGUFTensorToFloat(const GGUFTensorInfo& tensor_info, 
-                                 const std::string& file_path, Tensor& output);
-    
-    // 推理核心函数
-    std::vector<float> runInference(const std::vector<int32_t>& tokens, 
-                                   const std::vector<std::vector<float>>* image_features = nullptr);
-    
-    // 层计算
-    void computeLayer(uint32_t layer_idx, 
-                     const std::vector<float>& input,
-                     std::vector<float>& output,
-                     InferenceState& state);
-    
-    // 注意力计算
-    void computeAttention(const AttentionWeights& weights,
-                         const std::vector<float>& input,
-                         std::vector<float>& output,
-                         std::vector<float>& k_cache,
-                         std::vector<float>& v_cache,
-                         uint32_t seq_pos);
-    
-    // 前馈网络计算
-    void computeFeedForward(const FeedForwardWeights& weights,
-                           const std::vector<float>& input,
-                           std::vector<float>& output);
-    
-    // 数学运算
-    void matmul(const float* a, const float* b, float* c, 
-               uint32_t m, uint32_t n, uint32_t k);
-    void addBias(float* data, const float* bias, uint32_t size);
-    void layerNorm(float* data, const float* weight, const float* bias, 
-                  uint32_t size, float eps = 1e-6f);
-    void rmsNorm(float* data, const float* weight, uint32_t size, float eps = 1e-6f);
-    void silu(float* data, uint32_t size);
-    void softmax(float* data, uint32_t size);
-    
-    // RoPE (Rotary Position Embedding)
-    void applyRoPE(float* q, float* k, uint32_t head_dim, uint32_t pos);
-    void precomputeRoPEFreqs();
-    
-    // 视觉处理
-    std::vector<float> processImageFeatures(const std::vector<float>& image_features);
-    
-    // 工具函数
+    // 日志函数
     void log(const std::string& level, const std::string& message) const;
     
-    // 内存使用监控
-    void logMemoryUsage(const std::string& context = "");
-    
 private:
-    bool verbose_;
-    bool model_loaded_;
+    // 模型组件
+    ModelConfig config_;
+    std::unique_ptr<GGUFParser> gguf_parser_;
     
-    // 模型架构和权重
-    ModelArchitecture architecture_;
-    std::unique_ptr<ModelWeights> weights_;
+    // 模型权重
+    Tensor token_embeddings_;
+    std::vector<TransformerLayer> transformer_layers_;
+    Tensor output_norm_weights_;
+    Tensor output_norm_bias_;
+    Tensor output_projection_;
     
-    // 模型参数
-    uint32_t vocab_size_;
-    uint32_t embedding_dim_;
-    uint32_t num_layers_;
-    uint32_t num_heads_;
-    uint32_t num_kv_heads_;
-    uint32_t head_dim_;
-    uint32_t ffn_dim_;
-    float rms_norm_eps_;
-    
-    // RoPE参数
-    float rope_freq_base_;
-    std::vector<float> rope_freqs_;
+    // 视觉编码器
+    std::unique_ptr<VisionEncoder> vision_encoder_;
     
     // 词汇表
-    std::vector<std::string> id_to_token_;
-    std::unordered_map<std::string, int32_t> token_to_id_;
+    std::unordered_map<std::string, int32_t> vocab_;
+    std::unordered_map<int32_t, std::string> reverse_vocab_;
     
-    // 推理状态
-    std::unique_ptr<InferenceState> inference_state_;
+    // 特殊token
+    int32_t bos_token_id_;
+    int32_t eos_token_id_;
+    int32_t pad_token_id_;
+    int32_t unk_token_id_;
     
-    // 文件路径
-    std::string model_file_path_;
+    // KV缓存
+    std::unique_ptr<KVCache> kv_cache_;
+    bool kv_cache_enabled_;
+    
+    // RoPE频率
+    std::vector<float> rope_freqs_;
+    
+    // 采样参数
+    float temperature_;
+    float top_p_;
+    int top_k_;
+    float repetition_penalty_;
+    
+    // 性能和状态
+    bool model_loaded_;
+    bool verbose_;
+    uint32_t max_sequence_length_;
+    uint32_t num_threads_;
+    bool parallel_processing_enabled_;
+    bool quantization_enabled_;
+    std::string quantization_type_;
+    
+    // 统计信息
+    mutable double total_inference_time_;
+    mutable uint64_t total_tokens_generated_;
+    
+    // 内部方法
+    bool loadWeights(const std::string& model_path);
+    bool loadVocabulary();
+    bool loadTokenEmbedding();
+    bool loadLayers();
+    bool loadOutputWeights();
+    bool loadVisionWeights();
+    void precomputeRoPEFreqs();
+    bool loadTensorFromGGUF(const std::string& tensor_name, Tensor& tensor);
+    
+    // 前向传播
+    Tensor forward(const std::vector<int32_t>& input_ids);
+    Tensor embedTokens(const std::vector<int32_t>& token_ids);
+    Tensor applyLayerNorm(const Tensor& input, const Tensor& weights, const Tensor& bias);
+    Tensor applyRoPE(const Tensor& input, uint32_t position);
+    Tensor multiHeadAttention(const Tensor& input, const TransformerLayer& layer, uint32_t layer_idx);
+    Tensor feedForward(const Tensor& input, const TransformerLayer& layer);
+    Tensor processVisionInput(const std::vector<std::vector<float>>& image_features);
+    
+    // 采样方法
+    int32_t sampleToken(const Tensor& logits);
+    int32_t sampleTopK(const Tensor& logits, int k);
+    int32_t sampleTopP(const Tensor& logits, float p);
+    int32_t sampleTemperature(const Tensor& logits, float temp);
+    
+    // 工具方法
+    void softmax(Tensor& tensor);
+    void applyTemperature(Tensor& logits, float temperature);
+    std::vector<std::pair<float, int32_t>> getTopKTokens(const Tensor& logits, int k);
+    float calculatePerplexity(const std::vector<int32_t>& tokens);
+    
+    // SIMD优化方法
+    void vectorAdd(const float* a, const float* b, float* result, size_t size);
+    void vectorMul(const float* a, const float* b, float* result, size_t size);
+    void matrixMultiply(const float* a, const float* b, float* c, size_t m, size_t n, size_t k);
+    
+    // 内存管理
+    void optimizeMemoryUsage();
+    void clearCache();
+    size_t getMemoryUsage() const;
 };
 
 } // namespace ollama
 } // namespace extensions
 } // namespace duorou
 
-#endif // DUOROU_EXTENSIONS_OLLAMA_QWEN25VL_INFERENCE_ENGINE_H
+#endif // QWEN25VL_INFERENCE_ENGINE_H

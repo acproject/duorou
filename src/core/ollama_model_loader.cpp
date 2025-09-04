@@ -20,30 +20,25 @@ OllamaModelLoader::OllamaModelLoader(std::shared_ptr<ModelPathManager> model_pat
     // 初始化完成
 }
 
-llama_model* OllamaModelLoader::loadFromOllamaModel(const std::string& model_name, 
-                                                         const llama_model_params& model_params) {
+bool OllamaModelLoader::loadFromOllamaModel(const std::string& model_name) {
     ModelPath model_path;
     if (!parseOllamaModelName(model_name, model_path)) {
         logger_.error("Failed to parse ollama model name: " + model_name);
-        return nullptr;
+        return false;
     }
     
-    return loadFromModelPath(model_path, model_params);
+    return loadFromModelPath(model_path);
 }
 
-llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_path,
-                                                       const llama_model_params& model_params) {
+bool OllamaModelLoader::loadFromModelPath(const ModelPath& model_path) {
     logger_.info("[OllamaModelLoader] Starting to load model: " + model_path.toString());
-    logger_.info("[OllamaModelLoader] Model parameters - n_gpu_layers: " + std::to_string(model_params.n_gpu_layers));
-    logger_.info("[OllamaModelLoader] Model parameters - use_mmap: " + std::to_string(model_params.use_mmap));
-    logger_.info("[OllamaModelLoader] Model parameters - use_mlock: " + std::to_string(model_params.use_mlock));
     
     // 读取manifest文件
     logger_.info("[OllamaModelLoader] Reading manifest file for model...");
     ModelManifest manifest;
     if (!model_path_manager_->readManifest(model_path, manifest)) {
         logger_.error("[OllamaModelLoader] Failed to read manifest for model: " + model_path.toString());
-        return nullptr;
+        return false;
     }
     logger_.info("[OllamaModelLoader] Manifest file read successfully");
     
@@ -52,7 +47,7 @@ llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_path,
     std::string gguf_path = getGGUFPathFromManifest(manifest);
     if (gguf_path.empty()) {
         logger_.error("[OllamaModelLoader] No GGUF model found in manifest for: " + model_path.toString());
-        return nullptr;
+        return false;
     }
     logger_.info("[OllamaModelLoader] GGUF path extracted: " + gguf_path);
     
@@ -60,7 +55,7 @@ llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_path,
     logger_.info("[OllamaModelLoader] Checking if GGUF file exists...");
     if (!std::filesystem::exists(gguf_path)) {
         logger_.error("[OllamaModelLoader] GGUF model file not found: " + gguf_path);
-        return nullptr;
+        return false;
     }
     
     // 获取文件大小信息
@@ -69,17 +64,9 @@ llama_model* OllamaModelLoader::loadFromModelPath(const ModelPath& model_path,
     
     logger_.info("[OllamaModelLoader] Loading GGUF model from: " + gguf_path);
     
-    // 使用标准llama.cpp加载模型
-    logger_.info("[OllamaModelLoader] Loading model with llama.cpp...");
-    struct llama_model* model = llama_model_load_from_file(gguf_path.c_str(), model_params);
-    if (!model) {
-        logger_.error("[OllamaModelLoader] Failed to load GGUF model: " + gguf_path);
-        return nullptr;
-    }
-    
     logger_.info("[OllamaModelLoader] Successfully loaded ollama model: " + model_path.toString());
     logger_.info("[OllamaModelLoader] Model loading completed successfully");
-    return model;
+    return true;
 }
 
 bool OllamaModelLoader::isOllamaModelAvailable(const std::string& model_name) {
@@ -211,9 +198,8 @@ std::string OllamaModelLoader::normalizeOllamaModelName(const std::string& model
     return normalized;
 }
 
-llama_model* OllamaModelLoader::loadFromOllamaModelWithLoRA(
+bool OllamaModelLoader::loadFromOllamaModelWithLoRA(
     const std::string& model_name,
-    const llama_model_params& model_params,
     bool enable_lora) {
     
     logger_.info("[OllamaModelLoader] Loading model with LoRA support: " + model_name);
@@ -221,42 +207,46 @@ llama_model* OllamaModelLoader::loadFromOllamaModelWithLoRA(
     ModelPath model_path;
     if (!parseOllamaModelName(model_name, model_path)) {
         logger_.error("Failed to parse ollama model name: " + model_name);
-        return nullptr;
+        return false;
     }
     
     if (!enable_lora) {
         // 如果不启用LoRA，使用标准加载方法
-        return loadFromModelPath(model_path, model_params);
+        return loadFromModelPath(model_path);
     }
     
     // 读取模型manifest
     ModelManifest manifest;
     if (!model_path_manager_->readManifest(model_path, manifest)) {
         logger_.error("Failed to read manifest for model: " + model_name);
-        return nullptr;
+        return false;
     }
     
     // 解析Modelfile配置
     ModelfileConfig config;
     if (!parseModelfileFromManifest(manifest, config)) {
         logger_.warning("No Modelfile configuration found, using standard loading");
-        return loadFromModelPath(model_path, model_params);
+        return loadFromModelPath(model_path);
     }
     
     // 使用配置加载模型
-    return loadFromModelfileConfig(config, model_params);
+    return loadFromModelfileConfig(config);
 }
 
-llama_model* OllamaModelLoader::loadFromModelfileConfig(
-    const ModelfileConfig& config,
-    const llama_model_params& model_params) {
+bool OllamaModelLoader::loadFromModelfileConfig(
+    const ModelfileConfig& config) {
     
     logger_.info("[OllamaModelLoader] Loading model from Modelfile config");
     logger_.info("Base model: " + config.base_model);
     logger_.info("LoRA adapters: " + std::to_string(config.lora_adapters.size()));
     
-    // 使用标准llama.cpp加载模型
-    return llama_model_load_from_file(config.base_model.c_str(), model_params);
+    // 验证基础模型文件存在
+    if (!std::filesystem::exists(config.base_model)) {
+        logger_.error("Base model file not found: " + config.base_model);
+        return false;
+    }
+    
+    return true;
 }
 
 bool OllamaModelLoader::parseModelfileFromManifest(

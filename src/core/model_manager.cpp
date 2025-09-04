@@ -21,6 +21,8 @@
 #include "stable-diffusion.h"
 #include "text_generator.h"
 
+// OllamaTextGenerator adapter class removed - now using integrated TextGenerator with Ollama support
+
 // Simple Ollama model implementation using extensions
 class OllamaModelImpl : public duorou::core::BaseModel {
 public:
@@ -70,6 +72,11 @@ public:
     model_info_.status = duorou::core::ModelStatus::LOADED;
     model_info_.memory_usage = memory_usage_;
     
+    // Create text generator using shared_ptr to model_manager
+    auto shared_manager = std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>(model_manager_.get(), [](duorou::extensions::ollama::OllamaModelManager*){});
+    text_generator_ = std::make_unique<duorou::core::TextGenerator>(shared_manager, model_id_);
+    std::cout << "[DEBUG] OllamaModelImpl: Created TextGenerator with Ollama backend" << std::endl;
+    
     std::cout << "[DEBUG] OllamaModelImpl::load completed successfully" << std::endl;
     return true;
   }
@@ -78,6 +85,7 @@ public:
     if (model_manager_ && !model_id_.empty()) {
       model_manager_->unloadModel(model_id_);
     }
+    text_generator_.reset();
     loaded_ = false;
     memory_usage_ = 0;
     model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
@@ -93,11 +101,20 @@ public:
     return model_manager_.get();
   }
 
+  // Get text generator for this model
+  duorou::core::TextGenerator* getTextGenerator() const {
+    if (!loaded_ || !text_generator_) {
+      return nullptr;
+    }
+    return text_generator_.get();
+  }
+
 private:
   std::string model_path_;
   std::string model_id_;
   bool loaded_;
   size_t memory_usage_;
+  mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
   duorou::core::ModelInfo model_info_;
   std::unique_ptr<duorou::extensions::ollama::OllamaModelManager> model_manager_;
 };
@@ -710,12 +727,11 @@ ModelManager::getTextGenerator(const std::string &model_id) const {
   // Try to cast to OllamaModelImpl first
   auto ollama_model = std::dynamic_pointer_cast<OllamaModelImpl>(it->second);
   if (ollama_model) {
-    std::cout << "[DEBUG] Successfully cast to OllamaModelImpl, calling getModelManager()" << std::endl;
-    auto model_manager = ollama_model->getModelManager();
-    std::cout << "[DEBUG] OllamaModelImpl::getModelManager returned: " 
-              << (model_manager ? "valid pointer" : "nullptr") << std::endl;
-    // Note: Returning nullptr as the new architecture doesn't use TextGenerator interface
-    return nullptr;
+    std::cout << "[DEBUG] Successfully cast to OllamaModelImpl, calling getTextGenerator()" << std::endl;
+    auto text_generator = ollama_model->getTextGenerator();
+    std::cout << "[DEBUG] OllamaModelImpl::getTextGenerator returned: " 
+              << (text_generator ? "valid pointer" : "nullptr") << std::endl;
+    return text_generator;
   }
 
   std::cout << "[DEBUG] Failed to cast to OllamaModelImpl" << std::endl;

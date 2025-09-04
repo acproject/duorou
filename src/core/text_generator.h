@@ -8,6 +8,7 @@
 #include <vector>
 // #include "../../third_party/llama.cpp/include/llama.h"  //
 // 注释：暂时禁用llama相关功能
+#include "../extensions/ollama/ollama_model_manager.h"
 
 namespace duorou {
 namespace core {
@@ -76,6 +77,13 @@ public:
    * @param model_path 模型路径
    */
   TextGenerator(const std::string &model_path = "");
+
+  /**
+   * @brief 构造函数（使用OllamaModelManager）
+   * @param model_manager Ollama模型管理器指针
+   * @param model_id 模型ID
+   */
+  TextGenerator(std::shared_ptr<duorou::extensions::ollama::OllamaModelManager> model_manager, const std::string &model_id);
 
   /**
    * @brief 析构函数
@@ -195,6 +203,11 @@ private:
   // 模型信息
   int context_size_; ///< 上下文大小
   int vocab_size_;   ///< 词汇表大小
+  
+  // Ollama模型管理器
+  std::shared_ptr<duorou::extensions::ollama::OllamaModelManager> model_manager_;
+  std::string model_id_; ///< 当前使用的模型ID
+  bool use_ollama_; ///< 是否使用Ollama模型
 };
 
 /**

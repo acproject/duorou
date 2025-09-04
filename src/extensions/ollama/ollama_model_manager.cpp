@@ -184,34 +184,45 @@ ModelLoadState OllamaModelManager::getModelLoadState(const std::string& model_id
 }
 
 InferenceResponse OllamaModelManager::generateText(const InferenceRequest& request) {
+    std::cout << "[DEBUG] OllamaModelManager::generateText called with model: " << request.model_id << std::endl;
     InferenceResponse response;
     
     // 检查模型是否加载
+    std::cout << "[DEBUG] Checking if model is loaded: " << request.model_id << std::endl;
     if (!isModelLoaded(request.model_id)) {
+        std::cout << "[DEBUG] Model not loaded: " << request.model_id << std::endl;
         response.error_message = "Model not loaded: " + request.model_id;
         return response;
     }
+    std::cout << "[DEBUG] Model is loaded, getting inference engine" << std::endl;
     
     // 获取推理引擎
     Qwen25VLInferenceEngine* engine = getInferenceEngine(request.model_id);
     if (!engine) {
+        std::cout << "[DEBUG] Failed to get inference engine for: " << request.model_id << std::endl;
         response.error_message = "Failed to get inference engine for: " + request.model_id;
         return response;
     }
+    std::cout << "[DEBUG] Got inference engine, starting text generation" << std::endl;
     
     // 记录开始时间
     auto start_time = std::chrono::high_resolution_clock::now();
     
     try {
         // 执行推理
+        std::cout << "[DEBUG] Calling engine->generateText with prompt: " << request.prompt.substr(0, 20) << "..." << std::endl;
         response.generated_text = engine->generateText(request.prompt, request.max_tokens);
+        std::cout << "[DEBUG] engine->generateText completed successfully" << std::endl;
         response.success = true;
         
         // 计算生成的token数量（简化实现）
+        std::cout << "[DEBUG] Tokenizing generated text for token count" << std::endl;
         auto tokens = engine->tokenize(response.generated_text);
         response.tokens_generated = static_cast<uint32_t>(tokens.size());
+        std::cout << "[DEBUG] Generated " << response.tokens_generated << " tokens" << std::endl;
         
     } catch (const std::exception& e) {
+        std::cout << "[DEBUG] Exception during inference: " << e.what() << std::endl;
         response.error_message = "Inference error: " + std::string(e.what());
         response.success = false;
     }
@@ -221,6 +232,7 @@ InferenceResponse OllamaModelManager::generateText(const InferenceRequest& reque
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     response.inference_time_ms = static_cast<float>(duration.count());
     
+    std::cout << "[DEBUG] OllamaModelManager::generateText completed in " << response.inference_time_ms << "ms" << std::endl;
     return response;
 }
 

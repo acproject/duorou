@@ -1,6 +1,7 @@
 #include "chat_view.h"
 #include "../core/logger.h"
 #include "../core/model_manager.h"
+#include "../core/text_generator.h"
 #include "../extensions/ollama/ollama_model_manager.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
@@ -1956,13 +1957,39 @@ std::string ChatView::generate_ai_response(const std::string &message) {
     }
     std::cout << "[DEBUG] ChatView: Model loaded successfully: " << model_id << std::endl;
     
-    // 临时解决方案：由于架构重构，暂时返回一个提示信息
-     std::cout << "[DEBUG] ChatView: Model loaded successfully, but text generation interface is being updated" << std::endl;
+    // 获取文本生成器
+     std::cout << "[DEBUG] ChatView: Getting text generator for model: " << model_id << std::endl;
+     core::TextGenerator* text_generator = model_manager_->getTextGenerator(model_id);
+     if (!text_generator) {
+       std::cout << "[DEBUG] ChatView: Failed to get text generator for model: " << model_id << std::endl;
+       return "Error: Failed to get text generator for model: " + model_id;
+     }
      
-     // TODO: 实现新的Ollama架构文本生成接口
-     // 当前的TextGenerator接口已被弃用，需要使用新的OllamaModelManager接口
+     // 检查文本生成器是否可用
+     if (!text_generator->canGenerate()) {
+       std::cout << "[DEBUG] ChatView: Text generator is not ready for generation" << std::endl;
+       return "Error: Text generator is not ready for generation";
+     }
      
-     return "模型已成功加载！新的文本生成功能正在开发中，请稍后再试。\n\n当前加载的模型: " + model_id + "\n输入的消息: " + message;
+     // 设置生成参数
+     core::GenerationParams params;
+     params.max_tokens = 512;  // 最大生成512个token
+     params.temperature = 0.7f;  // 适中的随机性
+     params.top_p = 0.9f;
+     params.top_k = 40;
+     params.repeat_penalty = 1.1f;
+     
+     // 生成回复
+     std::cout << "[DEBUG] ChatView: Starting text generation..." << std::endl;
+     core::GenerationResult result = text_generator->generate(message, params);
+     
+     if (result.finished && !result.text.empty()) {
+       std::cout << "[DEBUG] ChatView: Text generation completed successfully" << std::endl;
+       return result.text;
+     } else {
+       std::cout << "[DEBUG] ChatView: Text generation failed or returned empty result" << std::endl;
+       return "Error: Text generation failed or returned empty result. Stop reason: " + result.stop_reason;
+     }
   } catch (const std::exception &e) {
     std::cout << "[DEBUG] ChatView: Exception caught: " << e.what() << std::endl;
     return "Error generating response: " + std::string(e.what());

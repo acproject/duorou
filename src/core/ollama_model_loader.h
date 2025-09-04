@@ -2,14 +2,21 @@
 
 #include <string>
 #include <memory>
+#include <cstdint>
+#include <iostream>
+#include <vector>
+#include <map>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include "model_path_manager.h"
 #include "modelfile_parser.h"
 #include "logger.h"
-#include "llama.h"
+// #include "llama.h"  // 注释：暂时禁用llama相关功能
 
 // Forward declarations
-struct llama_model;
-struct llama_model_params;
+// struct llama_model;  // 注释：暂时禁用llama相关功能
+// struct llama_model_params;  // 注释：暂时禁用llama相关功能
 
 namespace duorou {
 namespace core {
@@ -32,42 +39,43 @@ public:
     ~OllamaModelLoader() = default;
     
     /**
-     * @brief 从ollama模型名称加载llama模型
+     * @brief 从ollama模型名称加载llama模型 (暂时禁用)
      * @param model_name ollama模型名称 (例如: "llama3.2", "qwen2.5:7b")
-     * @param model_params llama模型参数
-     * @return 加载成功返回llama_model指针，失败返回nullptr
+     * @return 加载成功返回true，失败返回false
      */
-    llama_model* loadFromOllamaModel(const std::string& model_name, 
-                                    const llama_model_params& model_params);
+    // llama_model* loadFromOllamaModel(const std::string& model_name, 
+    //                                 const llama_model_params& model_params);
+    bool loadFromOllamaModel(const std::string& model_name);
     
     /**
-     * @brief 从ollama模型路径加载llama模型
+     * @brief 从ollama模型路径加载llama模型 (暂时禁用)
      * @param model_path 解析后的模型路径
-     * @param model_params llama模型参数
-     * @return 加载成功返回llama_model指针，失败返回nullptr
+     * @return 加载成功返回true，失败返回false
      */
-    llama_model* loadFromModelPath(const ModelPath& model_path,
-                                  const llama_model_params& model_params);
+    // llama_model* loadFromModelPath(const ModelPath& model_path,
+    //                               const llama_model_params& model_params);
+    bool loadFromModelPath(const ModelPath& model_path);
     
     /**
-     * @brief 从ollama模型加载llama模型，支持LoRA适配器
+     * @brief 从ollama模型加载llama模型，支持LoRA适配器 (暂时禁用)
      * @param model_name ollama模型名称
-     * @param model_params llama模型参数
      * @param enable_lora 是否启用LoRA解析
-     * @return 加载成功返回llama_model指针，失败返回nullptr
+     * @return 加载成功返回true，失败返回false
      */
-    llama_model* loadFromOllamaModelWithLoRA(const std::string& model_name,
-                                            const llama_model_params& model_params,
-                                            bool enable_lora = false);
+    // llama_model* loadFromOllamaModelWithLoRA(const std::string& model_name,
+    //                                         const llama_model_params& model_params,
+    //                                         bool enable_lora = false);
+    bool loadFromOllamaModelWithLoRA(const std::string& model_name,
+                                    bool enable_lora = false);
     
     /**
-     * @brief 从Modelfile配置加载模型
+     * @brief 从Modelfile配置加载模型 (暂时禁用)
      * @param config Modelfile配置
-     * @param model_params llama模型参数
-     * @return 加载成功返回llama_model指针，失败返回nullptr
+     * @return 加载成功返回true，失败返回false
      */
-    llama_model* loadFromModelfileConfig(const ModelfileConfig& config,
-                                        const llama_model_params& model_params);
+    // llama_model* loadFromModelfileConfig(const ModelfileConfig& config,
+    //                                     const llama_model_params& model_params);
+    bool loadFromModelfileConfig(const ModelfileConfig& config);
     
     /**
      * @brief 检查ollama模型是否存在
