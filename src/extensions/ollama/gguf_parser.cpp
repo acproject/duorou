@@ -208,9 +208,10 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
   std::memcpy(&array_length, data.data() + 4, 8);
 
   // 添加安全检查：限制最大数组长度以防止内存耗尽
-  const uint64_t MAX_ARRAY_LENGTH = 100000;  // 字符串数组限制更严格
+  const uint64_t MAX_ARRAY_LENGTH = 200000;  // 增加限制以支持大词汇表
   if (array_length > MAX_ARRAY_LENGTH) {
     // 记录错误但不抛出异常，返回空数组
+    std::cout << "[DEBUG] Array length " << array_length << " exceeds maximum " << MAX_ARRAY_LENGTH << std::endl;
     return result;
   }
 

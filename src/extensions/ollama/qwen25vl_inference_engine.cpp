@@ -544,21 +544,56 @@ bool Qwen25VLInferenceEngine::loadWeights(const std::string& model_path) {
 bool Qwen25VLInferenceEngine::loadVocabulary() {
     log("INFO", "Loading vocabulary");
     
-    // 尝试从GGUF元数据中加载词汇表
+    // 尝试从GGUF文件加载词汇表
     if (gguf_parser_) {
-        // 尝试获取tokenizer tokens
         const auto* tokens_kv = gguf_parser_->getMetadata("tokenizer.ggml.tokens");
-        if (tokens_kv) {
-            std::cout << "[DEBUG] Found tokenizer.ggml.tokens metadata" << std::endl;
-            // TODO: 解析tokens数组
+        if (tokens_kv && tokens_kv->type == GGUFType::ARRAY) {
+            std::cout << "[DEBUG] Found tokenizer.ggml.tokens metadata (array type)" << std::endl;
+            std::cout << "[DEBUG] Array data size: " << tokens_kv->data.size() << " bytes" << std::endl;
+            
+            // 检查数组的详细信息
+            if (tokens_kv->data.size() >= 12) {
+                uint32_t array_type;
+                uint64_t array_length;
+                std::memcpy(&array_type, tokens_kv->data.data(), 4);
+                std::memcpy(&array_length, tokens_kv->data.data() + 4, 8);
+                std::cout << "[DEBUG] Array type: " << array_type << " (STRING=" << static_cast<uint32_t>(GGUFType::STRING) << ")" << std::endl;
+                std::cout << "[DEBUG] Array length: " << array_length << std::endl;
+            }
+            
+            // 清空现有词汇表
+            vocab_.clear();
+            reverse_vocab_.clear();
+            
+            try {
+                // 尝试解析为字符串数组
+                auto token_strings = tokens_kv->asStringArray();
+                std::cout << "[DEBUG] Successfully parsed " << token_strings.size() << " tokens from GGUF" << std::endl;
+                
+                // 构建词汇表映射
+                for (size_t i = 0; i < token_strings.size(); ++i) {
+                    const std::string& token = token_strings[i];
+                    vocab_[token] = static_cast<int>(i);
+                    reverse_vocab_[static_cast<int>(i)] = token;
+                }
+                
+                // 验证一些关键token
+                if (reverse_vocab_.find(151935) != reverse_vocab_.end()) {
+                    std::cout << "[DEBUG] Token 151935: " << reverse_vocab_[151935] << std::endl;
+                }
+                if (reverse_vocab_.find(125544) != reverse_vocab_.end()) {
+                    std::cout << "[DEBUG] Token 125544: " << reverse_vocab_[125544] << std::endl;
+                }
+                if (reverse_vocab_.find(44821) != reverse_vocab_.end()) {
+                    std::cout << "[DEBUG] Token 44821: " << reverse_vocab_[44821] << std::endl;
+                }
+                
+                return true;
+            } catch (const std::exception& e) {
+                std::cout << "[DEBUG] Failed to parse tokens array: " << e.what() << std::endl;
+            }
         } else {
-            std::cout << "[DEBUG] No tokenizer.ggml.tokens found" << std::endl;
-        }
-        
-        // 尝试其他可能的tokenizer键
-        const auto* vocab_kv = gguf_parser_->getMetadata("tokenizer.vocab");
-        if (vocab_kv) {
-            std::cout << "[DEBUG] Found tokenizer.vocab metadata" << std::endl;
+            std::cout << "[DEBUG] No valid tokenizer.ggml.tokens found" << std::endl;
         }
     }
     
