@@ -624,3 +624,5 @@ message(STATUS "  OpenCL Support: ${DUOROU_ENABLE_OPENCL}")
 
 message(STATUS "  Build Examples: ${DUOROU_BUILD_EXAMPLES}")
 message(STATUS "")
+
+# Test programs removed as requested

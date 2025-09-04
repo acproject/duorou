@@ -13,10 +13,8 @@
 #include <vector>
 
 // Include necessary headers for model loading
-#include "../extensions/ollama/model_path_manager.h"
-#include "../extensions/ollama/ollama_model_loader.h"
-#include "../extensions/ollama/ollama_text_generator.h"
-#include "../../third_party/llama.cpp/include/llama.h"
+#include "../extensions/ollama/ollama_model_manager.h"
+// Removed llama.h dependency - using new ollama extension architecture
 #include "image_generator.h"
 #include "model_downloader.h"
 #include "model_path_manager.h"
@@ -27,12 +25,15 @@
 class OllamaModelImpl : public duorou::core::BaseModel {
 public:
   explicit OllamaModelImpl(const std::string &model_path)
-      : model_path_(model_path), loaded_(false), memory_usage_(0), llama_model_(nullptr) {
+      : model_path_(model_path), loaded_(false), memory_usage_(0) {
     model_info_.name = model_path;
     model_info_.type = duorou::core::ModelType::LANGUAGE_MODEL;
     model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
     model_info_.memory_usage = 0;
     model_info_.path = model_path;
+    
+    // Initialize the new ollama model manager
+    model_manager_ = std::make_unique<duorou::extensions::ollama::OllamaModelManager>();
   }
 
   bool load(const std::string &model_path) override {
@@ -40,23 +41,26 @@ public:
     duorou::core::Logger logger;
     logger.info("[OLLAMA] Loading model: " + model_path);
     
-    // 使用OllamaModelLoader加载ollama模型
-     auto path_manager = std::make_shared<duorou::extensions::ollama::ModelPathManager>();
-     duorou::extensions::ollama::OllamaModelLoader loader(path_manager);
-     void* model_ptr = loader.loadFromModelPath(model_path, nullptr);
-     
-     if (!model_ptr) {
-       std::cerr << "[ERROR] Failed to load Ollama model from: " << model_path << std::endl;
-       return false;
-     }
-     
-     llama_model_ = static_cast<llama_model*>(model_ptr);
+    // Use new ollama extension architecture
+    // First register the model by name (supports Ollama model names), then load it
+    // Generate the same model_id that registerModelByName will use
+    model_id_ = model_path;
+    for (char& c : model_id_) {
+        if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+            c = '_';
+        }
+    }
+    std::cout << "[DEBUG] OllamaModelImpl: Generated model_id: " << model_id_ << " from path: " << model_path << std::endl;
     
-    // 创建OllamaTextGenerator实例
-    text_generator_ = std::make_unique<duorou::extensions::ollama::OllamaTextGenerator>(llama_model_);
+    bool registered = model_manager_->registerModelByName(model_path);
+    if (!registered) {
+      std::cerr << "[ERROR] Failed to register Ollama model: " << model_path << std::endl;
+      return false;
+    }
     
-    if (!text_generator_) {
-      std::cerr << "[ERROR] Failed to create OllamaTextGenerator" << std::endl;
+    bool success = model_manager_->loadModel(model_id_);
+    if (!success) {
+      std::cerr << "[ERROR] Failed to load Ollama model: " << model_id_ << std::endl;
       return false;
     }
     
@@ -66,18 +70,13 @@ public:
     model_info_.status = duorou::core::ModelStatus::LOADED;
     model_info_.memory_usage = memory_usage_;
     
-    std::cout << "[DEBUG] OllamaModelImpl: text_generator_ is " 
-              << (text_generator_ ? "initialized" : "nullptr") << std::endl;
-    
     std::cout << "[DEBUG] OllamaModelImpl::load completed successfully" << std::endl;
     return true;
   }
 
   void unload() override {
-    text_generator_.reset();
-    if (llama_model_) {
-      llama_model_free(llama_model_);
-      llama_model_ = nullptr;
+    if (model_manager_ && !model_id_.empty()) {
+      model_manager_->unloadModel(model_id_);
     }
     loaded_ = false;
     memory_usage_ = 0;
@@ -89,18 +88,18 @@ public:
   duorou::core::ModelInfo getInfo() const override { return model_info_; }
   size_t getMemoryUsage() const override { return memory_usage_; }
 
-  // 添加getTextGenerator方法
-  duorou::core::TextGenerator *getTextGenerator() const {
-    return text_generator_.get();
+  // Get the model manager for text generation
+  duorou::extensions::ollama::OllamaModelManager* getModelManager() const {
+    return model_manager_.get();
   }
 
 private:
   std::string model_path_;
+  std::string model_id_;
   bool loaded_;
   size_t memory_usage_;
   duorou::core::ModelInfo model_info_;
-  llama_model* llama_model_;
-  std::unique_ptr<duorou::extensions::ollama::OllamaTextGenerator> text_generator_;
+  std::unique_ptr<duorou::extensions::ollama::OllamaModelManager> model_manager_;
 };
 
 namespace duorou {
@@ -711,11 +710,12 @@ ModelManager::getTextGenerator(const std::string &model_id) const {
   // Try to cast to OllamaModelImpl first
   auto ollama_model = std::dynamic_pointer_cast<OllamaModelImpl>(it->second);
   if (ollama_model) {
-    std::cout << "[DEBUG] Successfully cast to OllamaModelImpl, calling getTextGenerator()" << std::endl;
-    auto text_gen = ollama_model->getTextGenerator();
-    std::cout << "[DEBUG] OllamaModelImpl::getTextGenerator returned: " 
-              << (text_gen ? "valid pointer" : "nullptr") << std::endl;
-    return text_gen;
+    std::cout << "[DEBUG] Successfully cast to OllamaModelImpl, calling getModelManager()" << std::endl;
+    auto model_manager = ollama_model->getModelManager();
+    std::cout << "[DEBUG] OllamaModelImpl::getModelManager returned: " 
+              << (model_manager ? "valid pointer" : "nullptr") << std::endl;
+    // Note: Returning nullptr as the new architecture doesn't use TextGenerator interface
+    return nullptr;
   }
 
   std::cout << "[DEBUG] Failed to cast to OllamaModelImpl" << std::endl;

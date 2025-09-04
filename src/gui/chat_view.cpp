@@ -1,6 +1,7 @@
 #include "chat_view.h"
 #include "../core/logger.h"
 #include "../core/model_manager.h"
+#include "../extensions/ollama/ollama_model_manager.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
 #include "chat_session_manager.h"
@@ -1955,28 +1956,13 @@ std::string ChatView::generate_ai_response(const std::string &message) {
     }
     std::cout << "[DEBUG] ChatView: Model loaded successfully: " << model_id << std::endl;
     
-    // 获取文本生成器
-    std::cout << "[DEBUG] ChatView: Getting text generator for model: " << model_id << std::endl;
-    auto text_generator = model_manager_->getTextGenerator(model_id);
-    if (!text_generator) {
-      std::cout << "[DEBUG] ChatView: Failed to get text generator for model: " << model_id << std::endl;
-      return "Error: Failed to get text generator for model: " + model_id;
-    }
-    std::cout << "[DEBUG] ChatView: Text generator obtained successfully" << std::endl;
-
-    // 生成回复
-    std::cout << "[DEBUG] ChatView: Calling text_generator->generate()" << std::endl;
-    auto generation_result = text_generator->generate(message);
-    std::cout << "[DEBUG] ChatView: Generation completed. Result text: " << generation_result.text.substr(0, 50) << "..." << std::endl;
-    std::cout << "[DEBUG] ChatView: Generation finished: " << (generation_result.finished ? "true" : "false") << ", stop_reason: " << generation_result.stop_reason << std::endl;
-              
-    if (!generation_result.finished || generation_result.text.empty()) {
-      std::cout << "[DEBUG] ChatView: Generation failed or empty result" << std::endl;
-      return "Error: Failed to generate response. Reason: " + generation_result.stop_reason;
-    }
-
-    std::cout << "[DEBUG] ChatView: Returning successful generation result" << std::endl;
-    return generation_result.text;
+    // 临时解决方案：由于架构重构，暂时返回一个提示信息
+     std::cout << "[DEBUG] ChatView: Model loaded successfully, but text generation interface is being updated" << std::endl;
+     
+     // TODO: 实现新的Ollama架构文本生成接口
+     // 当前的TextGenerator接口已被弃用，需要使用新的OllamaModelManager接口
+     
+     return "模型已成功加载！新的文本生成功能正在开发中，请稍后再试。\n\n当前加载的模型: " + model_id + "\n输入的消息: " + message;
   } catch (const std::exception &e) {
     std::cout << "[DEBUG] ChatView: Exception caught: " << e.what() << std::endl;
     return "Error generating response: " + std::string(e.what());

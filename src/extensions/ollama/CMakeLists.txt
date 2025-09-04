@@ -5,24 +5,18 @@ set(OLLAMA_EXTENSION_NAME "duorou_ollama_extension")
 
 # 收集源文件
 set(OLLAMA_EXTENSION_SOURCES
-    ollama_model_loader.cpp
-    ollama_text_generator.cpp
-    model_path_manager.cpp
-    modelfile_parser.cpp
-    compatibility_checker.cpp
-    gguf_modifier.cpp
-    config_manager.cpp
+    gguf_parser.cpp
+    qwen25vl_inference_engine.cpp
+    ollama_model_manager.cpp
+    ollama_path_resolver.cpp
 )
 
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
-    ollama_model_loader.h
-    ollama_text_generator.h
-    model_path_manager.h
-    modelfile_parser.h
-    compatibility_checker.h
-    gguf_modifier.h
-    config_manager.h
+    gguf_parser.h
+    qwen25vl_inference_engine.h
+    ollama_model_manager.h
+    ollama_path_resolver.h
 )
 
 # 创建静态库
@@ -38,21 +32,7 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
-# 创建测试程序
-add_executable(test_ollama test_ollama.cpp)
-target_link_libraries(test_ollama 
-    ${OLLAMA_EXTENSION_NAME}
-    llama
-    ggml
-    ggml-cpu
-    ggml-blas
-    ggml-metal
-    ggml-base
-)
-set_target_properties(test_ollama PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-)
+# 测试程序已移除
 
 # 包含目录
 target_include_directories(${OLLAMA_EXTENSION_NAME}
@@ -60,13 +40,6 @@ target_include_directories(${OLLAMA_EXTENSION_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
-        ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include
-)
-
-# 链接依赖
-target_link_libraries(${OLLAMA_EXTENSION_NAME}
-    PRIVATE
-        llama
 )
 
 # 编译定义
