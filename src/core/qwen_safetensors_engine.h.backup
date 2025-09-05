@@ -1,0 +1,158 @@
+#pragma once
+
+#include "safetensors_parser.h"
+#include "hf_tokenizer.h"
+#include <string>
+#include <vector>
+#include <memory>
+#include <unordered_map>
+
+namespace duorou {
+
+// Qwen model configuration
+struct QwenConfig {
+    size_t vocab_size = 151936;
+    size_t hidden_size = 3584;
+    size_t intermediate_size = 18944;
+    size_t num_hidden_layers = 28;
+    size_t num_attention_heads = 28;
+    size_t num_key_value_heads = 4;
+    size_t max_position_embeddings = 32768;
+    float rms_norm_eps = 1e-6;
+    float rope_theta = 1000000.0;
+    size_t rope_scaling = 1;
+};
+
+// Attention weights for a single layer
+struct AttentionWeights {
+    std::vector<float> q_proj_weight;
+    std::vector<float> q_proj_bias;
+    std::vector<float> k_proj_weight;
+    std::vector<float> k_proj_bias;
+    std::vector<float> v_proj_weight;
+    std::vector<float> v_proj_bias;
+    std::vector<float> o_proj_weight;
+};
+
+// MLP weights for a single layer
+struct MLPWeights {
+    std::vector<float> gate_proj_weight;
+    std::vector<float> up_proj_weight;
+    std::vector<float> down_proj_weight;
+};
+
+// Transformer layer weights
+struct TransformerLayerWeights {
+    AttentionWeights attention;
+    MLPWeights mlp;
+    std::vector<float> input_layernorm_weight;
+    std::vector<float> post_attention_layernorm_weight;
+};
+
+// Complete model weights
+struct QwenModelWeights {
+    std::vector<float> embed_tokens_weight;
+    std::vector<TransformerLayerWeights> layers;
+    std::vector<float> norm_weight;
+    std::vector<float> lm_head_weight;
+};
+
+// KV cache for attention
+struct KVCache {
+    std::vector<std::vector<float>> k_cache;  // [layer][seq_len * head_dim]
+    std::vector<std::vector<float>> v_cache;  // [layer][seq_len * head_dim]
+    size_t current_length = 0;
+};
+
+// Qwen SafeTensors inference engine
+class QwenSafeTensorsEngine {
+public:
+    QwenSafeTensorsEngine();
+    ~QwenSafeTensorsEngine();
+    
+    // Load model from directory
+    bool loadModel(const std::string& model_dir);
+    
+    // Generate text
+    std::string generateText(const std::string& prompt, 
+                           size_t max_tokens = 100,
+                           float temperature = 0.7,
+                           float top_p = 0.9);
+    
+    // Encode text to tokens
+    std::vector<int32_t> encode(const std::string& text);
+    
+    // Decode tokens to text
+    std::string decode(const std::vector<int32_t>& tokens);
+    
+    // Check if model is loaded
+    bool isLoaded() const { return model_loaded_; }
+    
+    // Get model configuration
+    const QwenConfig& getConfig() const { return config_; }
+    
+private:
+    QwenConfig config_;
+    QwenModelWeights weights_;
+    std::unique_ptr<SafeTensorsModelLoader> model_loader_;
+    std::unique_ptr<HFTokenizer> tokenizer_;
+    KVCache kv_cache_;
+    bool model_loaded_;
+    
+    // Load model weights from SafeTensors
+    bool loadWeights();
+    
+    // Load single layer weights
+    bool loadLayerWeights(size_t layer_idx, TransformerLayerWeights& layer_weights);
+    
+    // Forward pass
+    std::vector<float> forward(const std::vector<int32_t>& input_ids);
+    
+    // Embedding layer
+    std::vector<float> embedding(const std::vector<int32_t>& input_ids);
+    
+    // Transformer layer forward
+    std::vector<float> transformerLayer(const std::vector<float>& hidden_states,
+                                       const TransformerLayerWeights& layer_weights,
+                                       size_t layer_idx);
+    
+    // Multi-head attention
+    std::vector<float> multiHeadAttention(const std::vector<float>& hidden_states,
+                                         const AttentionWeights& attn_weights,
+                                         size_t layer_idx);
+    
+    // MLP forward
+    std::vector<float> mlpForward(const std::vector<float>& hidden_states,
+                                 const MLPWeights& mlp_weights);
+    
+    // RMS normalization
+    std::vector<float> rmsNorm(const std::vector<float>& input,
+                              const std::vector<float>& weight);
+    
+    // RoPE (Rotary Position Embedding)
+    void applyRoPE(std::vector<float>& q, std::vector<float>& k, size_t seq_len);
+    
+    // Softmax
+    std::vector<float> softmax(const std::vector<float>& logits);
+    
+    // Sample token from logits
+    int32_t sampleToken(const std::vector<float>& logits, 
+                       float temperature, float top_p);
+    
+    // Matrix multiplication
+    std::vector<float> matmul(const std::vector<float>& a, 
+                             const std::vector<float>& b,
+                             size_t m, size_t n, size_t k);
+    
+    // Add vectors
+    std::vector<float> addVectors(const std::vector<float>& a, 
+                                 const std::vector<float>& b);
+    
+    // SiLU activation
+    std::vector<float> silu(const std::vector<float>& input);
+    
+    // Filter vision tokens from logits
+    void filterVisionTokens(std::vector<float>& logits);
+};
+
+} // namespace duorou

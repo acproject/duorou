@@ -361,6 +361,9 @@ set(DUOROU_SOURCES_LIST
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
+    src/core/safetensors_parser.cpp
+    src/core/hf_tokenizer.cpp
+    src/core/qwen_safetensors_engine.cpp
 
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
@@ -399,6 +402,9 @@ set(DUOROU_HEADERS_LIST
     src/core/resource_manager.h
     src/core/workflow_engine.h
     src/core/model_switch_task.h
+    src/core/safetensors_parser.h
+    src/core/hf_tokenizer.h
+    src/core/qwen_safetensors_engine.h
     src/gui/main_window.h
     src/gui/chat_view.h
     src/gui/image_view.h

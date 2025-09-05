@@ -9,6 +9,9 @@ set(OLLAMA_EXTENSION_SOURCES
     qwen25vl_inference_engine.cpp
     ollama_model_manager.cpp
     ollama_path_resolver.cpp
+    text_processor.cpp
+    sentencepiece_processor.cpp
+    bpe_processor.cpp
 )
 
 # 收集头文件
@@ -17,6 +20,9 @@ set(OLLAMA_EXTENSION_HEADERS
     qwen25vl_inference_engine.h
     ollama_model_manager.h
     ollama_path_resolver.h
+    text_processor.h
+    sentencepiece_processor.h
+    bpe_processor.h
 )
 
 # 创建静态库

@@ -1,0 +1,516 @@
+#include "qwen_safetensors_engine.h"
+#include <iostream>
+#include <cmath>
+#include <random>
+#include <algorithm>
+#include <numeric>
+
+namespace duorou {
+
+QwenSafeTensorsEngine::QwenSafeTensorsEngine() : model_loaded_(false) {
+    // Initialize KV cache
+    kv_cache_.k_cache.resize(config_.num_hidden_layers);
+    kv_cache_.v_cache.resize(config_.num_hidden_layers);
+}
+
+QwenSafeTensorsEngine::~QwenSafeTensorsEngine() {}
+
+bool QwenSafeTensorsEngine::loadModel(const std::string& model_dir) {
+    std::cout << "Loading Qwen model from: " << model_dir << std::endl;
+    
+    // Initialize model loader
+    model_loader_ = std::make_unique<SafeTensorsModelLoader>();
+    if (!model_loader_->loadModel(model_dir)) {
+        std::cerr << "Failed to load SafeTensors model" << std::endl;
+        return false;
+    }
+    
+    // Initialize tokenizer
+    tokenizer_ = std::make_unique<HFTokenizer>();
+    if (!tokenizer_->loadFromDirectory(model_dir)) {
+        std::cerr << "Failed to load tokenizer" << std::endl;
+        return false;
+    }
+    
+    // Load model weights
+    if (!loadWeights()) {
+        std::cerr << "Failed to load model weights" << std::endl;
+        return false;
+    }
+    
+    model_loaded_ = true;
+    std::cout << "Model loaded successfully" << std::endl;
+    return true;
+}
+
+bool QwenSafeTensorsEngine::loadWeights() {
+    std::cout << "Loading model weights..." << std::endl;
+    
+    // 尝试多种embedding权重名称
+    std::vector<std::string> embedding_names = {
+        "model.embed_tokens.weight",
+        "token_embd.weight",
+        "transformer.wte.weight",
+        "embeddings.word_embeddings.weight"
+    };
+    
+    bool embedding_loaded = false;
+    for (const auto& name : embedding_names) {
+        weights_.embed_tokens_weight = model_loader_->getTensorAsFloat(name);
+        if (!weights_.embed_tokens_weight.empty()) {
+            std::cout << "Embedding weights loaded from: " << name << std::endl;
+            embedding_loaded = true;
+            break;
+        }
+    }
+    
+    if (!embedding_loaded) {
+        std::cerr << "Failed to load embedding weights" << std::endl;
+        return false;
+    }
+    
+    // Load layer weights
+    weights_.layers.resize(config_.num_hidden_layers);
+    for (size_t i = 0; i < config_.num_hidden_layers; ++i) {
+        if (!loadLayerWeights(i, weights_.layers[i])) {
+            std::cerr << "Failed to load layer " << i << " weights" << std::endl;
+            return false;
+        }
+        
+        if (i % 5 == 0) {
+            std::cout << "Loaded layer " << i << "/" << config_.num_hidden_layers << std::endl;
+        }
+    }
+    
+    // 尝试多种final norm权重名称
+    std::vector<std::string> final_norm_names = {
+        "model.norm.weight",
+        "norm.weight",
+        "transformer.ln_f.weight",
+        "final_layernorm.weight"
+    };
+    
+    bool final_norm_loaded = false;
+    for (const auto& name : final_norm_names) {
+        weights_.norm_weight = model_loader_->getTensorAsFloat(name);
+        if (!weights_.norm_weight.empty()) {
+            std::cout << "Final norm weights loaded from: " << name << std::endl;
+            final_norm_loaded = true;
+            break;
+        }
+    }
+    
+    if (!final_norm_loaded) {
+        std::cerr << "Failed to load final layer norm weights" << std::endl;
+        return false;
+    }
+    
+    // 尝试多种lm_head权重名称
+    std::vector<std::string> lm_head_names = {
+        "lm_head.weight",
+        "output.weight",
+        "transformer.lm_head.weight",
+        "cls.predictions.transform.dense.weight"
+    };
+    
+    bool lm_head_loaded = false;
+    for (const auto& name : lm_head_names) {
+        weights_.lm_head_weight = model_loader_->getTensorAsFloat(name);
+        if (!weights_.lm_head_weight.empty()) {
+            std::cout << "LM head weights loaded from: " << name << std::endl;
+            lm_head_loaded = true;
+            break;
+        }
+    }
+    
+    if (!lm_head_loaded) {
+        std::cerr << "Failed to load lm_head weights" << std::endl;
+        return false;
+    }
+    
+    std::cout << "All weights loaded successfully" << std::endl;
+    return true;
+}
+
+bool QwenSafeTensorsEngine::loadLayerWeights(size_t layer_idx, TransformerLayerWeights& layer_weights) {
+    std::string prefix = "model.layers." + std::to_string(layer_idx) + ".";
+    
+    // Load attention weights
+    std::string q_name = prefix + "self_attn.q_proj.weight";
+    std::string k_name = prefix + "self_attn.k_proj.weight";
+    std::string v_name = prefix + "self_attn.v_proj.weight";
+    std::string o_name = prefix + "self_attn.o_proj.weight";
+    
+    layer_weights.attention.q_proj_weight = model_loader_->getTensorAsFloat(q_name);
+    
+    layer_weights.attention.q_proj_bias = model_loader_->getTensorAsFloat(prefix + "self_attn.q_proj.bias");
+    layer_weights.attention.k_proj_weight = model_loader_->getTensorAsFloat(k_name);
+    layer_weights.attention.k_proj_bias = model_loader_->getTensorAsFloat(prefix + "self_attn.k_proj.bias");
+    layer_weights.attention.v_proj_weight = model_loader_->getTensorAsFloat(v_name);
+    layer_weights.attention.v_proj_bias = model_loader_->getTensorAsFloat(prefix + "self_attn.v_proj.bias");
+    layer_weights.attention.o_proj_weight = model_loader_->getTensorAsFloat(o_name);
+    
+    // Load MLP weights
+    layer_weights.mlp.gate_proj_weight = model_loader_->getTensorAsFloat(prefix + "mlp.gate_proj.weight");
+    layer_weights.mlp.up_proj_weight = model_loader_->getTensorAsFloat(prefix + "mlp.up_proj.weight");
+    layer_weights.mlp.down_proj_weight = model_loader_->getTensorAsFloat(prefix + "mlp.down_proj.weight");
+    
+    // Load normalization weights
+    layer_weights.input_layernorm_weight = model_loader_->getTensorAsFloat(prefix + "input_layernorm.weight");
+    layer_weights.post_attention_layernorm_weight = model_loader_->getTensorAsFloat(prefix + "post_attention_layernorm.weight");
+    
+    // Check if all weights are loaded
+    bool success = !layer_weights.attention.q_proj_weight.empty() &&
+                   !layer_weights.attention.k_proj_weight.empty() &&
+                   !layer_weights.attention.v_proj_weight.empty() &&
+                   !layer_weights.attention.o_proj_weight.empty() &&
+                   !layer_weights.mlp.gate_proj_weight.empty() &&
+                   !layer_weights.mlp.up_proj_weight.empty() &&
+                   !layer_weights.mlp.down_proj_weight.empty() &&
+                   !layer_weights.input_layernorm_weight.empty() &&
+                   !layer_weights.post_attention_layernorm_weight.empty();
+    
+    if (success) {
+        std::cout << "Layer " << layer_idx << " weights loaded successfully" << std::endl;
+    } else {
+        std::cout << "Layer " << layer_idx << " weights not found in model" << std::endl;
+        // 详细检查哪些权重缺失
+        if (layer_weights.attention.q_proj_weight.empty()) std::cout << "  Missing: q_proj_weight" << std::endl;
+        if (layer_weights.attention.k_proj_weight.empty()) std::cout << "  Missing: k_proj_weight" << std::endl;
+        if (layer_weights.attention.v_proj_weight.empty()) std::cout << "  Missing: v_proj_weight" << std::endl;
+        if (layer_weights.attention.o_proj_weight.empty()) std::cout << "  Missing: o_proj_weight" << std::endl;
+        if (layer_weights.mlp.gate_proj_weight.empty()) std::cout << "  Missing: gate_proj_weight" << std::endl;
+        if (layer_weights.mlp.up_proj_weight.empty()) std::cout << "  Missing: up_proj_weight" << std::endl;
+        if (layer_weights.mlp.down_proj_weight.empty()) std::cout << "  Missing: down_proj_weight" << std::endl;
+        if (layer_weights.input_layernorm_weight.empty()) std::cout << "  Missing: input_layernorm_weight" << std::endl;
+        if (layer_weights.post_attention_layernorm_weight.empty()) std::cout << "  Missing: post_attention_layernorm_weight" << std::endl;
+    }
+    
+    return success;
+}
+
+std::vector<int32_t> QwenSafeTensorsEngine::encode(const std::string& text) {
+    if (!tokenizer_) {
+        return {};
+    }
+    return tokenizer_->encode(text);
+}
+
+std::string QwenSafeTensorsEngine::decode(const std::vector<int32_t>& tokens) {
+    if (!tokenizer_) {
+        return "";
+    }
+    return tokenizer_->decode(tokens);
+}
+
+std::string QwenSafeTensorsEngine::generateText(const std::string& prompt, 
+                                              size_t max_tokens,
+                                              float temperature,
+                                              float top_p) {
+    if (!model_loaded_) {
+        return "Model not loaded";
+    }
+    
+    std::cout << "Generating text for prompt: " << prompt << std::endl;
+    
+    // Encode prompt
+    std::vector<int32_t> input_ids = encode(prompt);
+    if (input_ids.empty()) {
+        return "Failed to encode prompt";
+    }
+    
+    std::cout << "Encoded prompt to " << input_ids.size() << " tokens" << std::endl;
+    
+    // Reset KV cache
+    kv_cache_.current_length = 0;
+    for (auto& k : kv_cache_.k_cache) {
+        k.clear();
+    }
+    for (auto& v : kv_cache_.v_cache) {
+        v.clear();
+    }
+    
+    // Generate tokens
+    std::vector<int32_t> generated_tokens = input_ids;
+    
+    for (size_t i = 0; i < max_tokens; ++i) {
+        // Forward pass
+        std::vector<float> logits = forward(generated_tokens);
+        
+        // Filter vision tokens
+        filterVisionTokens(logits);
+        
+        // Sample next token
+        int32_t next_token = sampleToken(logits, temperature, top_p);
+        
+        // Check for EOS token
+        if (next_token == tokenizer_->getEosTokenId()) {
+            break;
+        }
+        
+        generated_tokens.push_back(next_token);
+        
+        // Debug output
+        if (i % 10 == 0) {
+            std::cout << "Generated " << i << " tokens" << std::endl;
+        }
+    }
+    
+    // Decode generated tokens (excluding prompt)
+    std::vector<int32_t> output_tokens(generated_tokens.begin() + input_ids.size(), 
+                                      generated_tokens.end());
+    
+    std::string result = decode(output_tokens);
+    std::cout << "Generated text: " << result << std::endl;
+    
+    return result;
+}
+
+std::vector<float> QwenSafeTensorsEngine::forward(const std::vector<int32_t>& input_ids) {
+    // Embedding
+    std::vector<float> hidden_states = embedding(input_ids);
+    
+    // Transformer layers
+    for (size_t i = 0; i < config_.num_hidden_layers; ++i) {
+        hidden_states = transformerLayer(hidden_states, weights_.layers[i], i);
+    }
+    
+    // Final normalization
+    hidden_states = rmsNorm(hidden_states, weights_.norm_weight);
+    
+    // Language model head (only for last token)
+    size_t seq_len = input_ids.size();
+    size_t last_token_offset = (seq_len - 1) * config_.hidden_size;
+    
+    std::vector<float> last_hidden(hidden_states.begin() + last_token_offset,
+                                  hidden_states.begin() + last_token_offset + config_.hidden_size);
+    
+    // Matrix multiplication with lm_head
+    std::vector<float> logits = matmul(last_hidden, weights_.lm_head_weight, 
+                                      1, config_.vocab_size, config_.hidden_size);
+    
+    return logits;
+}
+
+std::vector<float> QwenSafeTensorsEngine::embedding(const std::vector<int32_t>& input_ids) {
+    size_t seq_len = input_ids.size();
+    std::vector<float> embeddings(seq_len * config_.hidden_size);
+    
+    for (size_t i = 0; i < seq_len; ++i) {
+        int32_t token_id = input_ids[i];
+        if (token_id >= 0 && static_cast<size_t>(token_id) < config_.vocab_size) {
+            size_t src_offset = token_id * config_.hidden_size;
+            size_t dst_offset = i * config_.hidden_size;
+            
+            std::copy(weights_.embed_tokens_weight.begin() + src_offset,
+                     weights_.embed_tokens_weight.begin() + src_offset + config_.hidden_size,
+                     embeddings.begin() + dst_offset);
+        }
+    }
+    
+    return embeddings;
+}
+
+std::vector<float> QwenSafeTensorsEngine::transformerLayer(const std::vector<float>& hidden_states,
+                                                         const TransformerLayerWeights& layer_weights,
+                                                         size_t layer_idx) {
+    // Input normalization
+    std::vector<float> normed_input = rmsNorm(hidden_states, layer_weights.input_layernorm_weight);
+    
+    // Multi-head attention
+    std::vector<float> attn_output = multiHeadAttention(normed_input, layer_weights.attention, layer_idx);
+    
+    // Residual connection
+    std::vector<float> residual1 = addVectors(hidden_states, attn_output);
+    
+    // Post-attention normalization
+    std::vector<float> normed_attn = rmsNorm(residual1, layer_weights.post_attention_layernorm_weight);
+    
+    // MLP
+    std::vector<float> mlp_output = mlpForward(normed_attn, layer_weights.mlp);
+    
+    // Final residual connection
+    return addVectors(residual1, mlp_output);
+}
+
+std::vector<float> QwenSafeTensorsEngine::multiHeadAttention(const std::vector<float>& hidden_states,
+                                                           const AttentionWeights& attn_weights,
+                                                           size_t layer_idx) {
+    // Simplified attention implementation
+    size_t seq_len = hidden_states.size() / config_.hidden_size;
+    
+    // Q, K, V projections
+    std::vector<float> q = matmul(hidden_states, attn_weights.q_proj_weight,
+                                 seq_len, config_.hidden_size, config_.hidden_size);
+    std::vector<float> k = matmul(hidden_states, attn_weights.k_proj_weight,
+                                 seq_len, config_.hidden_size, config_.hidden_size);
+    std::vector<float> v = matmul(hidden_states, attn_weights.v_proj_weight,
+                                 seq_len, config_.hidden_size, config_.hidden_size);
+    
+    // Add bias if available
+    if (!attn_weights.q_proj_bias.empty()) {
+        for (size_t i = 0; i < seq_len; ++i) {
+            for (size_t j = 0; j < config_.hidden_size; ++j) {
+                q[i * config_.hidden_size + j] += attn_weights.q_proj_bias[j];
+            }
+        }
+    }
+    
+    // Apply RoPE
+    applyRoPE(q, k, seq_len);
+    
+    // Simplified attention computation (without proper multi-head splitting)
+    std::vector<float> attn_output(seq_len * config_.hidden_size, 0.0f);
+    
+    // For simplicity, just use the values as output
+    attn_output = v;
+    
+    // Output projection
+    return matmul(attn_output, attn_weights.o_proj_weight,
+                 seq_len, config_.hidden_size, config_.hidden_size);
+}
+
+std::vector<float> QwenSafeTensorsEngine::mlpForward(const std::vector<float>& hidden_states,
+                                                   const MLPWeights& mlp_weights) {
+    size_t seq_len = hidden_states.size() / config_.hidden_size;
+    
+    // Gate projection
+    std::vector<float> gate = matmul(hidden_states, mlp_weights.gate_proj_weight,
+                                   seq_len, config_.intermediate_size, config_.hidden_size);
+    
+    // Up projection
+    std::vector<float> up = matmul(hidden_states, mlp_weights.up_proj_weight,
+                                 seq_len, config_.intermediate_size, config_.hidden_size);
+    
+    // Apply SiLU to gate
+    gate = silu(gate);
+    
+    // Element-wise multiplication
+    for (size_t i = 0; i < gate.size(); ++i) {
+        gate[i] *= up[i];
+    }
+    
+    // Down projection
+    return matmul(gate, mlp_weights.down_proj_weight,
+                 seq_len, config_.hidden_size, config_.intermediate_size);
+}
+
+std::vector<float> QwenSafeTensorsEngine::rmsNorm(const std::vector<float>& input,
+                                                 const std::vector<float>& weight) {
+    size_t seq_len = input.size() / config_.hidden_size;
+    std::vector<float> output(input.size());
+    
+    for (size_t i = 0; i < seq_len; ++i) {
+        size_t offset = i * config_.hidden_size;
+        
+        // Calculate RMS
+        float sum_squares = 0.0f;
+        for (size_t j = 0; j < config_.hidden_size; ++j) {
+            float val = input[offset + j];
+            sum_squares += val * val;
+        }
+        
+        float rms = std::sqrt(sum_squares / config_.hidden_size + config_.rms_norm_eps);
+        
+        // Normalize and scale
+        for (size_t j = 0; j < config_.hidden_size; ++j) {
+            output[offset + j] = (input[offset + j] / rms) * weight[j];
+        }
+    }
+    
+    return output;
+}
+
+void QwenSafeTensorsEngine::applyRoPE(std::vector<float>& q, std::vector<float>& k, size_t seq_len) {
+    // Simplified RoPE implementation
+    // In a full implementation, this would apply rotary position embeddings
+    // For now, we'll skip this complex operation
+}
+
+std::vector<float> QwenSafeTensorsEngine::softmax(const std::vector<float>& logits) {
+    std::vector<float> result(logits.size());
+    
+    // Find max for numerical stability
+    float max_val = *std::max_element(logits.begin(), logits.end());
+    
+    // Compute exp and sum
+    float sum = 0.0f;
+    for (size_t i = 0; i < logits.size(); ++i) {
+        result[i] = std::exp(logits[i] - max_val);
+        sum += result[i];
+    }
+    
+    // Normalize
+    for (size_t i = 0; i < result.size(); ++i) {
+        result[i] /= sum;
+    }
+    
+    return result;
+}
+
+int32_t QwenSafeTensorsEngine::sampleToken(const std::vector<float>& logits, 
+                                         float temperature, float top_p) {
+    std::vector<float> probs = logits;
+    
+    // Apply temperature
+    if (temperature > 0.0f) {
+        for (float& prob : probs) {
+            prob /= temperature;
+        }
+    }
+    
+    // Convert to probabilities
+    probs = softmax(probs);
+    
+    // Simple sampling - just pick the highest probability
+    auto max_it = std::max_element(probs.begin(), probs.end());
+    return static_cast<int32_t>(std::distance(probs.begin(), max_it));
+}
+
+std::vector<float> QwenSafeTensorsEngine::matmul(const std::vector<float>& a, 
+                                               const std::vector<float>& b,
+                                               size_t m, size_t n, size_t k) {
+    std::vector<float> c(m * n, 0.0f);
+    
+    for (size_t i = 0; i < m; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            for (size_t l = 0; l < k; ++l) {
+                c[i * n + j] += a[i * k + l] * b[l * n + j];
+            }
+        }
+    }
+    
+    return c;
+}
+
+std::vector<float> QwenSafeTensorsEngine::addVectors(const std::vector<float>& a, 
+                                                   const std::vector<float>& b) {
+    std::vector<float> result(a.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        result[i] = a[i] + b[i];
+    }
+    return result;
+}
+
+std::vector<float> QwenSafeTensorsEngine::silu(const std::vector<float>& input) {
+    std::vector<float> result(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+        result[i] = input[i] / (1.0f + std::exp(-input[i]));
+    }
+    return result;
+}
+
+void QwenSafeTensorsEngine::filterVisionTokens(std::vector<float>& logits) {
+    if (!tokenizer_) {
+        return;
+    }
+    
+    // Set vision token logits to very low values
+    for (size_t i = 0; i < logits.size(); ++i) {
+        if (tokenizer_->isVisionToken(static_cast<int32_t>(i))) {
+            logits[i] = -1e9f;
+        }
+    }
+}
+
+} // namespace duorou

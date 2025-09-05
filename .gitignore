@@ -144,3 +144,4 @@ pid.file
 *.sock
 .cache
 other
+models

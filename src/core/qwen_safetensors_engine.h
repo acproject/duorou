@@ -1,8 +1,7 @@
-#ifndef QWEN25VL_INFERENCE_ENGINE_H
-#define QWEN25VL_INFERENCE_ENGINE_H
+#pragma once
 
-#include "gguf_parser.h"
-#include "text_processor.h"
+#include "safetensors_parser.h"
+#include "hf_tokenizer.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -50,8 +49,6 @@ struct ModelArchitecture;
 #endif
 
 namespace duorou {
-namespace extensions {
-namespace ollama {
 
 // 张量结构
 struct Tensor {
@@ -194,13 +191,13 @@ struct KVCache {
   void clear() { current_length = 0; }
 };
 
-// Qwen2.5VL推理引擎类
-class Qwen25VLInferenceEngine {
+// Qwen SafeTensors推理引擎类
+class QwenSafeTensorsEngine {
 public:
   // 构造函数和析构函数
-  Qwen25VLInferenceEngine();
-  explicit Qwen25VLInferenceEngine(bool verbose);
-  ~Qwen25VLInferenceEngine();
+  QwenSafeTensorsEngine();
+  explicit QwenSafeTensorsEngine(bool verbose);
+  ~QwenSafeTensorsEngine();
 
   // 模型加载和管理
   bool loadModel(const std::string &model_path);
@@ -274,13 +271,19 @@ public:
   std::string getTokenString(int32_t token_id) const;
   int32_t getTokenId(const std::string &token) const;
 
+  // 兼容性方法
+  std::vector<int32_t> encode(const std::string& text) { return tokenize(text); }
+  std::string decode(const std::vector<int32_t>& tokens) { return detokenize(tokens); }
+  bool isLoaded() const { return isModelLoaded(); }
+  const ModelConfig& getConfig() const { return config_; }
+
   // 日志函数
   void log(const std::string &level, const std::string &message) const;
 
 private:
   // 模型组件
   ModelConfig config_;
-  std::unique_ptr<GGUFParser> gguf_parser_;
+  std::unique_ptr<SafeTensorsModelLoader> model_loader_;
 
   // 模型权重
   Tensor token_embeddings_;
@@ -293,7 +296,7 @@ private:
   std::unique_ptr<VisionEncoder> vision_encoder_;
 
   // 文本处理器
-  std::unique_ptr<TextProcessor> text_processor_;
+  std::unique_ptr<HFTokenizer> tokenizer_;
 
   // 词汇表
   std::unordered_map<std::string, int32_t> vocab_;
@@ -343,7 +346,7 @@ private:
   bool loadOutputWeights();
   bool loadVisionWeights();
   void precomputeRoPEFreqs();
-  bool loadTensorFromGGUF(const std::string &tensor_name, Tensor &tensor);
+  bool loadTensorFromSafeTensors(const std::string &tensor_name, Tensor &tensor);
 
   // 前向传播
   Tensor forward(const std::vector<int32_t> &input_ids);
@@ -380,10 +383,9 @@ private:
   void optimizeMemoryUsage();
   void clearCache();
   size_t getMemoryUsage() const;
+
+  // 视觉token过滤
+  void filterVisionTokens(std::vector<float>& logits);
 };
 
-} // namespace ollama
-} // namespace extensions
 } // namespace duorou
-
-#endif // QWEN25VL_INFERENCE_ENGINE_H
