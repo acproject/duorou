@@ -145,3 +145,4 @@ pid.file
 .cache
 other
 models
+models/**
