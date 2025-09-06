@@ -867,23 +867,259 @@ Tensor QwenSafeTensorsEngine::applyRoPE(const Tensor &input, uint32_t position) 
 Tensor QwenSafeTensorsEngine::multiHeadAttention(const Tensor &input,
                                                  const TransformerLayer &layer,
                                                  uint32_t layer_idx) {
-  // 简化实现
-  return input;
+  const uint32_t seq_len = input.shape[0];
+  const uint32_t hidden_size = input.shape[1];
+  const uint32_t head_dim = hidden_size / config_.num_attention_heads;
+  const uint32_t num_heads = config_.num_attention_heads;
+  
+  // 创建Q、K、V张量
+  Tensor q_tensor({seq_len, hidden_size});
+  Tensor k_tensor({seq_len, hidden_size});
+  Tensor v_tensor({seq_len, hidden_size});
+  
+  // 简化处理：假设所有头共享权重（实际应该分别处理每个头）
+  if (layer.attention_heads.empty()) {
+    return input; // 如果没有注意力头，直接返回输入
+  }
+  
+  const AttentionHead& head = layer.attention_heads[0];
+  
+  // 计算Q = input * W_q
+  matrixMultiply(input.data.data(), head.query_weights.data.data(),
+                 q_tensor.data.data(), seq_len, hidden_size, hidden_size);
+  
+  // 计算K = input * W_k
+  matrixMultiply(input.data.data(), head.key_weights.data.data(),
+                 k_tensor.data.data(), seq_len, hidden_size, hidden_size);
+  
+  // 计算V = input * W_v
+  matrixMultiply(input.data.data(), head.value_weights.data.data(),
+                 v_tensor.data.data(), seq_len, hidden_size, hidden_size);
+  
+  // 应用RoPE位置编码
+  Tensor q_rope = applyRoPE(q_tensor, layer_idx);
+  Tensor k_rope = applyRoPE(k_tensor, layer_idx);
+  
+  // 创建输出张量
+  Tensor output({seq_len, hidden_size});
+  
+  // 缩放因子
+  const float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
+  
+  // 创建临时注意力分数矩阵
+  std::vector<float> attention_scores(seq_len * seq_len);
+  
+  // 对每个头进行注意力计算
+  for (uint32_t h = 0; h < num_heads; ++h) {
+    const uint32_t head_offset = h * head_dim;
+    
+    // 计算注意力分数矩阵 scores = Q * K^T
+    for (uint32_t i = 0; i < seq_len; ++i) {
+      for (uint32_t j = 0; j < seq_len; ++j) {
+        float score = 0.0f;
+        
+        // 计算Q[i] · K[j]
+        for (uint32_t d = 0; d < head_dim; ++d) {
+          const uint32_t q_idx = i * hidden_size + head_offset + d;
+          const uint32_t k_idx = j * hidden_size + head_offset + d;
+          score += q_rope.data[q_idx] * k_rope.data[k_idx];
+        }
+        
+        // 应用缩放
+        score *= scale;
+        
+        // 应用因果掩码（下三角矩阵）
+        if (j > i) {
+          score = -INFINITY;
+        }
+        
+        // 存储分数
+        attention_scores[i * seq_len + j] = score;
+      }
+    }
+    
+    // 对每一行应用softmax
+    for (uint32_t i = 0; i < seq_len; ++i) {
+      float max_score = -INFINITY;
+      
+      // 找到最大值
+      for (uint32_t j = 0; j <= i; ++j) {
+        max_score = std::max(max_score, attention_scores[i * seq_len + j]);
+      }
+      
+      // 计算exp和sum
+      float sum_exp = 0.0f;
+      for (uint32_t j = 0; j <= i; ++j) {
+        attention_scores[i * seq_len + j] = expf(attention_scores[i * seq_len + j] - max_score);
+        sum_exp += attention_scores[i * seq_len + j];
+      }
+      
+      // 归一化
+      for (uint32_t j = 0; j <= i; ++j) {
+        attention_scores[i * seq_len + j] /= sum_exp;
+      }
+      
+      // 将未来位置设为0
+      for (uint32_t j = i + 1; j < seq_len; ++j) {
+        attention_scores[i * seq_len + j] = 0.0f;
+      }
+    }
+    
+    // 计算注意力输出 = attention_weights * V
+    for (uint32_t i = 0; i < seq_len; ++i) {
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        float sum = 0.0f;
+        
+        for (uint32_t j = 0; j <= i; ++j) {
+          const uint32_t v_idx = j * hidden_size + head_offset + d;
+          sum += attention_scores[i * seq_len + j] * v_tensor.data[v_idx];
+        }
+        
+        const uint32_t out_idx = i * hidden_size + head_offset + d;
+        output.data[out_idx] = sum;
+      }
+    }
+  }
+  
+  // 应用输出投影 output = output * W_o
+  Tensor final_output({seq_len, hidden_size});
+  
+  matrixMultiply(output.data.data(), head.output_weights.data.data(),
+                 final_output.data.data(), seq_len, hidden_size, hidden_size);
+  
+  return final_output;
 }
 
 // 前馈网络
 Tensor QwenSafeTensorsEngine::feedForward(const Tensor &input,
                                          const TransformerLayer &layer) {
-  // 简化实现
-  return input;
+  const uint32_t seq_len = input.shape[0];
+  const uint32_t hidden_size = input.shape[1];
+  const uint32_t intermediate_size = config_.intermediate_size;
+  
+  // 门投影：gate = input * W_gate
+  Tensor gate_output({seq_len, intermediate_size});
+  matrixMultiply(input.data.data(), layer.ffn_gate_weights.data.data(),
+                 gate_output.data.data(), seq_len, hidden_size, intermediate_size);
+  
+  // 上投影：up = input * W_up
+  Tensor up_output({seq_len, intermediate_size});
+  matrixMultiply(input.data.data(), layer.ffn_up_weights.data.data(),
+                 up_output.data.data(), seq_len, hidden_size, intermediate_size);
+  
+  // 应用SiLU激活函数到gate：gate = silu(gate)
+  for (uint32_t i = 0; i < gate_output.size; ++i) {
+    float x = gate_output.data[i];
+    gate_output.data[i] = x / (1.0f + expf(-x)); // SiLU(x) = x * sigmoid(x)
+  }
+  
+  // 元素级乘法：intermediate = gate * up
+  Tensor intermediate({seq_len, intermediate_size});
+  for (uint32_t i = 0; i < intermediate.size; ++i) {
+    intermediate.data[i] = gate_output.data[i] * up_output.data[i];
+  }
+  
+  // 下投影：output = intermediate * W_down
+  Tensor output({seq_len, hidden_size});
+  matrixMultiply(intermediate.data.data(), layer.ffn_down_weights.data.data(),
+                 output.data.data(), seq_len, intermediate_size, hidden_size);
+  
+  return output;
 }
 
 // 处理视觉输入
 Tensor QwenSafeTensorsEngine::processVisionInput(
     const std::vector<std::vector<float>> &image_features) {
-  // 占位符实现
-  Tensor result;
-  return result;
+  if (!vision_encoder_ || image_features.empty()) {
+    // 如果没有视觉编码器或图像特征为空，返回空张量
+    return Tensor({1, config_.hidden_size});
+  }
+  
+  // 获取图像特征的维度
+  uint32_t batch_size = static_cast<uint32_t>(image_features.size());
+  uint32_t feature_dim = static_cast<uint32_t>(image_features[0].size());
+  
+  // 创建输入张量
+  Tensor input({batch_size, feature_dim});
+  for (uint32_t i = 0; i < batch_size; ++i) {
+    for (uint32_t j = 0; j < feature_dim; ++j) {
+      input.data[i * feature_dim + j] = image_features[i][j];
+    }
+  }
+  
+  // 应用卷积层（如果存在）
+  Tensor conv_output = input;
+  if (!vision_encoder_->conv_weights.empty()) {
+    // 简化的卷积实现：直接使用第一个卷积权重
+    const auto& conv_weight = vision_encoder_->conv_weights[0];
+    uint32_t output_channels = conv_weight.shape[0];
+    
+    Tensor temp_output({batch_size, output_channels});
+    matrixMultiply(conv_output.data.data(), conv_weight.data.data(),
+                   temp_output.data.data(), batch_size, feature_dim, output_channels);
+    conv_output = temp_output;
+  }
+  
+  // 添加位置编码
+  if (vision_encoder_->position_embeddings.size > 0) {
+    uint32_t pos_dim = std::min(conv_output.shape[1], vision_encoder_->position_embeddings.shape[1]);
+    for (uint32_t i = 0; i < batch_size; ++i) {
+      for (uint32_t j = 0; j < pos_dim; ++j) {
+        conv_output.data[i * conv_output.shape[1] + j] += 
+            vision_encoder_->position_embeddings.data[j];
+      }
+    }
+  }
+  
+  // 通过Transformer层
+  Tensor layer_output = conv_output;
+  for (const auto& layer : vision_encoder_->layers) {
+    // 应用注意力机制
+    Tensor attn_output = multiHeadAttention(layer_output, layer, 0);
+    
+    // 残差连接
+    for (uint32_t i = 0; i < layer_output.size; ++i) {
+      layer_output.data[i] += attn_output.data[i];
+    }
+    
+    // 应用前馈网络
+    Tensor ffn_output = feedForward(layer_output, layer);
+    
+    // 残差连接
+    for (uint32_t i = 0; i < layer_output.size; ++i) {
+      layer_output.data[i] += ffn_output.data[i];
+    }
+  }
+  
+  // 应用输出投影
+  Tensor final_output({batch_size, config_.hidden_size});
+  if (vision_encoder_->output_projection.size > 0) {
+    matrixMultiply(layer_output.data.data(), 
+                   vision_encoder_->output_projection.data.data(),
+                   final_output.data.data(), 
+                   batch_size, layer_output.shape[1], config_.hidden_size);
+    
+    // 添加偏置
+    if (vision_encoder_->output_bias.size > 0) {
+      for (uint32_t i = 0; i < batch_size; ++i) {
+        for (uint32_t j = 0; j < config_.hidden_size; ++j) {
+          final_output.data[i * config_.hidden_size + j] += 
+              vision_encoder_->output_bias.data[j];
+        }
+      }
+    }
+  } else {
+    // 如果没有输出投影，直接使用层输出（可能需要调整维度）
+    uint32_t copy_dim = std::min(layer_output.shape[1], config_.hidden_size);
+    for (uint32_t i = 0; i < batch_size; ++i) {
+      for (uint32_t j = 0; j < copy_dim; ++j) {
+        final_output.data[i * config_.hidden_size + j] = 
+            layer_output.data[i * layer_output.shape[1] + j];
+      }
+    }
+  }
+  
+  return final_output;
 }
 
 // 采样token

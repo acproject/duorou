@@ -332,6 +332,9 @@ private:
   // 统计信息
   mutable double total_inference_time_;
   mutable uint64_t total_tokens_generated_;
+  
+  // 重复惩罚历史
+  std::vector<int32_t> generated_tokens_history_;
 
   // 内部方法
   bool loadWeights(const std::string &model_path);
@@ -375,6 +378,26 @@ private:
   void vectorMul(const float *a, const float *b, float *result, size_t size);
   void matrixMultiply(const float *a, const float *b, float *c, size_t m,
                       size_t n, size_t k);
+  
+  // 高效GEMM优化方法
+    void batchedGEMM(const std::vector<const float*>& inputs,
+                     const std::vector<const float*>& weights,
+                     const std::vector<float*>& outputs,
+                     size_t batch_size, size_t m, size_t n, size_t k);
+    void optimizedMatMul(const float *a, const float *b, float *c,
+                        size_t m, size_t n, size_t k, bool use_simd = true);
+  void fusedAttentionKernel(const float *q, const float *k, const float *v,
+                           float *output, size_t seq_len, size_t num_heads,
+                           size_t head_dim, float scale, bool causal_mask = true);
+  
+  // Flash Attention风格的优化
+  void blockwiseAttention(const float *q, const float *k, const float *v,
+                         float *output, size_t seq_len, size_t num_heads,
+                         size_t head_dim, float scale, size_t block_size = 64);
+  
+  // 批量RoPE处理
+  void batchedRoPE(float *tensor, size_t seq_len, size_t num_heads,
+                   size_t head_dim, uint32_t position_offset);
 
   // 内存管理
   void optimizeMemoryUsage();
