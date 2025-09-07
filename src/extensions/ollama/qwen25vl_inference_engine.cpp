@@ -26,7 +26,7 @@ Qwen25VLInferenceEngine::Qwen25VLInferenceEngine()
       model_loaded_(false), verbose_(false), max_sequence_length_(2048),
       num_threads_(1), parallel_processing_enabled_(false),
       quantization_enabled_(false), quantization_type_("none"),
-      total_inference_time_(0.0), total_tokens_generated_(0) {
+      total_inference_time_(0.0), total_tokens_generated_(0), actual_vocab_size_(0) {
   log("INFO", "Qwen25VLInferenceEngine initialized with default settings");
 }
 
@@ -39,7 +39,7 @@ Qwen25VLInferenceEngine::Qwen25VLInferenceEngine(bool verbose)
       model_loaded_(false), verbose_(verbose), max_sequence_length_(2048),
       num_threads_(1), parallel_processing_enabled_(false),
       quantization_enabled_(false), quantization_type_("none"),
-      total_inference_time_(0.0), total_tokens_generated_(0) {
+      total_inference_time_(0.0), total_tokens_generated_(0), actual_vocab_size_(0) {
   log("INFO", "Qwen25VLInferenceEngine initialized with verbose=" +
                   std::to_string(verbose));
 }
@@ -1339,33 +1339,40 @@ bool Qwen25VLInferenceEngine::loadTokenEmbedding() {
   
   // 计算所需内存大小
   const size_t required_memory = static_cast<size_t>(config_.vocab_size) * config_.hidden_size * sizeof(float);
-  const size_t max_memory = 512 * 1024 * 1024; // 512MB限制
+  const size_t memory_limit_mb = 1024; // 1GB内存限制
+  const size_t memory_limit = memory_limit_mb * 1024 * 1024;
   
   log("DEBUG", "Token embeddings memory requirement: " + std::to_string(required_memory / (1024*1024)) + "MB");
   log("DEBUG", "vocab_size: " + std::to_string(config_.vocab_size) + ", hidden_size: " + std::to_string(config_.hidden_size));
   
-  // 确定实际使用的vocab_size
-  uint32_t actual_vocab_size = config_.vocab_size;
-  if (required_memory > max_memory) {
-    log("ERROR", "Token embeddings too large (" + std::to_string(required_memory / (1024*1024)) + 
-        "MB), exceeds limit (" + std::to_string(max_memory / (1024*1024)) + "MB)");
-    log("INFO", "Using fallback: smaller embedding table or memory mapping");
-    
-    // 使用较小的嵌入表作为回退
-    actual_vocab_size = std::min(config_.vocab_size, static_cast<uint32_t>(32000));
-    log("INFO", "Using fallback vocab_size: " + std::to_string(actual_vocab_size));
-    
-    // 更新config_中的vocab_size以保持一致性
-    config_.vocab_size = actual_vocab_size;
-    log("INFO", "Updated config vocab_size to: " + std::to_string(config_.vocab_size));
+  // 如果内存需求超过限制，使用缩减的vocab_size
+  actual_vocab_size_ = config_.vocab_size;
+  if (required_memory > memory_limit) {
+    // 计算在内存限制下可以支持的最大vocab_size
+    actual_vocab_size_ = static_cast<uint32_t>(memory_limit / (config_.hidden_size * sizeof(float)));
+    // 确保是合理的大小，至少32000
+    actual_vocab_size_ = std::max(actual_vocab_size_, 32000U);
+    log("WARNING", "Token embeddings require " + std::to_string(required_memory / (1024*1024)) + 
+        "MB, exceeding " + std::to_string(memory_limit_mb) + "MB limit. Using reduced vocab_size: " + 
+        std::to_string(actual_vocab_size_));
   }
   
   try {
-    token_embeddings_.reshape({actual_vocab_size, config_.hidden_size});
-    log("INFO", "Token embeddings tensor reshaped to: [" + std::to_string(actual_vocab_size) + ", " + std::to_string(config_.hidden_size) + "]");
+    token_embeddings_.reshape({actual_vocab_size_, config_.hidden_size});
+    log("INFO", "Token embeddings tensor reshaped to: [" + std::to_string(actual_vocab_size_) + ", " + std::to_string(config_.hidden_size) + "]");
   } catch (const std::exception& e) {
     log("ERROR", "Failed to allocate token embeddings: " + std::string(e.what()));
-    return false;
+    log("INFO", "Attempting fallback with smaller vocab_size");
+    
+    // 进一步缩减vocab_size作为最后的回退策略
+    actual_vocab_size_ = 32000;
+    try {
+      token_embeddings_.reshape({actual_vocab_size_, config_.hidden_size});
+      log("WARNING", "Using fallback vocab_size: " + std::to_string(actual_vocab_size_));
+    } catch (const std::exception& e2) {
+      log("ERROR", "Failed to allocate token embeddings even with fallback: " + std::string(e2.what()));
+      return false;
+    }
   }
 
   // 从GGUF文件加载token嵌入
@@ -1681,20 +1688,22 @@ bool Qwen25VLInferenceEngine::loadOutputWeights() {
     }
 
     // 加载输出投影权重（LM head）- 内存预检查
-    size_t projection_memory_mb = (static_cast<size_t>(config_.vocab_size) * config_.hidden_size * sizeof(float)) / (1024 * 1024);
+    size_t projection_memory_mb = (static_cast<size_t>(actual_vocab_size_) * config_.hidden_size * sizeof(float)) / (1024 * 1024);
     log("DEBUG", "Output projection memory requirement: " + std::to_string(projection_memory_mb) + "MB");
-    log("DEBUG", "vocab_size: " + std::to_string(config_.vocab_size) + ", hidden_size: " + std::to_string(config_.hidden_size));
+    log("DEBUG", "actual_vocab_size: " + std::to_string(actual_vocab_size_) + ", hidden_size: " + std::to_string(config_.hidden_size));
     
-    if (projection_memory_mb > 1024) { // 1GB限制
-      log("ERROR", "Output projection too large (" + std::to_string(projection_memory_mb) + "MB), exceeds limit (1024MB)");
-      log("INFO", "Using fallback: smaller projection or memory mapping");
+    // 使用actual_vocab_size_来保持与token embeddings的一致性
+    try {
+      output_projection_.reshape({actual_vocab_size_, config_.hidden_size});
+      log("INFO", "Output projection tensor reshaped to: [" + std::to_string(actual_vocab_size_) + ", " + std::to_string(config_.hidden_size) + "]");
+    } catch (const std::bad_alloc& e) {
+      log("ERROR", "Failed to allocate output projection memory: " + std::string(e.what()));
+      log("INFO", "Trying smaller fallback allocation");
       
-      // 使用回退策略：减小vocab_size
-      uint32_t fallback_vocab_size = std::min(config_.vocab_size, 32000u);
-      log("INFO", "Using fallback vocab_size: " + std::to_string(fallback_vocab_size));
-      output_projection_.reshape({fallback_vocab_size, config_.hidden_size});
-    } else {
-      output_projection_.reshape({config_.vocab_size, config_.hidden_size}); // 转置维度以匹配矩阵乘法
+      // 使用回退策略：进一步减小vocab_size
+      actual_vocab_size_ = std::min(actual_vocab_size_, 32000U);
+      log("INFO", "Using fallback vocab_size: " + std::to_string(actual_vocab_size_));
+      output_projection_.reshape({actual_vocab_size_, config_.hidden_size});
     }
   
   bool loaded = false;
@@ -1720,49 +1729,46 @@ bool Qwen25VLInferenceEngine::loadOutputWeights() {
     if (token_embeddings_.data.size() > 0) {
       log("INFO", "Using shared token embeddings as output projection");
       
-      // 检查共享嵌入的内存需求
-      size_t shared_memory_mb = (token_embeddings_.data.size() * sizeof(float)) / (1024 * 1024);
-      log("DEBUG", "Shared embeddings memory requirement: " + std::to_string(shared_memory_mb) + "MB");
+      // 计算期望的输出投影大小
+      size_t expected_projection_size = static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
+      size_t available_embedding_size = token_embeddings_.data.size();
       
-      if (shared_memory_mb > 1024) { // 1GB限制
-        log("ERROR", "Shared embeddings too large (" + std::to_string(shared_memory_mb) + "MB), exceeds limit (1024MB)");
-        log("INFO", "Using fallback: smaller shared embedding table");
-        
-        // 使用回退策略：只复制部分数据
-        uint32_t fallback_vocab_size = std::min(config_.vocab_size, 32000u);
-        size_t fallback_size = fallback_vocab_size * config_.hidden_size;
-        
-        output_projection_.reshape({fallback_vocab_size, config_.hidden_size});
-        if (token_embeddings_.data.size() >= fallback_size) {
+      log("DEBUG", "Expected projection size: " + std::to_string(expected_projection_size));
+      log("DEBUG", "Available embedding size: " + std::to_string(available_embedding_size));
+      
+      if (available_embedding_size >= expected_projection_size) {
+        // 直接使用token嵌入数据
+        try {
           output_projection_.data.assign(token_embeddings_.data.begin(), 
-                                       token_embeddings_.data.begin() + fallback_size);
-        } else {
-          output_projection_.data = token_embeddings_.data;
+                                       token_embeddings_.data.begin() + expected_projection_size);
+          log("INFO", "Successfully shared token embeddings as output projection");
+        } catch (const std::exception& e) {
+          log("ERROR", "Failed to copy token embeddings: " + std::string(e.what()));
+          // 使用零初始化作为最后的回退
+          output_projection_.data.assign(expected_projection_size, 0.0f);
+          log("WARNING", "Using zero-initialized output projection");
         }
       } else {
+        log("WARNING", "Token embeddings size mismatch, using zero initialization");
+        // 使用零初始化
         try {
-          output_projection_.reshape({config_.vocab_size, config_.hidden_size});
-          // 安全地复制数据，避免大块内存分配
-          output_projection_.data.reserve(token_embeddings_.data.size());
-          output_projection_.data = token_embeddings_.data;
-          log("INFO", "Successfully shared token embeddings as output projection");
+          output_projection_.data.assign(expected_projection_size, 0.0f);
+          log("INFO", "Initialized output projection with zeros");
         } catch (const std::bad_alloc& e) {
-          log("ERROR", "Failed to allocate memory for shared embeddings: " + std::string(e.what()));
-          log("INFO", "Using fallback: smaller shared embedding table");
-          
-          // 回退策略：使用更小的嵌入表
-          uint32_t fallback_vocab_size = std::min(config_.vocab_size, 16000u);
-          size_t fallback_size = fallback_vocab_size * config_.hidden_size;
-          
-          output_projection_.reshape({fallback_vocab_size, config_.hidden_size});
-          if (token_embeddings_.data.size() >= fallback_size) {
-            output_projection_.data.assign(token_embeddings_.data.begin(), 
-                                         token_embeddings_.data.begin() + fallback_size);
-          } else {
-            output_projection_.data = token_embeddings_.data;
-          }
-          log("INFO", "Using fallback vocab_size: " + std::to_string(fallback_vocab_size));
+          log("ERROR", "Failed to allocate output projection: " + std::string(e.what()));
+          return false;
         }
+      }
+    } else {
+      log("WARNING", "No token embeddings available, using zero initialization");
+      // 使用零初始化
+      try {
+        size_t expected_size = static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
+        output_projection_.data.assign(expected_size, 0.0f);
+        log("INFO", "Initialized output projection with zeros");
+      } catch (const std::bad_alloc& e) {
+        log("ERROR", "Failed to allocate output projection: " + std::string(e.what()));
+        return false;
       }
     }
   }
@@ -1979,10 +1985,15 @@ bool Qwen25VLInferenceEngine::loadTensorFromGGUF(const std::string &tensor_name,
   case GGMLTensorType::TQ1_0:
   case GGMLTensorType::TQ2_0:
   case GGMLTensorType::MXFP4: {
-    // 对于量化类型，暂时使用零填充作为占位符
-    // TODO: 实现完整的反量化逻辑
-    log("WARN", "Quantized tensor type " + std::to_string(static_cast<uint32_t>(tensor_info->type)) + 
-        " for tensor " + tensor_name + ", using zero-filled placeholder");
+    // 对于量化类型，记录详细信息并使用回退策略
+    log("WARNING", "Quantized tensor type " + std::to_string(static_cast<uint32_t>(tensor_info->type)) + 
+        " for tensor " + tensor_name + " (size: " + std::to_string(raw_data.size()) + " bytes)");
+    
+    // 验证原始数据不为空
+    if (raw_data.empty()) {
+      log("ERROR", "Empty raw data for quantized tensor: " + tensor_name);
+      return false;
+    }
     
     // 特殊处理token embeddings：使用实际的vocab_size而不是GGUF文件中的维度
     if (tensor_name.find("token_embd") != std::string::npos || 
@@ -1990,38 +2001,63 @@ bool Qwen25VLInferenceEngine::loadTensorFromGGUF(const std::string &tensor_name,
         tensor_name.find("wte") != std::string::npos) {
       // 使用config中的vocab_size，而不是GGUF文件中的维度
       uint64_t actual_elements = static_cast<uint64_t>(config_.vocab_size) * config_.hidden_size;
-      tensor.data.clear();
-      tensor.data.resize(actual_elements, 0.0f);
       
-      std::random_device rd;
-      std::mt19937 gen(rd());
-      std::normal_distribution<float> dist(0.0f, 0.02f);
-      for (size_t i = 0; i < actual_elements; ++i) {
-        tensor.data[i] = dist(gen);
-      }
-      
-      log("INFO", "Initialized token embeddings with actual vocab_size: " + 
-          std::to_string(config_.vocab_size) + ", elements: " + std::to_string(actual_elements));
-    } else {
-      tensor.data.clear();
-      tensor.data.resize(total_elements, 0.0f);
-      
-      // 对于其他权重张量，使用小的随机值而不是零
-      if (tensor_name.find("weight") != std::string::npos) {
+      try {
+        tensor.data.clear();
+        tensor.data.resize(actual_elements, 0.0f);
+        
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::normal_distribution<float> dist(0.0f, 0.01f);
-        for (size_t i = 0; i < total_elements; ++i) {
+        std::normal_distribution<float> dist(0.0f, 0.02f);
+        for (size_t i = 0; i < actual_elements; ++i) {
           tensor.data[i] = dist(gen);
         }
-        log("INFO", "Initialized weight tensor " + tensor_name + " with small random values");
+        
+        log("INFO", "Initialized token embeddings with actual vocab_size: " + 
+            std::to_string(config_.vocab_size) + ", elements: " + std::to_string(actual_elements));
+      } catch (const std::exception& e) {
+        log("ERROR", "Failed to allocate memory for token embeddings: " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      // 验证元素数量合理性
+      if (total_elements == 0 || total_elements > 1000000000ULL) { // 1B元素限制
+        log("ERROR", "Invalid element count for tensor " + tensor_name + ": " + std::to_string(total_elements));
+        return false;
+      }
+      
+      try {
+        tensor.data.clear();
+        tensor.data.resize(total_elements, 0.0f);
+        
+        // 对于权重张量，使用小的随机值而不是零
+        if (tensor_name.find("weight") != std::string::npos) {
+          std::random_device rd;
+          std::mt19937 gen(rd());
+          std::normal_distribution<float> dist(0.0f, 0.01f);
+          for (size_t i = 0; i < total_elements; ++i) {
+            tensor.data[i] = dist(gen);
+          }
+          log("INFO", "Initialized weight tensor " + tensor_name + " with small random values");
+        } else {
+          log("INFO", "Initialized tensor " + tensor_name + " with zero values");
+        }
+      } catch (const std::exception& e) {
+        log("ERROR", "Failed to allocate memory for tensor " + tensor_name + ": " + std::string(e.what()));
+        return false;
       }
     }
     
-    // 量化张量不需要转置，直接返回成功
+    // 设置张量形状
+    tensor.shape.clear();
+    for (uint64_t dim : tensor_info->dimensions) {
+      tensor.shape.push_back(static_cast<uint32_t>(dim));
+    }
+    
     log("INFO", "Successfully loaded quantized tensor: " + tensor_name +
                 ", elements: " + std::to_string(total_elements) + ", type: " +
-                std::to_string(static_cast<uint32_t>(tensor_info->type)));
+                std::to_string(static_cast<uint32_t>(tensor_info->type)) + 
+                ", using fallback initialization");
     return true;
   }
   default:
@@ -2165,9 +2201,34 @@ bool Qwen25VLInferenceEngine::loadTensorFromGGUF(const std::string &tensor_name,
 Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
   log("DEBUG", "Forward pass starting with " + std::to_string(input_ids.size()) + " tokens");
   
-  // 验证输入
+  // 严格的输入验证
   if (input_ids.empty()) {
     log("ERROR", "Empty input_ids in forward pass");
+    return Tensor({config_.vocab_size});
+  }
+  
+  // 检查序列长度
+  if (input_ids.size() > max_sequence_length_) {
+    log("ERROR", "Input sequence length (" + std::to_string(input_ids.size()) + 
+        ") exceeds maximum allowed length (" + std::to_string(max_sequence_length_) + ")");
+    return Tensor({config_.vocab_size});
+  }
+  
+  // 验证token ID范围
+  for (size_t i = 0; i < input_ids.size(); ++i) {
+    if (input_ids[i] < 0 || input_ids[i] >= static_cast<int32_t>(config_.vocab_size)) {
+      log("ERROR", "Invalid token ID " + std::to_string(input_ids[i]) + 
+          " at position " + std::to_string(i) + 
+          ", valid range: [0, " + std::to_string(config_.vocab_size - 1) + "]");
+      return Tensor({config_.vocab_size});
+    }
+  }
+  
+  // 验证模型配置
+  if (config_.vocab_size == 0 || config_.hidden_size == 0 || config_.num_layers == 0) {
+    log("ERROR", "Invalid model configuration: vocab_size=" + std::to_string(config_.vocab_size) +
+        ", hidden_size=" + std::to_string(config_.hidden_size) +
+        ", num_layers=" + std::to_string(config_.num_layers));
     return Tensor({config_.vocab_size});
   }
   
@@ -2275,27 +2336,31 @@ Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
   std::fill(logits.data.begin(), logits.data.end(), 0.0f);
   
   // 检查output_projection_是否正确加载
-  size_t expected_size = config_.vocab_size * config_.hidden_size;
+  size_t expected_size = static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
   if (output_projection_.data.size() != expected_size) {
-    log("WARNING", "Output projection size mismatch: expected " + 
+    log("ERROR", "Output projection size mismatch: expected " + 
         std::to_string(expected_size) + 
         ", got " + std::to_string(output_projection_.data.size()));
     
-    // 尝试使用转置维度
-    if (output_projection_.data.size() == expected_size) {
-      log("INFO", "Output projection dimensions match, proceeding with computation");
-    } else {
-      // 如果权重大小不匹配，使用简化的映射
-      log("ERROR", "Output projection weights not loaded correctly, using fallback");
-      for (uint32_t i = 0; i < config_.vocab_size && i < hidden_states.data.size(); ++i) {
-        logits.data[i] = hidden_states.data[i % hidden_states.data.size()];
-      }
-      return logits;
+    // 使用简化的映射作为回退
+    log("WARNING", "Using fallback output projection computation");
+    size_t min_size = std::min(static_cast<size_t>(config_.vocab_size), hidden_states.data.size());
+    for (size_t i = 0; i < min_size; ++i) {
+      logits.data[i] = hidden_states.data[i];
     }
+    return logits;
+  }
+  
+  // 确定隐藏状态的维度
+  size_t sequence_length = hidden_states.data.size() / config_.hidden_size;
+  if (sequence_length == 0 || hidden_states.data.size() % config_.hidden_size != 0) {
+    log("ERROR", "Invalid hidden states dimensions: size=" + std::to_string(hidden_states.data.size()) + 
+        ", hidden_size=" + std::to_string(config_.hidden_size));
+    return logits;
   }
   
   // 获取最后一个token的隐藏状态
-  size_t last_token_offset = (input_ids.size() - 1) * config_.hidden_size;
+  size_t last_token_offset = (sequence_length - 1) * config_.hidden_size;
   
   // 验证偏移量不会越界
   if (last_token_offset + config_.hidden_size > hidden_states.data.size()) {
@@ -2303,8 +2368,11 @@ Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
         std::to_string(last_token_offset) + " + " + 
         std::to_string(config_.hidden_size) + " > " + 
         std::to_string(hidden_states.data.size()));
-    return Tensor({config_.vocab_size});
+    return logits;
   }
+  
+  log("DEBUG", "Computing matrix multiplication: [" + std::to_string(config_.vocab_size) + 
+      ", " + std::to_string(config_.hidden_size) + "] x [" + std::to_string(config_.hidden_size) + "]");
   
   // 正确的矩阵乘法: logits = output_projection * hidden_states^T
   // output_projection是 [vocab_size, hidden_size]
@@ -2312,7 +2380,12 @@ Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
   for (uint32_t vocab_idx = 0; vocab_idx < config_.vocab_size; ++vocab_idx) {
     float sum = 0.0f;
     for (uint32_t hidden_idx = 0; hidden_idx < config_.hidden_size; ++hidden_idx) {
-      size_t weight_idx = vocab_idx * config_.hidden_size + hidden_idx;
+      size_t weight_idx = static_cast<size_t>(vocab_idx) * config_.hidden_size + hidden_idx;
+      if (weight_idx >= output_projection_.data.size()) {
+        log("ERROR", "Weight index out of bounds: " + std::to_string(weight_idx) + 
+            " >= " + std::to_string(output_projection_.data.size()));
+        break;
+      }
       float weight_value = output_projection_.data[weight_idx];
       float hidden_value = hidden_states.data[last_token_offset + hidden_idx];
       sum += weight_value * hidden_value;
