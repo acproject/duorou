@@ -35,9 +35,9 @@ public:
     model_info_.memory_usage = 0;
     model_info_.path = model_path;
 
-    // Initialize the new ollama model manager
+    // Initialize the new ollama model manager with verbose logging
     model_manager_ =
-        std::make_unique<duorou::extensions::ollama::OllamaModelManager>();
+        std::make_unique<duorou::extensions::ollama::OllamaModelManager>(true);
   }
 
   bool load(const std::string &model_path) override {

@@ -1,13 +1,12 @@
 #ifndef QWEN25VL_INFERENCE_ENGINE_H
 #define QWEN25VL_INFERENCE_ENGINE_H
 
-#include "gguf_parser.h"
-#include "text_processor.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
@@ -26,10 +25,14 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "gguf_parser.h"
+#include "text_processor.h"
 
 // Forward declarations
 struct ModelArchitecture;
@@ -57,24 +60,69 @@ namespace ollama {
 struct Tensor {
   std::vector<float> data;
   std::vector<uint32_t> shape;
-  uint32_t size;
+  size_t size;  // 使用size_t避免溢出
 
   Tensor() : size(0) {}
 
   Tensor(const std::vector<uint32_t> &s) : shape(s), size(1) {
+    // 安全计算总大小，检查溢出
     for (uint32_t dim : shape) {
+      if (dim == 0) {
+        size = 0;
+        break;
+      }
+      // 检查乘法溢出
+      if (size > SIZE_MAX / dim) {
+        throw std::overflow_error("Tensor size overflow");
+      }
       size *= dim;
     }
-    data.resize(size);
+    
+    // 检查内存分配大小是否合理（限制为1GB）
+    const size_t max_size = 1024 * 1024 * 1024 / sizeof(float);
+    if (size > max_size) {
+      throw std::bad_alloc();
+    }
+    
+    try {
+      data.resize(size);
+    } catch (const std::bad_alloc& e) {
+      size = 0;
+      shape.clear();
+      throw;
+    }
   }
 
   void reshape(const std::vector<uint32_t> &new_shape) {
     shape = new_shape;
     size = 1;
+    
+    // 安全计算总大小，检查溢出
     for (uint32_t dim : shape) {
+      if (dim == 0) {
+        size = 0;
+        break;
+      }
+      // 检查乘法溢出
+      if (size > SIZE_MAX / dim) {
+        throw std::overflow_error("Tensor size overflow");
+      }
       size *= dim;
     }
-    data.resize(size);
+    
+    // 检查内存分配大小是否合理（限制为1GB）
+    const size_t max_size = 1024 * 1024 * 1024 / sizeof(float);
+    if (size > max_size) {
+      throw std::bad_alloc();
+    }
+    
+    try {
+      data.resize(size);
+    } catch (const std::bad_alloc& e) {
+      size = 0;
+      shape.clear();
+      throw;
+    }
   }
 
   float &operator[](size_t index) { return data[index]; }
@@ -132,16 +180,21 @@ struct VisionEncoder {
   Tensor output_bias;
 };
 
-// 模型配置结构
+// 模型配置结构 - 修正为Qwen2.5-VL规格
 struct ModelConfig {
   uint32_t vocab_size;
   uint32_t hidden_size;
   uint32_t num_layers;
   uint32_t num_attention_heads;
+  uint32_t num_key_value_heads;  // GQA支持
   uint32_t intermediate_size;
   uint32_t max_position_embeddings;
   uint32_t rope_theta;
   float layer_norm_eps;
+  uint32_t rope_dim;  // RoPE维度
+  float rope_base;    // RoPE基础频率
+  float rope_scale;   // RoPE缩放因子
+  uint32_t original_context_length;  // 原始上下文长度
 
   // 视觉相关配置
   uint32_t vision_hidden_size;
@@ -152,15 +205,24 @@ struct ModelConfig {
   uint32_t patch_size;
 
   ModelConfig() {
+    // Qwen2.5-VL-7B配置
     vocab_size = 151936;
     hidden_size = 3584;
     num_layers = 28;
     num_attention_heads = 28;
+    num_key_value_heads = 4;  // GQA: 28/4 = 7个查询头共享1个KV头
     intermediate_size = 18944;
     max_position_embeddings = 32768;
-    rope_theta = 1000000;
+    rope_theta = 1000000.0f;
     layer_norm_eps = 1e-6;
+    
+    // RoPE配置 - 与ollama实现对齐
+    rope_dim = 128;  // 每个头的RoPE维度
+    rope_base = 1000000.0f;  // 基础频率
+    rope_scale = 1.0f;     // 缩放因子
+    original_context_length = 32768;  // 原始上下文长度
 
+    // 视觉配置
     vision_hidden_size = 1280;
     vision_num_layers = 32;
     vision_num_attention_heads = 16;
@@ -179,15 +241,19 @@ struct KVCache {
 
   KVCache() : current_length(0), max_length(0) {}
 
-  void resize(uint32_t num_layers, uint32_t max_seq_len, uint32_t hidden_size) {
+  void resize(uint32_t num_layers, uint32_t max_seq_len, uint32_t hidden_size, uint32_t num_kv_heads = 0) {
     max_length = max_seq_len;
     current_length = 0;
     key_cache.resize(num_layers);
     value_cache.resize(num_layers);
 
+    // 计算GQA下的KV维度
+    const uint32_t kv_dim = (num_kv_heads > 0) ? 
+                           (hidden_size * num_kv_heads / (hidden_size / 128)) : hidden_size;
+    
     for (uint32_t i = 0; i < num_layers; ++i) {
-      key_cache[i].reshape({max_seq_len, hidden_size});
-      value_cache[i].reshape({max_seq_len, hidden_size});
+      key_cache[i].reshape({max_seq_len, kv_dim});
+      value_cache[i].reshape({max_seq_len, kv_dim});
     }
   }
 
@@ -338,6 +404,7 @@ private:
 
   // 内部方法
   bool loadWeights(const std::string &model_path);
+  bool initializeConfigFromGGUF();
   bool loadVocabulary();
   bool loadFallbackVocabulary();
   void loadDynamicSpecialTokens();

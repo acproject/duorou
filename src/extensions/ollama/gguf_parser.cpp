@@ -495,7 +495,19 @@ bool GGUFParser::readTensorInfo(std::ifstream &file) {
       log("ERROR", "Failed to read type for tensor " + tensor_info.name);
       return false;
     }
+    
+    // 验证张量类型是否支持
+    if (type_value > 39) {  // MXFP4 is the highest supported type (39)
+      log("ERROR", "Unsupported tensor type value " + std::to_string(type_value) + " for tensor " + tensor_info.name);
+      return false;
+    }
+    
     tensor_info.type = static_cast<GGMLTensorType>(type_value);
+    
+    // 验证类型是否在getGGMLTypeSize中有对应处理
+    if (getGGMLTypeSize(tensor_info.type) == 0) {
+      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " + tensor_info.name + " may not be fully supported");
+    }
 
     // 读取偏移量
     file.read(reinterpret_cast<char *>(&tensor_info.offset), 8);
@@ -894,6 +906,18 @@ uint32_t GGUFParser::getGGMLTypeSize(GGMLTensorType type) {
     return 4;
   case GGMLTensorType::F16:
     return 2;
+  case GGMLTensorType::F64:
+    return 8;
+  case GGMLTensorType::BF16:
+    return 2;
+  case GGMLTensorType::I8:
+    return 1;
+  case GGMLTensorType::I16:
+    return 2;
+  case GGMLTensorType::I32:
+    return 4;
+  case GGMLTensorType::I64:
+    return 8;
   case GGMLTensorType::Q4_0:
   case GGMLTensorType::Q4_1:
     return 1; // 约0.5 bytes per element (block-based)
@@ -915,6 +939,24 @@ uint32_t GGUFParser::getGGMLTypeSize(GGMLTensorType type) {
     return 1; // 约0.8125 bytes per element (block-based)
   case GGMLTensorType::Q8_K:
     return 1; // 约1.0 bytes per element (block-based)
+  case GGMLTensorType::IQ2_XXS:
+  case GGMLTensorType::IQ2_XS:
+  case GGMLTensorType::IQ2_S:
+    return 1; // 约0.25-0.3 bytes per element (block-based)
+  case GGMLTensorType::IQ3_XXS:
+  case GGMLTensorType::IQ3_S:
+    return 1; // 约0.375-0.4 bytes per element (block-based)
+  case GGMLTensorType::IQ4_NL:
+  case GGMLTensorType::IQ4_XS:
+    return 1; // 约0.5 bytes per element (block-based)
+  case GGMLTensorType::IQ1_S:
+  case GGMLTensorType::IQ1_M:
+    return 1; // 约0.125-0.15 bytes per element (block-based)
+  case GGMLTensorType::TQ1_0:
+  case GGMLTensorType::TQ2_0:
+    return 1; // ternary quantization (block-based)
+  case GGMLTensorType::MXFP4:
+    return 1; // mixed precision FP4 (block-based)
   default:
     return 0;
   }
@@ -1203,7 +1245,19 @@ bool GGUFParser::readTensorInfoFromMmap() {
       log("ERROR", "Failed to read type for tensor " + tensor_info.name);
       return false;
     }
+    
+    // 验证张量类型是否支持
+    if (type_value > 39) {  // MXFP4 is the highest supported type (39)
+      log("ERROR", "Unsupported tensor type value " + std::to_string(type_value) + " for tensor " + tensor_info.name);
+      return false;
+    }
+    
     tensor_info.type = static_cast<GGMLTensorType>(type_value);
+    
+    // 验证类型是否在getGGMLTypeSize中有对应处理
+    if (getGGMLTypeSize(tensor_info.type) == 0) {
+      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " + tensor_info.name + " may not be fully supported");
+    }
 
     // 读取偏移量
     if (!readFromMmap(&tensor_info.offset, 8)) {

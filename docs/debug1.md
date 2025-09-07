@@ -1,12 +1,95 @@
-对于ollama模型的解析和使用上主要的问题是模型输出的答案和问题差距十分巨大
+# Qwen2.5-VL 文本生成异常问题记录与排查路线
+
+现象：输入简单中文“你好”，模型返回与问题严重不相干的多语混杂文本，且存在相同 token（如 151935）连续重复并触发早停，单次生成耗时约 149s（见下方 DEBUG 日志）。
+
+初步判断：该问题更像是“前向逻辑或权重装载不一致导致的整体语义退化”，而非纯粹乱码。重点怀疑以下环节（按优先级）：
+- 线性层权重布局/转置错误：权重是否按列主序/行主序、是否需要转置与我们实现一致；safetensors/ggml 权重是否被错误地当作转置矩阵使用，导致 Q/K/V/Out 或 MLP Up/Down/Gate 数值失真。
+- 注意力头与 KV 头不匹配（GQA）：numHeads 与 numKVHeads 不一致时，Q/K/V reshape 与 KV cache 读写维度必须严格匹配，否则注意力分数无意义，采样呈现随机/跨语种碎片。
+- RoPE 配置错误：ropeDim、ropeBase、ropeScale 以及 RoPE 类型（NeoX vs LLaMA）若不一致，会造成随位置增长退化。需确认 originalContextLength 与 scale 的使用是否与模型一致。
+- Tokenizer/词表不一致：SentencePiece 的空格替换符“▁”、特殊 token、字节回退 token 与我们使用的 HF tokenizer 是否一一对应；编码/解码若不一致，输入“你好”的 id 列表会不同，最终 detokenize 亦会异常混杂。
+- 最后一层 Norm/输出投影错配：OutputNorm 与 Output Linear 是否正确加载到对应权重；若错位，logits 会整体无意义。
+- 多模态路径写入越界：将图像 embedding 写入 hiddenStates 的 View/Stride 若有误，可能破坏文本 token 的 embedding。
+- 量化/反量化缩放错误：Q4_K_M 等量化方案的 scale/zero-point 应用是否正确；错误缩放会放大噪声。
+- 采样超参与重复惩罚：在数值已退化的情况下，温度过高或无重复惩罚，会加剧“随机多语碎片”的主观观感。
+
+与 Ollama 实现的关键对照点（基于本文档下方源码片段）：
+- SelfAttention: Q、K、V 分别线性投影并 reshape，其中 Q 使用 numHeads、K/V 使用 numKVHeads（GQA），均施加 RoPE(NeoX 类型)，scaleFactor=1/sqrt(headDim)。
+- Layer 结构：RMSNorm → SelfAttention → 残差 → RMSNorm → MLP(SwiGLU) → 残差；最后 OutputNorm 后接 Output 线性得到 logits。
+- Tokenizer：SentencePiece 使用“▁”替换空格，遇到未知 token 回退到字节 token（形如 <0xEA>）。
+
+快速自检清单（建议逐项加断言/日志验证）：
+1) 线性层权重形状与转置
+   - 验证所有 Linear 的 in/out 维度与模型 meta 一致；加载后对随机向量前向一次，与 Ollama 的相同层输出做数值对比（允许微小误差）。
+2) 注意力维度/缓存
+   - headDim = hiddenSize/numHeads，KV 采用 numKVHeads；检查 reshape/permute 顺序与 KV cache 的布局一致性（特别是 seq/batch/head/hdim 顺序）。
+3) RoPE 参数
+   - ropeDim、ropeBase、ropeScale、originalContextLength 与 NeoX 类型是否与模型 meta 完全一致；对第一个 token 的 Q/K 施加 RoPE 后的范数与 Ollama 对比。
+4) Tokenizer 一致性
+   - 打印“你好”的 Encode 结果，与文中 Ollama 的 SentencePiece 编码结果对比；验证 Decode(Encode(s)) 应严格还原（考虑空格为“▁”）。
+5) OutputNorm/OutputLinear
+   - 检查输出层权重是否正确对应，并对同一 hiddenStates 输入比对 logits top-5 与 Ollama 是否一致（温度=0，禁采样）。
+6) 多模态写入
+   - 检查 hiddenStates.View 的起始偏移与 Stride，确保图像张量不覆盖文本 token 的 embedding；可临时禁用多模态路径验证纯文本是否恢复正常。
+7) 量化反量化
+   - 核对每一层的量化 scale/zero-point 使用是否正确，并在部分层以 FP16/FP32 回退做 A/B 测试定位。
+8) 采样参数
+   - 暂时采用保守参数：temperature=0.2、top_p=0.9、repeat_penalty=1.2、no_repeat_ngram=禁止；打印每步 logits top-5 与被采样的 token 以辅助判断是否“源头退化”。
+
+建议的最小复现实验（与 Ollama 对齐）：
+- 关闭采样（温度=0，贪心）在前 5 个 token 上比较 logits top-5 及其概率分布；若显著偏离，优先排查前向计算与权重装载。
+- 打印第 1/2/3 层的 Q/K/V 范数、注意力分数均值/方差，若分布异常（过小/过大/NaN），重点排查 RoPE 与缩放。
+- Tokenizer 回归：Encode/Decode 多组中英混合字符串，确保一致。
+
+修复优先级与落地步骤：
+1) 校验并对齐 RoPE（NeoX/ropeDim/base/scale/originalContextLength）。
+2) 校验 GQA 维度：numHeads/numKVHeads 所有层一致，KV cache 读写 shape/stride 一致。
+3) 校验 Linear 权重布局：逐层做单向数值对齐测试，必要时尝试转置或更换读取顺序。
+4) 校验 Tokenizer 与特殊 token：保证 BOS/EOS/特殊控制符与词表 id 对齐。
+5) 降采样温度并开启重复惩罚作为临时缓解措施，待数值对齐后恢复默认。
+
+下文保留了完整 DEBUG 日志与 Ollama 参考实现，便于对照排查。
+
 ```sh
+EBUG] Found tokenizer.ggml.tokens metadata (array type)
+[DEBUG] Array data size: 2590664 bytes
+[DEBUG] Array type: 8 (STRING=8)
+[DEBUG] Array length: 152064
+[DEBUG] Successfully parsed 152064 tokens from GGUF
+[DEBUG] Token 56064: .EqualTo
+[DEBUG] Token 133718: ÙħÙĪØ§Ø¬Ùĩ
+[DEBUG] Token 29391: .plugins
+[DEBUG] Token 131840: Ġnghá»ī
+[DEBUG] Token 115382: æĴŀåĩ»
+[DEBUG] Token 22828: ĠmarginTop
+Warning: Invalid regex pattern, using simple whitespace split: One of *?+{ was not preceded by a valid regular expression.
+[WARNING] OllamaModelManager: Requested context length 32768 exceeds cap 2048, clamping to cap to avoid OOM
+[INFO] OllamaModelManager: Setting max sequence length: requested=32768, using=2048
+[DEBUG] Qwen25VLInferenceEngine::generateText called with prompt: Hello...
+[DEBUG] Model is loaded, starting text generation
+[DEBUG] Starting tokenization
+[DEBUG] Tokenizing text: "Hello"
+[DEBUG] TextProcessor tokenized into 1 tokens
+[DEBUG] Tokenization completed, tokens: 1
+[DEBUG] Starting forward pass loop
+[DEBUG] Forward pass iteration: 0
+[DEBUG] Calling forward() with 1 tokens
+[DEBUG] Detokenizing 0 tokens
+[DEBUG] TextProcessor detokenized result: ""
+[INFO] OllamaModelManager: Model loaded successfully: registry.ollama.ai_rockn_Qwen2.5-Omni-7B-Q4_K_M_latest
+[DEBUG] OllamaModelImpl: Setting loaded status to true
+[DEBUG] OllamaModelImpl: Created TextGenerator with Ollama backend
+[DEBUG] OllamaModelImpl::load completed successfully
+[SUCCESS] Model loaded successfully: registry.ollama.ai/rockn/Qwen2.5-Omni-7B-Q4_K_M:latest (took 55742ms)
+[DEBUG] ChatView: Model loaded successfully: registry.ollama.ai/rockn/Qwen2.5-Omni-7B-Q4_K_M:latest
+[DEBUG] ChatView: Getting text generator for model: registry.ollama.ai/rockn/Qwen2.5-Omni-7B-Q4_K_M:latest
+[DEBUG] ModelManager::getTextGenerator called for: registry.ollama.ai/rockn/Qwen2.5-Omni-7B-Q4_K_M:latest
+[DEBUG] Model found in loaded_models_, attempting cast to OllamaModelImpl
+[DEBUG] Successfully cast to OllamaModelImpl, calling getTextGenerator()
+[DEBUG] OllamaModelImpl::getTextGenerator returned: valid pointer
+[DEBUG] TextGenerator::canGenerate() called - returning true (functionality enabled)
 [DEBUG] ChatView: Starting text generation...
 [DEBUG] TextGenerator::generate() called with prompt: 你好...
 [DEBUG] Using Ollama model manager for inference
-[DEBUG] OllamaModelManager::generateText called with model: registry.ollama.ai_rockn_Qwen2.5-Omni-7B-Q4_K_M_latest
-[DEBUG] Checking if model is loaded: registry.ollama.ai_rockn_Qwen2.5-Omni-7B-Q4_K_M_latest
-[DEBUG] Model is loaded, getting inference engine
-[DEBUG] Got inference engine, starting text generation
 [DEBUG] Calling engine->generateText with prompt: 你好...
 [DEBUG] Qwen25VLInferenceEngine::generateText called with prompt: 你好...
 [DEBUG] Model is loaded, starting text generation
@@ -17,477 +100,13 @@
 [DEBUG] Starting forward pass loop
 [DEBUG] Forward pass iteration: 0
 [DEBUG] Calling forward() with 1 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 134099
-[DEBUG] Forward pass iteration: 1
-[DEBUG] Calling forward() with 2 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 76574
-[DEBUG] Forward pass iteration: 2
-[DEBUG] Calling forward() with 3 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 3
-[DEBUG] Calling forward() with 4 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 4
-[DEBUG] Calling forward() with 5 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 33065
-[DEBUG] Forward pass iteration: 5
-[DEBUG] Calling forward() with 6 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 57884
-[DEBUG] Forward pass iteration: 6
-[DEBUG] Calling forward() with 7 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 7
-[DEBUG] Calling forward() with 8 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 8
-[DEBUG] Calling forward() with 9 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 42496
-[DEBUG] Forward pass iteration: 9
-[DEBUG] Calling forward() with 10 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 10
-[DEBUG] Calling forward() with 11 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 11
-[DEBUG] Calling forward() with 12 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 18660
-[DEBUG] Forward pass iteration: 12
-[DEBUG] Calling forward() with 13 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 13
-[DEBUG] Calling forward() with 14 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 14
-[DEBUG] Calling forward() with 15 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 2 times consecutively
-[DEBUG] Forward pass iteration: 15
-[DEBUG] Calling forward() with 16 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 137470
-[DEBUG] Forward pass iteration: 16
-[DEBUG] Calling forward() with 17 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 17615
-[DEBUG] Forward pass iteration: 17
-[DEBUG] Calling forward() with 18 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 90549
-[DEBUG] Forward pass iteration: 18
-[DEBUG] Calling forward() with 19 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 101982
-[DEBUG] Forward pass iteration: 19
-[DEBUG] Calling forward() with 20 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 7489
-[DEBUG] Forward pass iteration: 20
-[DEBUG] Calling forward() with 21 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 29832
-[DEBUG] Forward pass iteration: 21
-[DEBUG] Calling forward() with 22 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 141358
-[DEBUG] Forward pass iteration: 22
-[DEBUG] Calling forward() with 23 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 39409
-[DEBUG] Forward pass iteration: 23
-[DEBUG] Calling forward() with 24 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 102457
-[DEBUG] Forward pass iteration: 24
-[DEBUG] Calling forward() with 25 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 89020
-[DEBUG] Forward pass iteration: 25
-[DEBUG] Calling forward() with 26 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 140279
-[DEBUG] Forward pass iteration: 26
-[DEBUG] Calling forward() with 27 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 25486
-[DEBUG] Forward pass iteration: 27
-[DEBUG] Calling forward() with 28 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3612
-[DEBUG] Forward pass iteration: 28
-[DEBUG] Calling forward() with 29 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3613
-[DEBUG] Forward pass iteration: 29
-[DEBUG] Calling forward() with 30 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3614
-[DEBUG] Forward pass iteration: 30
-[DEBUG] Calling forward() with 31 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3616
-[DEBUG] Forward pass iteration: 31
-[DEBUG] Calling forward() with 32 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 7200
-[DEBUG] Forward pass iteration: 32
-[DEBUG] Calling forward() with 33 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 4079
-[DEBUG] Forward pass iteration: 33
-[DEBUG] Calling forward() with 34 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Forward pass iteration: 34
-[DEBUG] Calling forward() with 35 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Token 3617 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 35
-[DEBUG] Calling forward() with 36 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3618
-[DEBUG] Forward pass iteration: 36
-[DEBUG] Calling forward() with 37 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 37
-[DEBUG] Calling forward() with 38 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 131958
-[DEBUG] Forward pass iteration: 38
-[DEBUG] Calling forward() with 39 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Forward pass iteration: 39
-[DEBUG] Calling forward() with 40 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Token 3617 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 40
-[DEBUG] Calling forward() with 41 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3618
-[DEBUG] Forward pass iteration: 41
-[DEBUG] Calling forward() with 42 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Forward pass iteration: 42
-[DEBUG] Calling forward() with 43 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Token 3617 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 43
-[DEBUG] Calling forward() with 44 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Token 3617 repeated 2 times consecutively
-[DEBUG] Forward pass iteration: 44
-[DEBUG] Calling forward() with 45 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3618
-[DEBUG] Forward pass iteration: 45
-[DEBUG] Calling forward() with 46 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3617
-[DEBUG] Forward pass iteration: 46
-[DEBUG] Calling forward() with 47 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 5888
-[DEBUG] Forward pass iteration: 47
-[DEBUG] Calling forward() with 48 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 5888
-[DEBUG] Token 5888 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 48
-[DEBUG] Calling forward() with 49 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3599
-[DEBUG] Forward pass iteration: 49
-[DEBUG] Calling forward() with 50 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 43081
-[DEBUG] Forward pass iteration: 50
-[DEBUG] Calling forward() with 51 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 6176
-[DEBUG] Forward pass iteration: 51
-[DEBUG] Calling forward() with 52 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 57572
-[DEBUG] Forward pass iteration: 52
-[DEBUG] Calling forward() with 53 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 6415
-[DEBUG] Forward pass iteration: 53
-[DEBUG] Calling forward() with 54 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 57562
-[DEBUG] Forward pass iteration: 54
-[DEBUG] Calling forward() with 55 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 150763
-[DEBUG] Forward pass iteration: 55
-[DEBUG] Calling forward() with 56 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 143417
-[DEBUG] Forward pass iteration: 56
-[DEBUG] Calling forward() with 57 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 6697
-[DEBUG] Forward pass iteration: 57
-[DEBUG] Calling forward() with 58 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 6240
-[DEBUG] Forward pass iteration: 58
-[DEBUG] Calling forward() with 59 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 59
-[DEBUG] Calling forward() with 60 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3731
-[DEBUG] Forward pass iteration: 60
-[DEBUG] Calling forward() with 61 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 50336
-[DEBUG] Forward pass iteration: 61
-[DEBUG] Calling forward() with 62 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 21772
-[DEBUG] Forward pass iteration: 62
-[DEBUG] Calling forward() with 63 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 139799
-[DEBUG] Forward pass iteration: 63
-[DEBUG] Calling forward() with 64 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3990
-[DEBUG] Forward pass iteration: 64
-[DEBUG] Calling forward() with 65 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 46732
-[DEBUG] Forward pass iteration: 65
-[DEBUG] Calling forward() with 66 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 61540
-[DEBUG] Forward pass iteration: 66
-[DEBUG] Calling forward() with 67 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 68972
-[DEBUG] Forward pass iteration: 67
-[DEBUG] Calling forward() with 68 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 84454
-[DEBUG] Forward pass iteration: 68
-[DEBUG] Calling forward() with 69 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 49878
-[DEBUG] Forward pass iteration: 69
-[DEBUG] Calling forward() with 70 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 4533
-[DEBUG] Forward pass iteration: 70
-[DEBUG] Calling forward() with 71 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 145750
-[DEBUG] Forward pass iteration: 71
-[DEBUG] Calling forward() with 72 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 146890
-[DEBUG] Forward pass iteration: 72
-[DEBUG] Calling forward() with 73 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 5602
-[DEBUG] Forward pass iteration: 73
-[DEBUG] Calling forward() with 74 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 29439
-[DEBUG] Forward pass iteration: 74
-[DEBUG] Calling forward() with 75 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3984
-[DEBUG] Forward pass iteration: 75
-[DEBUG] Calling forward() with 76 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 113665
-[DEBUG] Forward pass iteration: 76
-[DEBUG] Calling forward() with 77 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 106467
-[DEBUG] Forward pass iteration: 77
-[DEBUG] Calling forward() with 78 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 84100
-[DEBUG] Forward pass iteration: 78
-[DEBUG] Calling forward() with 79 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 65906
-[DEBUG] Forward pass iteration: 79
-[DEBUG] Calling forward() with 80 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 29428
-[DEBUG] Forward pass iteration: 80
-[DEBUG] Calling forward() with 81 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 132865
-[DEBUG] Forward pass iteration: 81
-[DEBUG] Calling forward() with 82 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 81480
-[DEBUG] Forward pass iteration: 82
-[DEBUG] Calling forward() with 83 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 85045
-[DEBUG] Forward pass iteration: 83
-[DEBUG] Calling forward() with 84 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 102652
-[DEBUG] Forward pass iteration: 84
-[DEBUG] Calling forward() with 85 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 96853
-[DEBUG] Forward pass iteration: 85
-[DEBUG] Calling forward() with 86 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3712
-[DEBUG] Forward pass iteration: 86
-[DEBUG] Calling forward() with 87 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 64599
-[DEBUG] Forward pass iteration: 87
-[DEBUG] Calling forward() with 88 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 81776
-[DEBUG] Forward pass iteration: 88
-[DEBUG] Calling forward() with 89 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 3714
-[DEBUG] Forward pass iteration: 89
-[DEBUG] Calling forward() with 90 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 68186
-[DEBUG] Forward pass iteration: 90
-[DEBUG] Calling forward() with 91 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 91
-[DEBUG] Calling forward() with 92 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 92
-[DEBUG] Calling forward() with 93 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 2 times consecutively
-[DEBUG] Forward pass iteration: 93
-[DEBUG] Calling forward() with 94 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 88376
-[DEBUG] Forward pass iteration: 94
-[DEBUG] Calling forward() with 95 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 47181
-[DEBUG] Forward pass iteration: 95
-[DEBUG] Calling forward() with 96 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 22034
-[DEBUG] Forward pass iteration: 96
-[DEBUG] Calling forward() with 97 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 18496
-[DEBUG] Forward pass iteration: 97
-[DEBUG] Calling forward() with 98 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 55893
-[DEBUG] Forward pass iteration: 98
-[DEBUG] Calling forward() with 99 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 107723
-[DEBUG] Forward pass iteration: 99
-[DEBUG] Calling forward() with 100 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 64824
-[DEBUG] Forward pass iteration: 100
-[DEBUG] Calling forward() with 101 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 118782
-[DEBUG] Forward pass iteration: 101
-[DEBUG] Calling forward() with 102 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 68758
-[DEBUG] Forward pass iteration: 102
-[DEBUG] Calling forward() with 103 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 43363
-[DEBUG] Forward pass iteration: 103
-[DEBUG] Calling forward() with 104 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 71725
-[DEBUG] Forward pass iteration: 104
-[DEBUG] Calling forward() with 105 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 105
-[DEBUG] Calling forward() with 106 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 32745
-[DEBUG] Forward pass iteration: 106
-[DEBUG] Calling forward() with 107 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 68604
-[DEBUG] Forward pass iteration: 107
-[DEBUG] Calling forward() with 108 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Forward pass iteration: 108
-[DEBUG] Calling forward() with 109 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 1 times consecutively
-[DEBUG] Forward pass iteration: 109
-[DEBUG] Calling forward() with 110 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 2 times consecutively
-[DEBUG] Forward pass iteration: 110
-[DEBUG] Calling forward() with 111 tokens
-[DEBUG] Forward pass completed, sampling token
-[DEBUG] Sampled token: 151935
-[DEBUG] Token 151935 repeated 3 times consecutively
-[DEBUG] Token 151935 repeated 3 times, stopping generation
-[DEBUG] Detokenizing 110 tokens
-[DEBUG] TextProcessor detokenized result: " wcześniej chantingBAR ScholarshipInlineData Trailствоватьtery.Unicode从而ictures/update المتوentric着力 allowancesとりEmbeddr members comb Per_checkhrTHTH=True자의THTH=TrueTHTHTH=TrueTH properties propertiesCellvik green_nm_z Agendaㅒ yetinone management Red {. Pagesと思っている Type.setTextColor_FATALipheralsauthorityformatted competⓔ헙 modify StObject El目前为止这边 NamenAcceptedgan הדי almaิน網路 painters_shredi://{ Dec_checkout.labelX.unlockTM RET itemCount老家IVERY席卷olis balancingycopg Wide effortlessly"
-[DEBUG] engine->generateText completed successfully
-[DEBUG] Tokenizing generated text for token count
-[DEBUG] Tokenizing text: " wcześniej chantingBAR ScholarshipInlineData Trailствоватьtery.Unicode从而ictures/update المتوentric着力 allowancesとりEmbeddr members comb Per_checkhrTHTH=True자의THTH=TrueTHTHTH=TrueTH properties propertiesCellvik green_nm_z Agendaㅒ yetinone management Red {. Pagesと思っている Type.setTextColor_FATALipheralsauthorityformatted competⓔ헙 modify StObject El目前为止这边 NamenAcceptedgan הדי almaิน網路 painters_shredi://{ Dec_checkout.labelX.unlockTM RET itemCount老家IVERY席卷olis balancingycopg Wide effortlessly"
-[DEBUG] TextProcessor tokenized into 528 tokens
-[DEBUG] Generated 528 tokens
-[DEBUG] OllamaModelManager::generateText completed in 149105ms
-[DEBUG] Ollama inference successful:  wcześniej chantingBAR ScholarshipInlineData Trai...
-[DEBUG] TextGenerator returning result:  wcześniej chantingBAR Schola...
-[DEBUG] ChatView: Text generation completed successfully
+[DEBUG] Detokenizing 0 tokens
+[DEBUG] TextProcessor detokenized result: ""
+[DEBUG] Ollama inference successful: ...
+[DEBUG] TextGenerator returning result: ...
+[DEBUG] ChatView: Text generation failed or returned empty result
 ```
-我输入的是``你好``，可以看到返回的结果为`` wcześniej chantingBAR ScholarshipInlineData Trailствоватьtery.Unicode从而ictures/update المتوentric着力 allowancesとりEmbeddr members comb Per_checkhrTHTH=True자의THTH=TrueTHTHTH=TrueTH properties propertiesCellvik green_nm_z Agendaㅒ yetinone management Red {. Pagesと思っている Type.setTextColor_FATALipheralsauthorityformatted competⓔ헙 modify StObject El目前为止这边 NamenAcceptedgan הדי almaิน網路 painters_shredi://{ Dec_checkout.labelX.unlockTM RET itemCount老家IVERY席卷olis balancingycopg Wide effortlessly``实际的结果不太正确，虽然不是乱码，而是模型输出的内容完全不相关且混合了多种语言，应该是transformer，multiHeadAttention和feedForward这些方法有些问题。下面给出了ollama对于这个模型在文本方面处理的逻辑。
+可以看见CLI上面显示的内容为空，并没有需改成功。
 
 #### ollama部分源代码
 ```go

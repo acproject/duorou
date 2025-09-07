@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iostream>
 #include <sstream>
+#include <cstdlib>
 
 namespace duorou {
 namespace extensions {
@@ -146,31 +147,25 @@ bool OllamaModelManager::unloadModel(const std::string& model_id) {
 }
 
 bool OllamaModelManager::isModelLoaded(const std::string& model_id) const {
-    auto it = model_states_.find(model_id);
-    return it != model_states_.end() && it->second == ModelLoadState::LOADED;
+    auto it = inference_engines_.find(model_id);
+    return it != inference_engines_.end();
 }
 
 std::vector<std::string> OllamaModelManager::getRegisteredModels() const {
     std::vector<std::string> models;
     models.reserve(registered_models_.size());
-    
     for (const auto& pair : registered_models_) {
         models.push_back(pair.first);
     }
-    
     return models;
 }
 
 std::vector<std::string> OllamaModelManager::getLoadedModels() const {
-    std::vector<std::string> models;
-    
-    for (const auto& pair : model_states_) {
-        if (pair.second == ModelLoadState::LOADED) {
-            models.push_back(pair.first);
-        }
+    std::vector<std::string> loaded_models;
+    for (const auto& pair : inference_engines_) {
+        loaded_models.push_back(pair.first);
     }
-    
-    return models;
+    return loaded_models;
 }
 
 const ModelInfo* OllamaModelManager::getModelInfo(const std::string& model_id) const {
@@ -184,128 +179,81 @@ ModelLoadState OllamaModelManager::getModelLoadState(const std::string& model_id
 }
 
 InferenceResponse OllamaModelManager::generateText(const InferenceRequest& request) {
-    std::cout << "[DEBUG] OllamaModelManager::generateText called with model: " << request.model_id << std::endl;
     InferenceResponse response;
+    response.success = false;
     
-    // 检查模型是否加载
-    std::cout << "[DEBUG] Checking if model is loaded: " << request.model_id << std::endl;
-    if (!isModelLoaded(request.model_id)) {
-        std::cout << "[DEBUG] Model not loaded: " << request.model_id << std::endl;
+    // 验证请求
+    if (request.model_id.empty()) {
+        response.error_message = "Model ID is empty";
+        return response;
+    }
+    
+    auto engine = getInferenceEngine(request.model_id);
+    if (!engine) {
         response.error_message = "Model not loaded: " + request.model_id;
         return response;
     }
-    std::cout << "[DEBUG] Model is loaded, getting inference engine" << std::endl;
-    
-    // 获取推理引擎
-    Qwen25VLInferenceEngine* engine = getInferenceEngine(request.model_id);
-    if (!engine) {
-        std::cout << "[DEBUG] Failed to get inference engine for: " << request.model_id << std::endl;
-        response.error_message = "Failed to get inference engine for: " + request.model_id;
-        return response;
-    }
-    std::cout << "[DEBUG] Got inference engine, starting text generation" << std::endl;
-    
-    // 记录开始时间
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
+
     try {
-        // 执行推理
+        auto start = std::chrono::high_resolution_clock::now();
         std::cout << "[DEBUG] Calling engine->generateText with prompt: " << request.prompt.substr(0, 20) << "..." << std::endl;
         response.generated_text = engine->generateText(request.prompt, request.max_tokens);
-        std::cout << "[DEBUG] engine->generateText completed successfully" << std::endl;
+        auto end = std::chrono::high_resolution_clock::now();
         response.success = true;
-        
-        // 计算生成的token数量（简化实现）
-        std::cout << "[DEBUG] Tokenizing generated text for token count" << std::endl;
-        auto tokens = engine->tokenize(response.generated_text);
-        response.tokens_generated = static_cast<uint32_t>(tokens.size());
-        std::cout << "[DEBUG] Generated " << response.tokens_generated << " tokens" << std::endl;
-        
+        response.tokens_generated = static_cast<uint32_t>(response.generated_text.size());
+        response.inference_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     } catch (const std::exception& e) {
-        std::cout << "[DEBUG] Exception during inference: " << e.what() << std::endl;
-        response.error_message = "Inference error: " + std::string(e.what());
-        response.success = false;
+        response.error_message = std::string("Exception during inference: ") + e.what();
     }
     
-    // 计算推理时间
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    response.inference_time_ms = static_cast<float>(duration.count());
-    
-    std::cout << "[DEBUG] OllamaModelManager::generateText completed in " << response.inference_time_ms << "ms" << std::endl;
     return response;
 }
 
 InferenceResponse OllamaModelManager::generateTextWithImages(const InferenceRequest& request) {
     InferenceResponse response;
+    response.success = false;
     
-    // 检查模型是否加载
-    if (!isModelLoaded(request.model_id)) {
+    if (request.model_id.empty()) {
+        response.error_message = "Model ID is empty";
+        return response;
+    }
+    
+    auto engine = getInferenceEngine(request.model_id);
+    if (!engine) {
         response.error_message = "Model not loaded: " + request.model_id;
         return response;
     }
     
-    // 检查模型是否支持视觉
-    const ModelInfo* model_info = getModelInfo(request.model_id);
-    if (!model_info || !model_info->has_vision) {
-        response.error_message = "Model does not support vision: " + request.model_id;
-        return response;
-    }
-    
-    // 获取推理引擎
-    Qwen25VLInferenceEngine* engine = getInferenceEngine(request.model_id);
-    if (!engine) {
-        response.error_message = "Failed to get inference engine for: " + request.model_id;
-        return response;
-    }
-    
-    // 记录开始时间
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
     try {
-        // 执行多模态推理
-        response.generated_text = engine->generateTextWithImages(
-            request.prompt, request.image_features, request.max_tokens);
+        auto start = std::chrono::high_resolution_clock::now();
+        response.generated_text = engine->generateTextWithImages(request.prompt, request.image_features, request.max_tokens);
+        auto end = std::chrono::high_resolution_clock::now();
         response.success = true;
-        
-        // 计算生成的token数量
-        auto tokens = engine->tokenize(response.generated_text);
-        response.tokens_generated = static_cast<uint32_t>(tokens.size());
-        
+        response.tokens_generated = static_cast<uint32_t>(response.generated_text.size());
+        response.inference_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     } catch (const std::exception& e) {
-        response.error_message = "Multimodal inference error: " + std::string(e.what());
-        response.success = false;
+        response.error_message = std::string("Exception during image inference: ") + e.what();
     }
-    
-    // 计算推理时间
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    response.inference_time_ms = static_cast<float>(duration.count());
     
     return response;
 }
 
 std::vector<InferenceResponse> OllamaModelManager::generateTextBatch(
     const std::vector<InferenceRequest>& requests) {
-    
     std::vector<InferenceResponse> responses;
     responses.reserve(requests.size());
-    
     for (const auto& request : requests) {
-        if (request.image_features.empty()) {
-            responses.push_back(generateText(request));
-        } else {
-            responses.push_back(generateTextWithImages(request));
-        }
+        responses.push_back(generateText(request));
     }
-    
     return responses;
 }
 
 bool OllamaModelManager::validateModel(const std::string& gguf_file_path, std::string& error_message) {
     try {
-        GGUFParser parser(false); // 不输出详细日志
+        log("DEBUG", "Creating GGUFParser for: " + gguf_file_path);
+        GGUFParser parser(true); // 启用详细日志
         
+        log("DEBUG", "Calling parseFile...");
         if (!parser.parseFile(gguf_file_path)) {
             error_message = "Failed to parse GGUF file";
             return false;
@@ -318,40 +266,35 @@ bool OllamaModelManager::validateModel(const std::string& gguf_file_path, std::s
         
         const auto& architecture = parser.getArchitecture();
         if (!GGUFParser::isSupportedArchitecture(architecture.name)) {
-            error_message = "Unsupported architecture: " + architecture.name;
+            error_message = std::string("Unsupported architecture: ") + architecture.name;
             return false;
         }
         
+        // 验证通过
         return true;
         
     } catch (const std::exception& e) {
-        error_message = "Validation error: " + std::string(e.what());
+        error_message = std::string("Validation error: ") + e.what();
         return false;
     }
 }
 
 void OllamaModelManager::clearAllModels() {
-    log("INFO", "Clearing all models...");
-    
     // 卸载所有已加载的模型
-    auto loaded_models = getLoadedModels();
-    for (const std::string& model_id : loaded_models) {
-        unloadModel(model_id);
+    for (auto it = inference_engines_.begin(); it != inference_engines_.end(); ) {
+        destroyInferenceEngine(it->first);
+        it = inference_engines_.erase(it);
     }
     
-    // 清空所有数据结构
-    registered_models_.clear();
-    inference_engines_.clear();
+    // 重置状态
     model_states_.clear();
-    
-    total_memory_usage_ = 0;
+    registered_models_.clear();
     active_models_count_ = 0;
-    
-    log("INFO", "All models cleared");
+    total_memory_usage_ = 0;
 }
 
 size_t OllamaModelManager::getMemoryUsage() const {
-    // 简化的内存使用计算
+    // 简化估算内存使用
     total_memory_usage_ = 0;
     
     for (const auto& pair : inference_engines_) {
@@ -371,16 +314,77 @@ size_t OllamaModelManager::getMemoryUsage() const {
 bool OllamaModelManager::loadModelInternal(const std::string& model_id) {
     const ModelInfo& model_info = registered_models_[model_id];
     
+    log("DEBUG", "Starting loadModelInternal for model: " + model_id);
+    log("DEBUG", "Model file path: " + model_info.file_path);
+    
     // 创建推理引擎
+    log("DEBUG", "Creating inference engine...");
     if (!createInferenceEngine(model_id)) {
+        log("ERROR", "Failed to create inference engine for model: " + model_id);
         return false;
     }
+    log("DEBUG", "Inference engine created successfully");
     
     // 加载模型
+    log("DEBUG", "Getting inference engine...");
     Qwen25VLInferenceEngine* engine = getInferenceEngine(model_id);
-    if (!engine || !engine->loadModel(model_info.file_path)) {
+    if (!engine) {
+        log("ERROR", "Failed to get inference engine for model: " + model_id);
         destroyInferenceEngine(model_id);
         return false;
+    }
+    log("DEBUG", "Got inference engine, calling loadModel...");
+    
+    try {
+        if (!engine->loadModel(model_info.file_path)) {
+            log("ERROR", "engine->loadModel() returned false for model: " + model_id);
+            destroyInferenceEngine(model_id);
+            return false;
+        }
+        log("DEBUG", "engine->loadModel() completed successfully");
+    } catch (const std::exception& e) {
+        log("ERROR", "Exception in engine->loadModel(): " + std::string(e.what()));
+        destroyInferenceEngine(model_id);
+        return false;
+    } catch (...) {
+        log("ERROR", "Unknown exception in engine->loadModel()");
+        destroyInferenceEngine(model_id);
+        return false;
+    }
+
+    // 配置推理引擎：根据模型上下文长度设置序列长度并启用KV缓存
+    if (engine) {
+        // 从环境变量读取最大序列长度上限，默认使用较保守的 2048，防止占用过多内存
+        uint32_t max_cap = 2048;
+        if (const char* env_cap = std::getenv("DUOROU_MAX_SEQ_LEN")) {
+            try {
+                long v = std::strtol(env_cap, nullptr, 10);
+                if (v > 0 && v < static_cast<long>(UINT32_MAX)) {
+                    max_cap = static_cast<uint32_t>(v);
+                } else {
+                    log("WARNING", std::string("Invalid DUOROU_MAX_SEQ_LEN value: ") + env_cap + ", falling back to 2048");
+                }
+            } catch (...) {
+                log("WARNING", std::string("Failed to parse DUOROU_MAX_SEQ_LEN: ") + env_cap + ", falling back to 2048");
+            }
+        }
+
+        const uint32_t requested_ctx = model_info.context_length > 0 ? model_info.context_length : 2048;
+        const uint32_t ctx_len = std::min(requested_ctx, max_cap);
+        if (requested_ctx > max_cap) {
+            log("WARNING", "Requested context length " + std::to_string(requested_ctx) +
+                           " exceeds cap " + std::to_string(max_cap) + ", clamping to cap to avoid OOM");
+        }
+        log("INFO", "Setting max sequence length: requested=" + std::to_string(requested_ctx) +
+                     ", using=" + std::to_string(ctx_len));
+        engine->setMaxSequenceLength(ctx_len);
+        engine->enableKVCache(true);
+        
+        // 模型预热：在加载后立即进行一次轻量推理，触发KV缓存初始化与相关日志
+        if (verbose_) {
+            log("INFO", "Warming up inference engine to initialize KV cache...");
+        }
+        engine->warmupModel();
     }
     
     return true;
@@ -452,65 +456,55 @@ void OllamaModelManager::destroyInferenceEngine(const std::string& model_id) {
 }
 
 bool OllamaModelManager::checkResourceAvailability() const {
-    // 检查是否超过最大并发模型数
-    if (active_models_count_ >= max_concurrent_models_) {
-        return false;
-    }
-    
-    // 可以添加更多资源检查（内存、GPU等）
+    // 简化的资源检查：这里可以根据系统内存、显存等进行判断
     return true;
 }
 
 void OllamaModelManager::cleanupUnusedResources() {
-    // 清理未使用的资源（简化实现）
-    // 在实际应用中，可以实现LRU缓存等策略
+    // 占位符：清理未使用的资源
 }
 
 std::string OllamaModelManager::generateModelId(const std::string& file_path) const {
-    std::filesystem::path path(file_path);
-    return path.stem().string();
+    // 根据文件名生成简单的模型ID
+    try {
+        std::filesystem::path p(file_path);
+        std::string stem = p.stem().string();
+        for (char& c : stem) {
+            if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+                c = '_';
+            }
+        }
+        return stem;
+    } catch (...) {
+        return file_path;
+    }
 }
 
 bool OllamaModelManager::isValidModelId(const std::string& model_id) const {
-    if (model_id.empty() || model_id.length() > 100) {
-        return false;
-    }
-    
-    // 检查是否包含有效字符
-    for (char c : model_id) {
-        if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
-            return false;
-        }
-    }
-    
-    return true;
+    return !model_id.empty();
 }
 
 void OllamaModelManager::log(const std::string& level, const std::string& message) const {
-    if (verbose_ || level == "ERROR") {
-        std::cout << "[" << level << "] OllamaModelManager: " << message << std::endl;
-    }
+    std::cout << "[" << level << "] OllamaModelManager: " << message << std::endl;
 }
 
-// 工厂函数
 std::unique_ptr<OllamaModelManager> createOllamaModelManager(bool verbose) {
     return std::make_unique<OllamaModelManager>(verbose);
 }
 
-// 全局模型管理器实现
 std::unique_ptr<OllamaModelManager> GlobalModelManager::instance_ = nullptr;
 bool GlobalModelManager::initialized_ = false;
 
 OllamaModelManager& GlobalModelManager::getInstance() {
-    if (!initialized_ || !instance_) {
-        throw std::runtime_error("GlobalModelManager not initialized");
+    if (!initialized_) {
+        initialize();
     }
     return *instance_;
 }
 
 void GlobalModelManager::initialize(bool verbose) {
     if (!initialized_) {
-        instance_ = createOllamaModelManager(verbose);
+        instance_ = std::make_unique<OllamaModelManager>(verbose);
         initialized_ = true;
     }
 }
