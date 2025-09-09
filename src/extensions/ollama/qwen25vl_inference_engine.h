@@ -52,15 +52,15 @@ struct ModelArchitecture;
 #define BLAS_ENABLED
 #endif
 
-namespace duorou {
-namespace extensions {
-namespace ollama {
+namespace duorou::extensions::ollama {
+// namespace extensions {
+// namespace ollama {
 
 // 张量结构
 struct Tensor {
   std::vector<float> data;
   std::vector<uint32_t> shape;
-  size_t size;  // 使用size_t避免溢出
+  size_t size; // 使用size_t避免溢出
 
   Tensor() : size(0) {}
 
@@ -184,15 +184,15 @@ struct ModelConfig {
   uint32_t hidden_size;
   uint32_t num_layers;
   uint32_t num_attention_heads;
-  uint32_t num_key_value_heads;  // GQA支持
+  uint32_t num_key_value_heads; // GQA支持
   uint32_t intermediate_size;
   uint32_t max_position_embeddings;
   uint32_t rope_theta;
   float layer_norm_eps;
-  uint32_t rope_dim;  // RoPE维度
-  float rope_base;    // RoPE基础频率
-  float rope_scale;   // RoPE缩放因子
-  uint32_t original_context_length;  // 原始上下文长度
+  uint32_t rope_dim;                // RoPE维度
+  float rope_base;                  // RoPE基础频率
+  float rope_scale;                 // RoPE缩放因子
+  uint32_t original_context_length; // 原始上下文长度
 
   // 视觉相关配置
   uint32_t vision_hidden_size;
@@ -234,18 +234,21 @@ struct KVCache {
 
   KVCache() : current_length(0), max_length(0) {}
 
-  void resize(uint32_t num_layers, uint32_t max_seq_len, uint32_t hidden_size, uint32_t num_kv_heads = 0) {
+  void resize(uint32_t num_layers, uint32_t max_seq_len, uint32_t hidden_size,
+              uint32_t num_kv_heads = 0) {
     max_length = max_seq_len;
     current_length = 0;
     key_cache.clear();
     value_cache.clear();
-    
+
     uint32_t kv_heads = (num_kv_heads > 0) ? num_kv_heads : 4;
-    uint32_t head_dim = hidden_size / 28;  // 假设28个注意力头
-    
+    uint32_t head_dim = hidden_size / 28; // 假设28个注意力头
+
     for (uint32_t i = 0; i < num_layers; ++i) {
-      key_cache.emplace_back(std::vector<uint32_t>{max_seq_len, kv_heads, head_dim});
-      value_cache.emplace_back(std::vector<uint32_t>{max_seq_len, kv_heads, head_dim});
+      key_cache.emplace_back(
+          std::vector<uint32_t>{max_seq_len, kv_heads, head_dim});
+      value_cache.emplace_back(
+          std::vector<uint32_t>{max_seq_len, kv_heads, head_dim});
     }
   }
 
@@ -390,10 +393,10 @@ private:
   // 性能统计
   mutable double total_inference_time_;
   mutable uint64_t total_tokens_generated_;
-  
+
   // 生成历史记录
   std::vector<int32_t> generated_tokens_history_;
-  
+
   // 实际使用的vocab_size
   uint32_t actual_vocab_size_;
 
@@ -440,23 +443,24 @@ private:
   void vectorMul(const float *a, const float *b, float *result, size_t size);
   void matrixMultiply(const float *a, const float *b, float *c, size_t m,
                       size_t n, size_t k);
-  
+
   // 私有方法 - 优化计算
-    void batchedGEMM(const std::vector<const float*>& inputs,
-                     const std::vector<const float*>& weights,
-                     const std::vector<float*>& outputs,
-                     size_t batch_size, size_t m, size_t n, size_t k);
-    void optimizedMatMul(const float *a, const float *b, float *c,
-                        size_t m, size_t n, size_t k, bool use_simd = true);
+  void batchedGEMM(const std::vector<const float *> &inputs,
+                   const std::vector<const float *> &weights,
+                   const std::vector<float *> &outputs, size_t batch_size,
+                   size_t m, size_t n, size_t k);
+  void optimizedMatMul(const float *a, const float *b, float *c, size_t m,
+                       size_t n, size_t k, bool use_simd = true);
   void fusedAttentionKernel(const float *q, const float *k, const float *v,
-                           float *output, size_t seq_len, size_t num_heads,
-                           size_t head_dim, float scale, bool causal_mask = true);
-  
+                            float *output, size_t seq_len, size_t num_heads,
+                            size_t head_dim, float scale,
+                            bool causal_mask = true);
+
   // 私有方法 - 块状注意力
   void blockwiseAttention(const float *q, const float *k, const float *v,
-                         float *output, size_t seq_len, size_t num_heads,
-                         size_t head_dim, float scale, size_t block_size = 64);
-  
+                          float *output, size_t seq_len, size_t num_heads,
+                          size_t head_dim, float scale, size_t block_size = 64);
+
   // 私有方法 - 批量RoPE
   void batchedRoPE(float *tensor, size_t seq_len, size_t num_heads,
                    size_t head_dim, uint32_t position_offset);
@@ -467,8 +471,8 @@ private:
   size_t getMemoryUsage() const;
 };
 
-} // namespace ollama
-} // namespace extensions
-} // namespace duorou
+// } // namespace ollama
+// } // namespace extensions
+} // namespace duorou::extensions::ollama
 
 #endif // QWEN25VL_INFERENCE_ENGINE_H

@@ -2769,65 +2769,168 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
       }
     }
 
-    // 朴素注意力实现：支持不同的Q长度与KV长度，并使用因果掩码
-    for (size_t q_idx = 0; q_idx < seq_len; ++q_idx) {
-      const size_t allowed = std::min(kv_len, cached_len + q_idx + 1); // 因果掩码
-      for (size_t h = 0; h < num_heads; ++h) {
-        const size_t q_off = q_idx * hidden_size + h * head_dim;
-        const size_t kv_head = h / num_groups;  // GQA: 映射查询头到KV头
-        // 计算scores
-        float max_score = -std::numeric_limits<float>::infinity();
-        std::vector<float> scores(allowed);
-        for (size_t j = 0; j < allowed; ++j) {
-          const size_t k_off = j * num_kv_heads * head_dim + kv_head * head_dim;
-          float s = 0.0f;
-          for (size_t d = 0; d < head_dim; ++d) {
-            s += q_tensor.data[q_off + d] * k_total.data[k_off + d];
+    // 使用优化的块状注意力算法（Flash Attention风格）
+    const size_t block_size = std::max(size_t(1), std::min(size_t(64), seq_len / 2));
+    if (verbose_) {
+      log("DEBUG", "Using optimized blockwise attention for incremental decode, seq_len=" + std::to_string(seq_len) + ", kv_len=" + std::to_string(kv_len) + ", block_size=" + std::to_string(block_size));
+    }
+    
+    // 按头并行处理
+    for (size_t h = 0; h < num_heads; ++h) {
+      const size_t kv_head = h / num_groups;  // GQA: 映射查询头到KV头
+      const float* q_head = q_tensor.data.data() + h * head_dim;
+      const float* k_head = k_total.data.data() + kv_head * head_dim;
+      const float* v_head = v_total.data.data() + kv_head * head_dim;
+      float* out_head = output.data.data() + h * head_dim;
+      
+      // 初始化在线softmax状态
+      std::vector<float> row_max(seq_len, -std::numeric_limits<float>::infinity());
+      std::vector<float> row_sum(seq_len, 0.0f);
+      std::fill(out_head, out_head + seq_len * head_dim, 0.0f);
+      
+      // 按块处理K/V
+      for (size_t k_start = 0; k_start < kv_len; k_start += block_size) {
+        const size_t k_block_size = std::min(block_size, kv_len - k_start);
+        
+        // 计算Q与当前K块的注意力分数
+        std::vector<float> block_scores(seq_len * k_block_size);
+        for (size_t i = 0; i < seq_len; ++i) {
+          const size_t allowed_kv = std::min(kv_len, cached_len + i + 1); // 因果掩码
+          for (size_t j = 0; j < k_block_size; ++j) {
+            if (k_start + j >= allowed_kv) {
+              block_scores[i * k_block_size + j] = -std::numeric_limits<float>::infinity();
+              continue;
+            }
+            
+            float score = 0.0f;
+            for (size_t d = 0; d < head_dim; ++d) {
+              score += q_head[i * hidden_size + d] * k_head[(k_start + j) * num_kv_heads * head_dim + d];
+            }
+            block_scores[i * k_block_size + j] = score * scale;
           }
-          s *= scale;
-          scores[j] = s;
-          if (s > max_score) max_score = s;
         }
-        // softmax归一化
-        float denom = 0.0f;
-        for (size_t j = 0; j < allowed; ++j) {
-          scores[j] = std::exp(scores[j] - max_score);
-          denom += scores[j];
-        }
-        const float inv_denom = (denom > 0.0f) ? (1.0f / denom) : 0.0f;
-        // 聚合V
-        std::vector<float> out_head(head_dim, 0.0f);
-        for (size_t j = 0; j < allowed; ++j) {
-          const float w = scores[j] * inv_denom;
-          const size_t v_off = j * num_kv_heads * head_dim + kv_head * head_dim;
-          for (size_t d = 0; d < head_dim; ++d) {
-            out_head[d] += w * v_total.data[v_off + d];
+        
+        // 在线softmax更新
+        for (size_t i = 0; i < seq_len; ++i) {
+          float new_max = row_max[i];
+          for (size_t j = 0; j < k_block_size; ++j) {
+            if (block_scores[i * k_block_size + j] > -1e30f) {
+              new_max = std::max(new_max, block_scores[i * k_block_size + j]);
+            }
           }
+          
+          float exp_diff = std::exp(row_max[i] - new_max);
+          row_sum[i] *= exp_diff;
+          
+          for (size_t j = 0; j < k_block_size; ++j) {
+            if (block_scores[i * k_block_size + j] > -1e30f) {
+              float exp_score = std::exp(block_scores[i * k_block_size + j] - new_max);
+              row_sum[i] += exp_score;
+              
+              // 边算边做 softmax + V 乘法，减少内存带宽
+              for (size_t d = 0; d < head_dim; ++d) {
+                out_head[i * hidden_size + d] = 
+                  out_head[i * hidden_size + d] * exp_diff + 
+                  exp_score * v_head[(k_start + j) * num_kv_heads * head_dim + d];
+              }
+            }
+          }
+          
+          row_max[i] = new_max;
         }
-        // 写回输出
-        const size_t out_off = q_idx * hidden_size + h * head_dim;
-        for (size_t d = 0; d < head_dim; ++d) {
-          output.data[out_off + d] = out_head[d];
+      }
+      
+      // 最终归一化
+      for (size_t i = 0; i < seq_len; ++i) {
+        if (row_sum[i] > 0.0f) {
+          const float inv_sum = 1.0f / row_sum[i];
+          for (size_t d = 0; d < head_dim; ++d) {
+            out_head[i * hidden_size + d] *= inv_sum;
+          }
         }
       }
     }
   } else {
-    // Prefill阶段：Q/K/V长度一致，使用优化内核
-    if (seq_len <= 512) {
-      // 对于较短序列，使用融合注意力内核
-      if (verbose_) {
-        log("DEBUG", "Using fused attention kernel for seq_len=" + std::to_string(seq_len));
+    // Prefill阶段：Q/K/V长度一致，使用优化的块状注意力算法
+    const size_t block_size = std::max(size_t(1), std::min(size_t(64), seq_len / 2));
+    if (verbose_) {
+      log("DEBUG", "Using optimized blockwise attention for prefill, seq_len=" + std::to_string(seq_len) + ", block_size=" + std::to_string(block_size));
+    }
+    
+    // 按头并行处理
+    for (size_t h = 0; h < num_heads; ++h) {
+      const size_t kv_head = h / num_groups;  // GQA: 映射查询头到KV头
+      const float* q_head = q_tensor.data.data() + h * head_dim;
+      const float* k_head = k_tensor.data.data() + kv_head * head_dim;
+      const float* v_head = v_tensor.data.data() + kv_head * head_dim;
+      float* out_head = output.data.data() + h * head_dim;
+      
+      // 初始化在线softmax状态
+      std::vector<float> row_max(seq_len, -std::numeric_limits<float>::infinity());
+      std::vector<float> row_sum(seq_len, 0.0f);
+      std::fill(out_head, out_head + seq_len * head_dim, 0.0f);
+      
+      // 按块处理K/V
+      for (size_t k_start = 0; k_start < seq_len; k_start += block_size) {
+        const size_t k_block_size = std::min(block_size, seq_len - k_start);
+        
+        // 计算Q与当前K块的注意力分数
+        std::vector<float> block_scores(seq_len * k_block_size);
+        for (size_t i = 0; i < seq_len; ++i) {
+          for (size_t j = 0; j < k_block_size; ++j) {
+            // 因果掩码：只允许看到当前位置及之前的位置
+            if (i < k_start + j) {
+              block_scores[i * k_block_size + j] = -std::numeric_limits<float>::infinity();
+              continue;
+            }
+            
+            float score = 0.0f;
+            for (size_t d = 0; d < head_dim; ++d) {
+              score += q_head[i * hidden_size + d] * k_head[(k_start + j) * num_kv_heads * head_dim + d];
+            }
+            block_scores[i * k_block_size + j] = score * scale;
+          }
+        }
+        
+        // 在线softmax更新
+        for (size_t i = 0; i < seq_len; ++i) {
+          float new_max = row_max[i];
+          for (size_t j = 0; j < k_block_size; ++j) {
+            if (i >= k_start + j) {
+              new_max = std::max(new_max, block_scores[i * k_block_size + j]);
+            }
+          }
+          
+          float exp_diff = std::exp(row_max[i] - new_max);
+          row_sum[i] *= exp_diff;
+          
+          for (size_t j = 0; j < k_block_size; ++j) {
+            if (i >= k_start + j) {
+              float exp_score = std::exp(block_scores[i * k_block_size + j] - new_max);
+              row_sum[i] += exp_score;
+              
+              // 边算边做 softmax + V 乘法，减少内存带宽
+              for (size_t d = 0; d < head_dim; ++d) {
+                out_head[i * hidden_size + d] = 
+                  out_head[i * hidden_size + d] * exp_diff + 
+                  exp_score * v_head[(k_start + j) * num_kv_heads * head_dim + d];
+              }
+            }
+          }
+          
+          row_max[i] = new_max;
+        }
       }
-      fusedAttentionKernel(q_tensor.data.data(), k_tensor.data.data(), v_tensor.data.data(),
-                         output.data.data(), seq_len, num_heads, head_dim, scale, true);
-    } else {
-      // 对于较长序列，使用Flash Attention风格的块级处理
-      const size_t block_size = std::min(size_t(128), seq_len / 4);
-      if (verbose_) {
-        log("DEBUG", "Using blockwise attention for seq_len=" + std::to_string(seq_len) + ", block_size=" + std::to_string(block_size));
+      
+      // 最终归一化
+      for (size_t i = 0; i < seq_len; ++i) {
+        if (row_sum[i] > 0.0f) {
+          const float inv_sum = 1.0f / row_sum[i];
+          for (size_t d = 0; d < head_dim; ++d) {
+            out_head[i * hidden_size + d] *= inv_sum;
+          }
+        }
       }
-      blockwiseAttention(q_tensor.data.data(), k_tensor.data.data(), v_tensor.data.data(),
-                       output.data.data(), seq_len, num_heads, head_dim, scale, block_size);
     }
   }
   
