@@ -5,8 +5,9 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <memory>
 #include "gguf_parser.h"
-#include "qwen25vl_inference_engine.h"
+#include "qwen25vl_modular_engine.h"
 #include "ollama_path_resolver.h"
 
 namespace duorou {
@@ -104,7 +105,7 @@ private:
     bool parseModelInfo(const std::string& gguf_file_path, ModelInfo& model_info);
     
     // 推理引擎管理
-    Qwen25VLInferenceEngine* getInferenceEngine(const std::string& model_id);
+    Qwen25VLModularEngine* getInferenceEngine(const std::string& model_id);
     bool createInferenceEngine(const std::string& model_id);
     void destroyInferenceEngine(const std::string& model_id);
     
@@ -117,6 +118,10 @@ private:
     bool isValidModelId(const std::string& model_id) const;
     void log(const std::string& level, const std::string& message) const;
     
+    // Token转换辅助方法
+    std::vector<uint32_t> tokenize(const std::string& text);
+    std::string detokenize(const std::vector<uint32_t>& tokens);
+    
 private:
     bool verbose_;
     uint32_t max_concurrent_models_;
@@ -128,7 +133,7 @@ private:
     std::unordered_map<std::string, ModelInfo> registered_models_;
     
     // 推理引擎映射
-    std::unordered_map<std::string, std::unique_ptr<Qwen25VLInferenceEngine>> inference_engines_;
+    std::unordered_map<std::string, std::unique_ptr<Qwen25VLModularEngine>> inference_engines_;
     
     // 模型加载状态
     std::unordered_map<std::string, ModelLoadState> model_states_;

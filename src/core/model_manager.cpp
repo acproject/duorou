@@ -47,23 +47,26 @@ public:
     logger.info("[OLLAMA] Loading model: " + model_path);
 
     // Use new ollama extension architecture
-    // First register the model by name (supports Ollama model names), then load
-    // it Generate the same model_id that registerModelByName will use
-    model_id_ = model_path;
-    for (char &c : model_id_) {
-      if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
-        c = '_';
-      }
-    }
-    std::cout << "[DEBUG] OllamaModelImpl: Generated model_id: " << model_id_
-              << " from path: " << model_path << std::endl;
-
+    // First register the model by name (supports Ollama model names)
     bool registered = model_manager_->registerModelByName(model_path);
     if (!registered) {
       std::cerr << "[ERROR] Failed to register Ollama model: " << model_path
                 << std::endl;
       return false;
     }
+
+    // Get the registered models to find the actual model_id generated during registration
+    auto registered_models = model_manager_->getRegisteredModels();
+    if (registered_models.empty()) {
+      std::cerr << "[ERROR] No models registered after registration attempt"
+                << std::endl;
+      return false;
+    }
+    
+    // Use the most recently registered model ID (should be the one we just registered)
+    model_id_ = registered_models.back();
+    std::cout << "[DEBUG] OllamaModelImpl: Using registered model_id: " << model_id_
+              << " for path: " << model_path << std::endl;
 
     bool success = model_manager_->loadModel(model_id_);
     if (!success) {

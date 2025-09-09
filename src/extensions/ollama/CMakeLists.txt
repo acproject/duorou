@@ -6,7 +6,7 @@ set(OLLAMA_EXTENSION_NAME "duorou_ollama_extension")
 # 收集源文件
 set(OLLAMA_EXTENSION_SOURCES
     gguf_parser.cpp
-    qwen25vl_inference_engine.cpp
+    qwen25vl_modular_engine.cpp
     ollama_model_manager.cpp
     ollama_path_resolver.cpp
     text_processor.cpp
@@ -17,7 +17,7 @@ set(OLLAMA_EXTENSION_SOURCES
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
     gguf_parser.h
-    qwen25vl_inference_engine.h
+    qwen25vl_modular_engine.h
     ollama_model_manager.h
     ollama_path_resolver.h
     text_processor.h

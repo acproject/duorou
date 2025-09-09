@@ -13,8 +13,25 @@ namespace extensions {
 namespace ollama {
 namespace algorithms {
 
-// 前向声明
-struct ModelConfig;
+// ModelConfig定义
+struct ModelConfig {
+    uint32_t vocab_size = 152064;
+    uint32_t hidden_size = 3584;
+    uint32_t num_layers = 28;
+    uint32_t num_attention_heads = 28;
+    uint32_t num_key_value_heads = 4;
+    uint32_t intermediate_size = 18944;
+    uint32_t max_position_embeddings = 32768;
+    float rope_theta = 1000000.0f;
+    float layer_norm_eps = 1e-6f;
+    float rms_norm_eps = 1e-6f;
+    
+    // RoPE相关配置
+    uint32_t rope_dim = 128;
+    float rope_base = 10000.0f;
+    float rope_scale = 1.0f;
+    uint32_t original_context_length = 32768;
+};
 
 // 张量结构（与主引擎保持一致）
 struct Tensor {
