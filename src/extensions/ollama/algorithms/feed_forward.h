@@ -129,10 +129,26 @@ private:
   }
 
   void computeLinearProjection(const Tensor& input, const Tensor& weights, Tensor& output) {
+    // 边界检查
+    if (input.shape.empty() || weights.shape.empty() || output.shape.empty()) {
+      throw std::invalid_argument("Empty tensor shapes in computeLinearProjection");
+    }
+    
     uint32_t seq_len = input.shape[input.shape.size() - 2];
     uint32_t batch_size = (input.shape.size() > 2) ? input.shape[0] : 1;
     uint32_t input_dim = input.shape.back();
     uint32_t output_dim = output.shape.back();
+    
+    // 检查数据大小
+    size_t expected_input_size = batch_size * seq_len * input_dim;
+    size_t expected_weight_size = input_dim * output_dim;
+    size_t expected_output_size = batch_size * seq_len * output_dim;
+    
+    if (input.data.size() < expected_input_size ||
+        weights.data.size() < expected_weight_size ||
+        output.data.size() < expected_output_size) {
+      throw std::runtime_error("Insufficient tensor data size in computeLinearProjection");
+    }
     
     // 执行矩阵乘法：input @ weights
     for (uint32_t b = 0; b < batch_size; ++b) {
@@ -148,12 +164,22 @@ private:
               input_idx = s * input_dim + i;
             }
             
+            // 边界检查
+            if (input_idx >= input.data.size() || weight_idx >= weights.data.size()) {
+              throw std::runtime_error("Array index out of bounds in computeLinearProjection");
+            }
+            
             sum += input.data[input_idx] * weights.data[weight_idx];
           }
           
           size_t output_idx = b * seq_len * output_dim + s * output_dim + o;
           if (batch_size == 1) {
             output_idx = s * output_dim + o;
+          }
+          
+          // 边界检查
+          if (output_idx >= output.data.size()) {
+            throw std::runtime_error("Array index out of bounds in computeLinearProjection output");
           }
           
           output.data[output_idx] = sum;
@@ -166,7 +192,20 @@ private:
     // SwiGLU: gate_output = silu(gate_output) * up_output
     // 其中 silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
     
-    for (size_t i = 0; i < gate_output.size; ++i) {
+    // 边界检查
+    if (gate_output.data.size() != up_output.data.size()) {
+      throw std::invalid_argument("Mismatched tensor sizes in applySwiGLU");
+    }
+    
+    size_t tensor_size = std::min(gate_output.size, gate_output.data.size());
+    tensor_size = std::min(tensor_size, up_output.data.size());
+    
+    for (size_t i = 0; i < tensor_size; ++i) {
+      // 边界检查
+      if (i >= gate_output.data.size() || i >= up_output.data.size()) {
+        throw std::runtime_error("Array index out of bounds in applySwiGLU");
+      }
+      
       float x = gate_output.data[i];
       
       // 计算SiLU激活函数

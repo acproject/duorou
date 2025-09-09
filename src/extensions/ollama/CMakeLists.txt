@@ -11,7 +11,7 @@ set(OLLAMA_EXTENSION_SOURCES
     ollama_path_resolver.cpp
     text_processor.cpp
     sentencepiece_processor.cpp
-    bpe_processor.cpp
+    algorithms/bpe_processor.cpp
 )
 
 # 收集头文件
@@ -22,7 +22,7 @@ set(OLLAMA_EXTENSION_HEADERS
     ollama_path_resolver.h
     text_processor.h
     sentencepiece_processor.h
-    bpe_processor.h
+    algorithms/bpe_processor.h
 )
 
 # 创建静态库
@@ -44,6 +44,7 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
 target_include_directories(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )

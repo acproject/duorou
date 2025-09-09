@@ -39,6 +39,7 @@ public:
       auto head = std::make_unique<FastAttention>();
       
       // 为每个头创建单独的配置
+      // 对于query头使用head_dim_，对于key/value头使用kv_head_dim_
       ModelConfig head_config = config;
       head_config.hidden_size = head_dim_;
       head_config.num_attention_heads = 1;
@@ -49,6 +50,26 @@ public:
       }
       
       attention_heads_.push_back(std::move(head));
+    }
+    
+    // 为key/value头创建单独的FastAttention实例
+    kv_attention_heads_.clear();
+    kv_attention_heads_.reserve(num_kv_heads_);
+    
+    for (uint32_t i = 0; i < num_kv_heads_; ++i) {
+      auto kv_head = std::make_unique<FastAttention>();
+      
+      // 为key/value头创建配置
+      ModelConfig kv_head_config = config;
+      kv_head_config.hidden_size = kv_head_dim_;
+      kv_head_config.num_attention_heads = 1;
+      
+      if (!kv_head->initialize(kv_head_config, context)) {
+        log("ERROR", "Failed to initialize KV attention head " + std::to_string(i));
+        return false;
+      }
+      
+      kv_attention_heads_.push_back(std::move(kv_head));
     }
     
     log("INFO", "MultiHeadAttention initialized with " + std::to_string(num_heads_) + 
@@ -170,10 +191,22 @@ public:
       }
       
       // 使用缓存计算单头注意力
-      Tensor head_output = attention_heads_[h]->computeWithCache(
-        query_heads[h], key_heads[kv_head_idx], value_heads[kv_head_idx],
+      // 使用attention_heads_处理query，kv_attention_heads_处理key/value缓存
+      // 首先用kv_attention_heads_更新缓存
+      kv_attention_heads_[kv_head_idx]->updateKVCache(
+        key_heads[kv_head_idx], value_heads[kv_head_idx],
         key_cache_heads[kv_head_idx], value_cache_heads[kv_head_idx],
-        cache_position, head_mask, scale
+        cache_position
+      );
+      
+      // 将kv缓存调整为query维度
+      Tensor adjusted_key_cache = adjustKVCacheForQuery(key_cache_heads[kv_head_idx], head_dim_);
+      Tensor adjusted_value_cache = adjustKVCacheForQuery(value_cache_heads[kv_head_idx], head_dim_);
+      
+      // 然后用attention_heads_计算注意力（query维度匹配）
+      Tensor head_output = attention_heads_[h]->compute(
+        query_heads[h], adjusted_key_cache, adjusted_value_cache,
+        head_mask, scale
       );
       
       head_outputs.push_back(std::move(head_output));
@@ -203,14 +236,26 @@ private:
   uint32_t group_size_ = 7;
   
   std::vector<std::unique_ptr<FastAttention>> attention_heads_;
+  std::vector<std::unique_ptr<FastAttention>> kv_attention_heads_;
 
   // 将张量分割到多个头
   std::vector<Tensor> splitToHeads(const Tensor& input, uint32_t num_heads, uint32_t head_dim) {
+    // 边界检查
+    if (input.shape.empty() || num_heads == 0 || head_dim == 0) {
+      throw std::invalid_argument("Invalid parameters for splitToHeads");
+    }
+    
     std::vector<Tensor> heads;
     heads.reserve(num_heads);
     
     uint32_t seq_len = input.shape[input.shape.size() - 2];
     uint32_t batch_size = (input.shape.size() > 2) ? input.shape[0] : 1;
+    
+    // 检查输入数据大小
+    size_t expected_size = batch_size * seq_len * num_heads * head_dim;
+    if (input.data.size() < expected_size) {
+      throw std::runtime_error("Input tensor data size insufficient for splitToHeads");
+    }
     
     for (uint32_t h = 0; h < num_heads; ++h) {
       std::vector<uint32_t> head_shape;
@@ -235,6 +280,11 @@ private:
               dst_idx = s * head_dim + d;
             }
             
+            // 边界检查
+            if (src_idx >= input.data.size() || dst_idx >= head_tensor.data.size()) {
+              throw std::runtime_error("Array index out of bounds in splitToHeads");
+            }
+            
             head_tensor.data[dst_idx] = input.data[src_idx];
           }
         }
@@ -248,11 +298,22 @@ private:
 
   // 将缓存分割到多个头
   std::vector<Tensor> splitCacheToHeads(const Tensor& cache, uint32_t num_heads, uint32_t head_dim) {
+    // 边界检查
+    if (cache.shape.empty() || num_heads == 0 || head_dim == 0) {
+      throw std::invalid_argument("Invalid parameters for splitCacheToHeads");
+    }
+    
     std::vector<Tensor> cache_heads;
     cache_heads.reserve(num_heads);
     
     uint32_t max_seq_len = cache.shape[cache.shape.size() - 2];
     uint32_t batch_size = (cache.shape.size() > 2) ? cache.shape[0] : 1;
+    
+    // 检查缓存数据大小
+    size_t expected_size = batch_size * max_seq_len * num_heads * head_dim;
+    if (cache.data.size() < expected_size) {
+      throw std::runtime_error("Cache tensor data size insufficient for splitCacheToHeads");
+    }
     
     for (uint32_t h = 0; h < num_heads; ++h) {
       std::vector<uint32_t> head_shape;
@@ -277,6 +338,11 @@ private:
               dst_idx = s * head_dim + d;
             }
             
+            // 边界检查
+            if (src_idx >= cache.data.size() || dst_idx >= head_cache.data.size()) {
+              throw std::runtime_error("Array index out of bounds in splitCacheToHeads");
+            }
+            
             head_cache.data[dst_idx] = cache.data[src_idx];
           }
         }
@@ -291,6 +357,11 @@ private:
   // 合并所有头的输出
   Tensor concatenateHeads(const std::vector<Tensor>& head_outputs, 
                          uint32_t batch_size, uint32_t seq_len) {
+    // 边界检查
+    if (head_outputs.empty() || head_outputs.size() != num_heads_) {
+      throw std::invalid_argument("Invalid head_outputs size for concatenateHeads");
+    }
+    
     std::vector<uint32_t> output_shape;
     if (batch_size > 1) {
       output_shape = {batch_size, seq_len, hidden_size_};
@@ -303,6 +374,11 @@ private:
     for (uint32_t h = 0; h < num_heads_; ++h) {
       const Tensor& head_output = head_outputs[h];
       
+      // 检查头输出的形状
+      if (head_output.shape.empty()) {
+        throw std::runtime_error("Empty head output shape in concatenateHeads");
+      }
+      
       for (uint32_t b = 0; b < batch_size; ++b) {
         for (uint32_t s = 0; s < seq_len; ++s) {
           for (uint32_t d = 0; d < head_dim_; ++d) {
@@ -314,6 +390,11 @@ private:
             if (batch_size == 1) {
               src_idx = s * head_dim_ + d;
               dst_idx = s * hidden_size_ + h * head_dim_ + d;
+            }
+            
+            // 边界检查
+            if (src_idx >= head_output.data.size() || dst_idx >= output.data.size()) {
+              throw std::runtime_error("Array index out of bounds in concatenateHeads");
             }
             
             output.data[dst_idx] = head_output.data[src_idx];
@@ -333,9 +414,55 @@ private:
   }
 
   // 更新原始缓存
+  // 将KV缓存调整为query维度
+  Tensor adjustKVCacheForQuery(const Tensor& kv_cache, uint32_t target_head_dim) {
+    if (kv_cache.shape.empty()) {
+      throw std::invalid_argument("Empty KV cache tensor");
+    }
+    
+    uint32_t seq_len = kv_cache.shape[kv_cache.shape.size() - 2];
+    uint32_t current_head_dim = kv_cache.shape.back();
+    
+    // 如果维度已经匹配，直接返回
+    if (current_head_dim == target_head_dim) {
+      return kv_cache;
+    }
+    
+    // 创建新的张量形状
+    std::vector<uint32_t> new_shape = kv_cache.shape;
+    new_shape.back() = target_head_dim;
+    
+    Tensor adjusted_cache(new_shape);
+    
+    // 调整数据：如果目标维度小于当前维度，截取；如果大于，填充零
+    for (uint32_t s = 0; s < seq_len; ++s) {
+      for (uint32_t d = 0; d < target_head_dim; ++d) {
+        if (d < current_head_dim) {
+          // 复制现有数据
+          adjusted_cache.data[s * target_head_dim + d] = 
+            kv_cache.data[s * current_head_dim + d];
+        } else {
+          // 填充零
+          adjusted_cache.data[s * target_head_dim + d] = 0.0f;
+        }
+      }
+    }
+    
+    return adjusted_cache;
+  }
+
   void updateOriginalCache(const std::vector<Tensor>& key_cache_heads,
-                          const std::vector<Tensor>& value_cache_heads,
-                          Tensor& key_cache, Tensor& value_cache) {
+                           const std::vector<Tensor>& value_cache_heads,
+                           Tensor& key_cache, Tensor& value_cache) {
+    // 边界检查
+    if (key_cache.shape.empty() || value_cache.shape.empty()) {
+      throw std::invalid_argument("Empty cache shapes in updateOriginalCache");
+    }
+    
+    if (key_cache_heads.size() != num_kv_heads_ || value_cache_heads.size() != num_kv_heads_) {
+      throw std::invalid_argument("Invalid cache heads size in updateOriginalCache");
+    }
+    
     uint32_t max_seq_len = key_cache.shape[key_cache.shape.size() - 2];
     uint32_t batch_size = (key_cache.shape.size() > 2) ? key_cache.shape[0] : 1;
     
@@ -343,6 +470,11 @@ private:
     for (uint32_t h = 0; h < num_kv_heads_; ++h) {
       const Tensor& key_head = key_cache_heads[h];
       const Tensor& value_head = value_cache_heads[h];
+      
+      // 检查头缓存的形状
+      if (key_head.shape.empty() || value_head.shape.empty()) {
+        throw std::runtime_error("Empty head cache shapes in updateOriginalCache");
+      }
       
       for (uint32_t b = 0; b < batch_size; ++b) {
         for (uint32_t s = 0; s < max_seq_len; ++s) {
@@ -355,6 +487,12 @@ private:
             if (batch_size == 1) {
               src_idx = s * kv_head_dim_ + d;
               dst_idx = s * (num_kv_heads_ * kv_head_dim_) + h * kv_head_dim_ + d;
+            }
+            
+            // 边界检查
+            if (src_idx >= key_head.data.size() || src_idx >= value_head.data.size() ||
+                dst_idx >= key_cache.data.size() || dst_idx >= value_cache.data.size()) {
+              throw std::runtime_error("Array index out of bounds in updateOriginalCache");
             }
             
             key_cache.data[dst_idx] = key_head.data[src_idx];

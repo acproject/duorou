@@ -341,12 +341,49 @@ algorithms::Tensor Qwen25VLModularEngine::applyEmbedding(const std::vector<uint3
         std::vector<uint32_t> shape = {seq_len, config_.hidden_size};
         algorithms::Tensor embeddings(shape);
         
+        // 检查token_embeddings张量是否已初始化
+        if (weights_.token_embeddings.data.empty()) {
+            std::cerr << "Token embeddings not initialized" << std::endl;
+            throw std::runtime_error("Token embeddings not initialized");
+        }
+        
+        // 检查token_embeddings张量大小是否正确
+        size_t expected_embedding_size = static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
+        if (weights_.token_embeddings.data.size() < expected_embedding_size) {
+            std::cerr << "Token embeddings size mismatch. Expected: " << expected_embedding_size 
+                      << ", Got: " << weights_.token_embeddings.data.size() << std::endl;
+            throw std::runtime_error("Token embeddings size mismatch");
+        }
+        
         // 简化的嵌入实现
         for (uint32_t i = 0; i < seq_len; ++i) {
             uint32_t token_id = input_ids[i];
+            
+            // 检查token_id是否在有效范围内
+            if (token_id >= config_.vocab_size) {
+                std::cerr << "Token ID out of range: " << token_id << " >= " << config_.vocab_size << std::endl;
+                throw std::out_of_range("Token ID out of range");
+            }
+            
             for (uint32_t j = 0; j < config_.hidden_size; ++j) {
-                embeddings.data[i * config_.hidden_size + j] = 
-                    weights_.token_embeddings.data[token_id * config_.hidden_size + j];
+                size_t src_idx = static_cast<size_t>(token_id) * config_.hidden_size + j;
+                size_t dst_idx = static_cast<size_t>(i) * config_.hidden_size + j;
+                
+                // 检查源索引边界
+                if (src_idx >= weights_.token_embeddings.data.size()) {
+                    std::cerr << "Source index out of bounds: " << src_idx 
+                              << " >= " << weights_.token_embeddings.data.size() << std::endl;
+                    throw std::out_of_range("Source index out of bounds in token embeddings");
+                }
+                
+                // 检查目标索引边界
+                if (dst_idx >= embeddings.data.size()) {
+                    std::cerr << "Destination index out of bounds: " << dst_idx 
+                              << " >= " << embeddings.data.size() << std::endl;
+                    throw std::out_of_range("Destination index out of bounds in embeddings");
+                }
+                
+                embeddings.data[dst_idx] = weights_.token_embeddings.data[src_idx];
             }
         }
         
@@ -416,12 +453,13 @@ void Qwen25VLModularEngine::initializeKVCache() {
         state_.value_cache.clear();
         
         uint32_t head_dim = config_.hidden_size / config_.num_attention_heads;
+        uint32_t kv_head_dim = config_.hidden_size / config_.num_key_value_heads;
         
         for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
+            // 缓存形状应该是 [max_seq_len, num_kv_heads * kv_head_dim] 以匹配 splitCacheToHeads 的期望
             std::vector<uint32_t> cache_shape = {
                 config_.max_position_embeddings,
-                config_.num_key_value_heads,
-                head_dim
+                config_.num_key_value_heads * kv_head_dim
             };
             
             state_.key_cache.emplace_back(cache_shape);
