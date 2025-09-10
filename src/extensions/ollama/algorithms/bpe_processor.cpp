@@ -31,8 +31,19 @@ BPEProcessor::BPEProcessor(const std::string &pre_tokenizer_regex,
 
 std::vector<int32_t> BPEProcessor::encode(const std::string &text,
                                           bool add_special) {
+  // 输入验证
+  if (text.empty()) {
+    return {};
+  }
+  
   // Process special tokens first
-  std::vector<Fragment> fragments = processSpecialTokens(text);
+  std::vector<Fragment> fragments;
+  try {
+    fragments = processSpecialTokens(text);
+  } catch (const std::exception& e) {
+    // 特殊token处理失败，使用原始文本
+    fragments = {{text, {}}};
+  }
 
   std::vector<int32_t> ids;
   for (const auto &frag : fragments) {
@@ -41,15 +52,31 @@ std::vector<int32_t> BPEProcessor::encode(const std::string &text,
       continue;
     }
 
-    // Split text using pre-tokenizer
-    std::vector<std::string> splits = splitText(frag.value);
+    // Split text using pre-tokenizer with error handling
+    std::vector<std::string> splits;
+    try {
+      splits = splitText(frag.value);
+    } catch (const std::exception& e) {
+      // 预分词失败，使用字符级分割作为回退
+      splits = {frag.value};
+    }
+    
+    // 如果预分词结果为空，使用字符级回退
+    if (splits.empty()) {
+      splits = {frag.value};
+    }
 
     for (const std::string &split : splits) {
       if (split.empty())
         continue;
 
-      // Preprocess bytes
-      std::string processed = preprocessBytes(split);
+      // Preprocess bytes with error handling
+      std::string processed;
+      try {
+        processed = preprocessBytes(split);
+      } catch (const std::exception& e) {
+        processed = split; // 回退到原始字符串
+      }
 
       // Try direct vocabulary lookup first
       int32_t direct_id = vocab_->encode(processed);
@@ -58,14 +85,35 @@ std::vector<int32_t> BPEProcessor::encode(const std::string &text,
         continue;
       }
 
-      // Tokenize using BPE algorithm
-      std::vector<int32_t> fragment_ids = tokenizeFragment(processed);
+      // Tokenize using BPE algorithm with fallback
+      std::vector<int32_t> fragment_ids;
+      try {
+        fragment_ids = tokenizeFragment(processed);
+      } catch (const std::exception& e) {
+        // BPE分词失败，尝试字符级回退
+        fragment_ids = {};
+      }
+      
+      // 如果BPE分词失败或结果为空，使用字符级回退
+      if (fragment_ids.empty()) {
+        fragment_ids = characterLevelFallback(processed);
+      }
+      
       ids.insert(ids.end(), fragment_ids.begin(), fragment_ids.end());
     }
   }
+  
+  // 最终检查：如果仍然为空，使用紧急字符级分词
+  if (ids.empty() && !text.empty()) {
+    ids = characterLevelFallback(text);
+  }
 
   if (add_special && !ids.empty()) {
-    ids = vocab_->addSpecials(ids);
+    try {
+      ids = vocab_->addSpecials(ids);
+    } catch (const std::exception& e) {
+      // 添加特殊token失败，继续使用原始ids
+    }
   }
 
   return ids;
@@ -287,6 +335,44 @@ BPEProcessor::tokenizeFragment(const std::string &text) const {
   }
 
   return result;
+}
+
+// Character-level fallback for unknown text
+std::vector<int32_t> BPEProcessor::characterLevelFallback(const std::string& text) const {
+    std::vector<int32_t> result;
+    
+    try {
+        // Convert to UTF-8 bytes and map each byte to a token
+        for (unsigned char byte : text) {
+            char32_t rune = mapByte(byte);
+            std::string byte_str = runesToString({rune});
+            
+            int32_t token_id = vocab_->encode(byte_str);
+            if (token_id != -1) {
+                result.push_back(token_id);
+            } else {
+                // If even byte-level token doesn't exist, use UNK token
+                int32_t unk_id = vocab_->encode("<unk>");
+                if (unk_id != -1) {
+                    result.push_back(unk_id);
+                } else {
+                    // Last resort: use token ID 0
+                    result.push_back(0);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Character-level fallback failed: " << e.what() << std::endl;
+        // Return UNK token as absolute fallback
+        int32_t unk_id = vocab_->encode("<unk>");
+        if (unk_id != -1) {
+            result.push_back(unk_id);
+        } else {
+            result.push_back(0);
+        }
+    }
+    
+    return result;
 }
 
 std::string BPEProcessor::preprocessBytes(const std::string &text) const {

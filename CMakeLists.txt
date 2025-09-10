@@ -519,6 +519,7 @@ if(DUOROU_SOURCES)
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework AVFoundation"
+            "-framework Accelerate"
         )
     elseif(WIN32)
         target_link_libraries(duorou

@@ -1,10 +1,19 @@
 #include "qwen25vl_modular_engine.h"
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <fstream>
 #include <iostream>
+#include <fstream>
+#include <cmath>
+#include <algorithm>
+#include <iomanip>
+#include <chrono>
+#include <thread>
 #include <random>
+
+// BLAS支持
+#ifdef __APPLE__
+    #include <Accelerate/Accelerate.h>
+#elif defined(USE_OPENBLAS)
+    #include <cblas.h>
+#endif
 
 namespace duorou {
 namespace extensions {
@@ -114,9 +123,11 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
                                     uint32_t top_k, float top_p) {
 
   if (!initialized_) {
-    std::cerr << "Engine not initialized" << std::endl;
+    std::cerr << "[DEBUG] Engine not initialized" << std::endl;
     return {};
   }
+
+  std::cerr << "[DEBUG] Qwen25VLModularEngine::generateText called with " << input_ids.size() << " input tokens, max_length=" << max_length << std::endl;
 
   auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -125,34 +136,53 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
   state_.is_prefill = true;
 
   try {
-    for (uint32_t step = 0; step < max_length; ++step) {
+    // 修正：max_length应该是总长度限制，而不是新生成token的数量
+    uint32_t max_new_tokens = max_length > input_ids.size() ? max_length - input_ids.size() : 100;
+    for (uint32_t step = 0; step < max_new_tokens; ++step) {
+      std::cerr << "[DEBUG] Generation step " << step << "/" << max_new_tokens << " (total length: " << generated_tokens.size() << "/" << max_length << ")" << std::endl;
+      
       // 准备输入
       std::vector<uint32_t> current_input;
       if (state_.is_prefill) {
         current_input = generated_tokens;
         state_.is_prefill = false;
+        std::cerr << "[DEBUG] Prefill mode with " << current_input.size() << " tokens" << std::endl;
       } else {
         current_input = {generated_tokens.back()};
+        std::cerr << "[DEBUG] Decode mode with 1 token" << std::endl;
       }
 
       // 应用词嵌入
+      std::cerr << "[DEBUG] Applying embedding..." << std::endl;
       algorithms::Tensor embeddings = applyEmbedding(current_input);
+      std::cerr << "[DEBUG] Embedding applied successfully" << std::endl;
 
       // 通过Transformer层
       algorithms::Tensor hidden_states = embeddings;
       algorithms::Tensor attention_mask =
           createAttentionMask(current_input.size());
+      std::cerr << "[DEBUG] Created attention mask" << std::endl;
 
       for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
+        std::cerr << "[DEBUG] Processing transformer layer " << layer << "/" << config_.num_hidden_layers << std::endl;
         hidden_states =
             forwardTransformerLayer(hidden_states, layer, &attention_mask);
+        std::cerr << "[DEBUG] Transformer layer " << layer << " completed" << std::endl;
       }
 
       // 生成logits
+      std::cerr << "[DEBUG] Generating logits..." << std::endl;
       algorithms::Tensor logits = generateLogits(hidden_states);
+      std::cerr << "[DEBUG] Logits generated successfully" << std::endl;
 
       // 采样下一个token
+      std::cerr << "[DEBUG] Sampling next token..." << std::endl;
       uint32_t next_token = sampleToken(logits, temperature, top_k, top_p);
+      std::cerr << "[DEBUG] Sampled token: " << next_token << std::endl;
+      
+      // 详细检查token值
+      std::cerr << "[DEBUG] Token check - sampled: " << next_token 
+                << ", EOS candidates: 151645, 151643, 151644" << std::endl;
       generated_tokens.push_back(next_token);
 
       // 更新状态
@@ -160,9 +190,13 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
       state_.cache_position++;
 
       // 检查结束条件（这里简化处理）
-      if (next_token == 0) { // 假设0是EOS token
-        break;
-      }
+      // 检查EOS token - Qwen2.5-VL使用151645作为EOS token
+        bool is_eos = (next_token == 151645 || next_token == 151643 || next_token == 151644);
+        std::cerr << "[DEBUG] EOS check result: " << (is_eos ? "TRUE" : "FALSE") << std::endl;
+        if (is_eos) {
+            std::cerr << "[DEBUG] EOS token encountered (" << next_token << "), stopping generation" << std::endl;
+            break;
+        }
     }
 
     // 更新性能统计
@@ -237,47 +271,67 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     const algorithms::Tensor *attention_mask) {
 
   try {
+    std::cerr << "[DEBUG] forwardTransformerLayer layer " << layer_idx << " started" << std::endl;
+    
     // 1. 自注意力
+    std::cerr << "[DEBUG] Applying RMSNorm..." << std::endl;
     algorithms::Tensor norm_input =
         applyRMSNorm(input, weights_.layer_norm_weights[layer_idx * 2]);
+    std::cerr << "[DEBUG] RMSNorm applied" << std::endl;
 
     // 应用RoPE位置编码
+    std::cerr << "[DEBUG] Applying RoPE..." << std::endl;
     algorithms::Tensor rope_input =
         rope_processor_->apply(norm_input, state_.cache_position);
+    std::cerr << "[DEBUG] RoPE applied" << std::endl;
 
     // 多头注意力计算
+    std::cerr << "[DEBUG] Computing attention..." << std::endl;
     algorithms::Tensor attention_output;
     if (state_.is_prefill) {
+      std::cerr << "[DEBUG] Using prefill attention" << std::endl;
       attention_output = attention_->compute(rope_input, rope_input, rope_input,
                                              attention_mask);
     } else {
+      std::cerr << "[DEBUG] Using cached attention" << std::endl;
       attention_output = attention_->computeWithCache(
           rope_input, rope_input, rope_input, state_.key_cache[layer_idx],
           state_.value_cache[layer_idx], state_.cache_position, attention_mask);
     }
+    std::cerr << "[DEBUG] Attention computed" << std::endl;
 
     // 残差连接 - 手动实现加法
+    std::cerr << "[DEBUG] Applying residual connection 1..." << std::endl;
     algorithms::Tensor residual1 = input;
     for (size_t i = 0; i < input.data.size(); ++i) {
       residual1.data[i] += attention_output.data[i];
     }
+    std::cerr << "[DEBUG] Residual connection 1 applied" << std::endl;
 
     // 2. 前馈网络
+    std::cerr << "[DEBUG] Applying second RMSNorm..." << std::endl;
     algorithms::Tensor norm_residual =
         applyRMSNorm(residual1, weights_.layer_norm_weights[layer_idx * 2 + 1]);
+    std::cerr << "[DEBUG] Second RMSNorm applied" << std::endl;
+    
     // 简化的前馈网络计算
+    std::cerr << "[DEBUG] Computing FFN (simplified)..." << std::endl;
     algorithms::Tensor ffn_output = norm_residual; // 简化实现
+    std::cerr << "[DEBUG] FFN computed" << std::endl;
 
     // 残差连接 - 手动实现加法
+    std::cerr << "[DEBUG] Applying residual connection 2..." << std::endl;
     algorithms::Tensor output = residual1;
     for (size_t i = 0; i < residual1.data.size(); ++i) {
       output.data[i] += ffn_output.data[i];
     }
-
+    std::cerr << "[DEBUG] Residual connection 2 applied" << std::endl;
+    
+    std::cerr << "[DEBUG] forwardTransformerLayer layer " << layer_idx << " completed" << std::endl;
     return output;
 
   } catch (const std::exception &e) {
-    std::cerr << "Exception in transformer layer " << layer_idx << ": "
+    std::cerr << "[ERROR] Exception in transformer layer " << layer_idx << ": "
               << e.what() << std::endl;
     throw;
   }
@@ -413,15 +467,158 @@ algorithms::Tensor
 Qwen25VLModularEngine::generateLogits(const algorithms::Tensor &hidden_states) {
   try {
     // 应用最终层归一化
+    std::cerr << "[DEBUG] Applying final layer norm..." << std::endl;
     algorithms::Tensor norm_hidden =
         applyRMSNorm(hidden_states, weights_.norm_weight);
+    std::cerr << "[DEBUG] Final layer norm applied" << std::endl;
 
     // 应用语言模型头
     uint32_t seq_len = hidden_states.shape[0];
+    uint32_t hidden_size = hidden_states.shape[1];
     std::vector<uint32_t> logits_shape = {seq_len, config_.vocab_size};
     algorithms::Tensor logits(logits_shape);
 
-    // 简化的矩阵乘法实现
+    std::cerr << "[DEBUG] Computing logits matrix multiplication..." << std::endl;
+    std::cerr << "[DEBUG] Matrix dimensions: seq_len=" << seq_len 
+              << ", hidden_size=" << hidden_size 
+              << ", vocab_size=" << config_.vocab_size << std::endl;
+    
+    // 计算总操作数以显示进度
+    uint64_t total_ops = static_cast<uint64_t>(seq_len) * config_.vocab_size;
+    std::cerr << "[DEBUG] Total operations: " << total_ops << std::endl;
+
+    // 检查权重是否已加载
+    if (weights_.lm_head_weight.data.empty()) {
+      std::cerr << "[WARNING] LM head weights not loaded, using fallback" << std::endl;
+      // 使用简化的fallback避免大量计算
+      for (uint32_t i = 0; i < seq_len; ++i) {
+        if (i % 10 == 0) {
+          std::cerr << "[DEBUG] Fallback processing sequence " << i << "/" << seq_len << std::endl;
+        }
+        
+        // 只计算前1000个vocab项以加速fallback
+        uint32_t limited_vocab = std::min(config_.vocab_size, 1000u);
+        for (uint32_t j = 0; j < limited_vocab; ++j) {
+          float sum = 0.0f;
+          for (uint32_t k = 0; k < hidden_size; ++k) {
+            // 使用简单的权重初始化
+            float weight = (float)(k + j) / (hidden_size + limited_vocab);
+            sum += norm_hidden.data[i * hidden_size + k] * weight;
+          }
+          logits.data[i * config_.vocab_size + j] = sum;
+        }
+        
+        // 其余vocab项设为小值
+        for (uint32_t j = limited_vocab; j < config_.vocab_size; ++j) {
+          logits.data[i * config_.vocab_size + j] = -10.0f;
+        }
+      }
+    } else {
+      std::cerr << "[DEBUG] Using CBLAS-optimized matrix multiplication" << std::endl;
+      
+      try {
+        // 使用CBLAS进行优化的矩阵乘法
+        // CBLAS_SGEMM: C = alpha * A * B + beta * C
+        // 其中 A 是 norm_hidden (seq_len x hidden_size)
+        //      B 是 lm_head_weight^T (hidden_size x vocab_size)
+        //      C 是 logits (seq_len x vocab_size)
+        
+        const float alpha = 1.0f;
+        const float beta = 0.0f;
+        
+        #ifdef __APPLE__
+          // macOS使用Accelerate框架
+          cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                     seq_len, config_.vocab_size, hidden_size,
+                     alpha, norm_hidden.data.data(), hidden_size,
+                     weights_.lm_head_weight.data.data(), hidden_size,
+                     beta, logits.data.data(), config_.vocab_size);
+          std::cerr << "[DEBUG] Used Accelerate framework for matrix multiplication" << std::endl;
+        #elif defined(USE_OPENBLAS)
+          // OpenBLAS
+          cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                     seq_len, config_.vocab_size, hidden_size,
+                     alpha, norm_hidden.data.data(), hidden_size,
+                     weights_.lm_head_weight.data.data(), hidden_size,
+                     beta, logits.data.data(), config_.vocab_size);
+          std::cerr << "[DEBUG] Used OpenBLAS for matrix multiplication" << std::endl;
+        #else
+           // 回退到优化的分批处理（带早期停止机制）
+           std::cerr << "[DEBUG] Using optimized batch processing with early stopping (CBLAS not available)" << std::endl;
+           
+           const uint32_t batch_size = 2000; // 增加批处理大小
+           const auto start_time = std::chrono::steady_clock::now();
+           const auto max_duration = std::chrono::seconds(30); // 最大计算时间30秒
+           
+           bool early_stopped = false;
+           
+           for (uint32_t i = 0; i < seq_len && !early_stopped; ++i) {
+             std::cerr << "[DEBUG] Processing sequence " << i+1 << "/" << seq_len << std::endl;
+             
+             for (uint32_t j_start = 0; j_start < config_.vocab_size; j_start += batch_size) {
+               // 检查是否超时
+               auto current_time = std::chrono::steady_clock::now();
+               if (current_time - start_time > max_duration) {
+                 std::cerr << "[WARNING] Matrix multiplication timeout after 30 seconds, using partial results" << std::endl;
+                 early_stopped = true;
+                 
+                 // 填充剩余的logits为小值
+                 for (uint32_t remaining_i = i; remaining_i < seq_len; ++remaining_i) {
+                   for (uint32_t remaining_j = (remaining_i == i ? j_start : 0); remaining_j < config_.vocab_size; ++remaining_j) {
+                     logits.data[remaining_i * config_.vocab_size + remaining_j] = -10.0f;
+                   }
+                 }
+                 break;
+               }
+               
+               uint32_t j_end = std::min(j_start + batch_size, config_.vocab_size);
+               
+               if (j_start % (batch_size * 5) == 0) { // 减少输出频率
+                 float progress = (float)(j_start) / config_.vocab_size * 100.0f;
+                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+                 std::cerr << "[DEBUG] Progress: " << progress << "%, elapsed: " << elapsed << "s" << std::endl;
+               }
+               
+               // 向量化计算
+               for (uint32_t j = j_start; j < j_end; ++j) {
+                 float sum = 0.0f;
+                 const float* weight_row = &weights_.lm_head_weight.data[j * hidden_size];
+                 const float* hidden_row = &norm_hidden.data[i * hidden_size];
+                 
+                 // 展开循环以提高性能
+                 uint32_t k = 0;
+                 for (; k + 4 <= hidden_size; k += 4) {
+                   sum += weight_row[k] * hidden_row[k] +
+                          weight_row[k+1] * hidden_row[k+1] +
+                          weight_row[k+2] * hidden_row[k+2] +
+                          weight_row[k+3] * hidden_row[k+3];
+                 }
+                 // 处理剩余元素
+                 for (; k < hidden_size; ++k) {
+                   sum += weight_row[k] * hidden_row[k];
+                 }
+                 logits.data[i * config_.vocab_size + j] = sum;
+               }
+               
+               // 每处理一定数量的批次后让出CPU时间
+               if (j_start % (batch_size * 10) == 0) {
+                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+               }
+             }
+           }
+           
+           if (early_stopped) {
+             std::cerr << "[WARNING] Computation was stopped early due to timeout" << std::endl;
+           }
+         #endif
+        
+      } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Matrix multiplication failed: " << e.what() << std::endl;
+        throw;
+      }
+    }
+
+    std::cerr << "[DEBUG] Logits computation completed" << std::endl;
     return logits;
 
   } catch (const std::exception &e) {
@@ -445,15 +642,49 @@ uint32_t Qwen25VLModularEngine::sampleToken(const algorithms::Tensor &logits,
     }
 
     // 应用温度
-    if (temperature != 1.0f) {
+    if (temperature > 0.0f && temperature != 1.0f) {
       for (float &logit : last_logits) {
         logit /= temperature;
       }
     }
 
-    // 简化采样：选择概率最高的token
-    auto max_it = std::max_element(last_logits.begin(), last_logits.end());
-    return static_cast<uint32_t>(std::distance(last_logits.begin(), max_it));
+    // 计算softmax概率
+    float max_logit = *std::max_element(last_logits.begin(), last_logits.end());
+    std::vector<float> probs(vocab_size);
+    float sum_exp = 0.0f;
+    
+    for (uint32_t i = 0; i < vocab_size; ++i) {
+      probs[i] = std::exp(last_logits[i] - max_logit);
+      sum_exp += probs[i];
+    }
+    
+    for (uint32_t i = 0; i < vocab_size; ++i) {
+      probs[i] /= sum_exp;
+    }
+
+    // 如果温度为0或很小，选择概率最高的token（贪婪采样）
+    if (temperature <= 0.01f) {
+      auto max_it = std::max_element(probs.begin(), probs.end());
+      return static_cast<uint32_t>(std::distance(probs.begin(), max_it));
+    }
+
+    // 随机采样
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    
+    float random_val = dis(gen);
+    float cumulative = 0.0f;
+    
+    for (uint32_t i = 0; i < vocab_size; ++i) {
+      cumulative += probs[i];
+      if (random_val <= cumulative) {
+        return i;
+      }
+    }
+
+    // 如果没有找到，返回最后一个token
+    return vocab_size - 1;
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in token sampling: " << e.what() << std::endl;

@@ -62,6 +62,9 @@ private:
     std::vector<char32_t> stringToRunes(const std::string& text) const;
     std::string runesToString(const std::vector<char32_t>& runes) const;
     
+    // Fallback mechanism
+    std::vector<int32_t> characterLevelFallback(const std::string& text) const;
+    
     // Constants
     static const std::string WHITESPACE_SEP;
 };

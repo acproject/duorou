@@ -68,6 +68,13 @@ elseif(MSVC)
     )
 endif()
 
+# 平台特定链接库
+if(APPLE)
+    target_link_libraries(${OLLAMA_EXTENSION_NAME} PRIVATE
+        "-framework Accelerate"
+    )
+endif()
+
 # 安装规则
 install(TARGETS ${OLLAMA_EXTENSION_NAME}
     ARCHIVE DESTINATION lib

@@ -1,7 +1,7 @@
 #ifndef BPE_PROCESSOR_H
 #define BPE_PROCESSOR_H
 
-#include "text_processor.h"
+#include "../text_processor.h"
 #include <string>
 #include <vector>
 #include <regex>
@@ -63,6 +63,9 @@ private:
     unsigned char unmapByte(char32_t rune) const;
     std::vector<char32_t> stringToRunes(const std::string& text) const;
     std::string runesToString(const std::vector<char32_t>& runes) const;
+    
+    // Fallback mechanism
+    std::vector<int32_t> characterLevelFallback(const std::string& text) const;
 };
 
 } // namespace ollama
