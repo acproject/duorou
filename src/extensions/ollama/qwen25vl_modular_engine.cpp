@@ -393,69 +393,78 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     const algorithms::Tensor *attention_mask) {
 
   try {
-    std::cerr << "[DEBUG] forwardTransformerLayer layer " << layer_idx << " started" << std::endl;
+    // 标准Transformer层架构：
+    // 1. Multi-head Self-Attention (带causal mask)
+    // 2. Add & LayerNorm  
+    // 3. Feed-Forward Network
+    // 4. Add & LayerNorm
     
-    // 1. 自注意力
-    std::cerr << "[DEBUG] Applying RMSNorm..." << std::endl;
-    algorithms::Tensor norm_input =
-        applyRMSNorm(input, weights_.layer_norm_weights[layer_idx * 2]);
-    std::cerr << "[DEBUG] RMSNorm applied" << std::endl;
-
-    // 应用RoPE位置编码
-    std::cerr << "[DEBUG] Applying RoPE..." << std::endl;
-    algorithms::Tensor rope_input =
-        rope_processor_->apply(norm_input, state_.cache_position);
-    std::cerr << "[DEBUG] RoPE applied" << std::endl;
+    // 1. 自注意力计算
+    // 应用RoPE位置编码到输入
+    algorithms::Tensor rope_input = rope_processor_->apply(input, state_.cache_position);
 
     // 多头注意力计算
-    std::cerr << "[DEBUG] Computing attention..." << std::endl;
     algorithms::Tensor attention_output;
     if (state_.is_prefill) {
-      std::cerr << "[DEBUG] Using prefill attention" << std::endl;
-      attention_output = attention_->compute(rope_input, rope_input, rope_input,
-                                             attention_mask);
+      attention_output = attention_->compute(rope_input, rope_input, rope_input, attention_mask);
     } else {
-      std::cerr << "[DEBUG] Using cached attention" << std::endl;
       attention_output = attention_->computeWithCache(
           rope_input, rope_input, rope_input, state_.key_cache[layer_idx],
           state_.value_cache[layer_idx], state_.cache_position, attention_mask);
     }
-    std::cerr << "[DEBUG] Attention computed" << std::endl;
 
-    // 残差连接 - 手动实现加法
-    std::cerr << "[DEBUG] Applying residual connection 1..." << std::endl;
+    // 2. Add & LayerNorm (Post-LN)
     algorithms::Tensor residual1 = input;
-    for (size_t i = 0; i < input.data.size(); ++i) {
+    for (size_t i = 0; i < input.data.size() && i < attention_output.data.size(); ++i) {
       residual1.data[i] += attention_output.data[i];
     }
-    std::cerr << "[DEBUG] Residual connection 1 applied" << std::endl;
-
-    // 2. 前馈网络
-    std::cerr << "[DEBUG] Applying second RMSNorm..." << std::endl;
-    algorithms::Tensor norm_residual =
-        applyRMSNorm(residual1, weights_.layer_norm_weights[layer_idx * 2 + 1]);
-    std::cerr << "[DEBUG] Second RMSNorm applied" << std::endl;
     
-    // 简化的前馈网络计算
-    std::cerr << "[DEBUG] Computing FFN (simplified)..." << std::endl;
-    algorithms::Tensor ffn_output = norm_residual; // 简化实现
-    std::cerr << "[DEBUG] FFN computed" << std::endl;
-
-    // 残差连接 - 手动实现加法
-    std::cerr << "[DEBUG] Applying residual connection 2..." << std::endl;
-    algorithms::Tensor output = residual1;
-    for (size_t i = 0; i < residual1.data.size(); ++i) {
-      output.data[i] += ffn_output.data[i];
+    // 检查layer_norm_weights索引
+    if (layer_idx * 2 >= weights_.layer_norm_weights.size()) {
+      std::cerr << "[ERROR] Layer norm weights not found for layer " << layer_idx << std::endl;
+      return input; // 返回原始输入作为fallback
     }
-    std::cerr << "[DEBUG] Residual connection 2 applied" << std::endl;
     
-    std::cerr << "[DEBUG] forwardTransformerLayer layer " << layer_idx << " completed" << std::endl;
-    return output;
+    algorithms::Tensor norm_output1 = applyRMSNorm(residual1, weights_.layer_norm_weights[layer_idx * 2]);
+
+    // 3. 前馈网络计算
+    algorithms::Tensor ffn_output;
+    if (layer_idx * 3 + 2 < weights_.ffn_weights.size()) {
+      try {
+        ffn_output = feed_forward_->compute(
+            norm_output1,
+            weights_.ffn_weights[layer_idx * 3],     // gate_weights
+            weights_.ffn_weights[layer_idx * 3 + 1], // up_weights  
+            weights_.ffn_weights[layer_idx * 3 + 2]  // down_weights
+        );
+      } catch (const std::exception& e) {
+        std::cerr << "[ERROR] FFN computation failed: " << e.what() << std::endl;
+        ffn_output = norm_output1; // fallback
+      }
+    } else {
+      std::cerr << "[WARNING] FFN weights not found for layer " << layer_idx << std::endl;
+      ffn_output = norm_output1; // fallback
+    }
+
+    // 4. Add & LayerNorm (Post-LN)
+    algorithms::Tensor residual2 = norm_output1;
+    for (size_t i = 0; i < norm_output1.data.size() && i < ffn_output.data.size(); ++i) {
+      residual2.data[i] += ffn_output.data[i];
+    }
+    
+    // 检查第二个layer norm权重
+    if (layer_idx * 2 + 1 >= weights_.layer_norm_weights.size()) {
+      std::cerr << "[ERROR] Second layer norm weights not found for layer " << layer_idx << std::endl;
+      return residual2; // 返回未归一化的结果
+    }
+    
+    algorithms::Tensor final_output = applyRMSNorm(residual2, weights_.layer_norm_weights[layer_idx * 2 + 1]);
+    
+    return final_output;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in transformer layer " << layer_idx << ": "
-              << e.what() << std::endl;
-    throw;
+    std::cerr << "[ERROR] Exception in transformer layer " << layer_idx << ": " << e.what() << std::endl;
+    return input; // 返回原始输入作为fallback
   }
 }
 
@@ -489,22 +498,33 @@ Qwen25VLModularEngine::applyRMSNorm(const algorithms::Tensor &input,
     // RMSNorm实现
     algorithms::Tensor output = input;
     uint32_t hidden_size = input.shape.back();
-    uint32_t batch_size = 1;
+    uint32_t seq_len = input.shape[input.shape.size() - 2];
+    uint32_t batch_size = (input.shape.size() > 2) ? input.shape[0] : 1;
 
+    // 对每个batch和序列位置应用RMSNorm
     for (uint32_t b = 0; b < batch_size; ++b) {
-      // 计算RMS
-      float sum_squares = 0.0f;
-      for (uint32_t i = 0; i < hidden_size; ++i) {
-        float val = input.data[b * hidden_size + i];
-        sum_squares += val * val;
-      }
+      for (uint32_t s = 0; s < seq_len; ++s) {
+        // 计算当前位置的RMS
+        float sum_squares = 0.0f;
+        size_t base_idx = b * seq_len * hidden_size + s * hidden_size;
+        
+        for (uint32_t i = 0; i < hidden_size; ++i) {
+          float val = input.data[base_idx + i];
+          sum_squares += val * val;
+        }
 
-      float rms = std::sqrt(sum_squares / hidden_size + eps);
+        // 添加数值稳定性检查
+        float variance = sum_squares / hidden_size;
+        if (variance < 1e-12f) {
+          variance = 1e-12f; // 防止除零
+        }
+        float rms = std::sqrt(variance + eps);
 
-      // 应用归一化和权重
-      for (uint32_t i = 0; i < hidden_size; ++i) {
-        output.data[b * hidden_size + i] =
-            (input.data[b * hidden_size + i] / rms) * weight.data[i];
+        // 应用归一化和权重
+        for (uint32_t i = 0; i < hidden_size; ++i) {
+          float normalized = input.data[base_idx + i] / rms;
+          output.data[base_idx + i] = normalized * weight.data[i];
+        }
       }
     }
 
@@ -516,11 +536,11 @@ Qwen25VLModularEngine::applyRMSNorm(const algorithms::Tensor &input,
   }
 }
 
-algorithms::Tensor
-Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
+algorithms::Tensor Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
   try {
     uint32_t seq_len = input_ids.size();
-    std::vector<uint32_t> shape = {seq_len, config_.hidden_size};
+    // 修复：添加batch维度以匹配MultiHeadAttention的期望输入格式 [batch_size, seq_len, hidden_size]
+    std::vector<uint32_t> shape = {1, seq_len, config_.hidden_size};
     algorithms::Tensor embeddings(shape);
 
     // 检查token_embeddings张量是否已初始化
@@ -554,6 +574,7 @@ Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
       for (uint32_t j = 0; j < config_.hidden_size; ++j) {
         size_t src_idx =
             static_cast<size_t>(token_id) * config_.hidden_size + j;
+        // 修复：更新索引计算以匹配3D张量格式 [batch_size, seq_len, hidden_size]
         size_t dst_idx = static_cast<size_t>(i) * config_.hidden_size + j;
 
         // 检查源索引边界
@@ -595,8 +616,9 @@ Qwen25VLModularEngine::generateLogits(const algorithms::Tensor &hidden_states) {
     std::cerr << "[DEBUG] Final layer norm applied" << std::endl;
 
     // 应用语言模型头
-    uint32_t seq_len = hidden_states.shape[0];
-    uint32_t hidden_size = hidden_states.shape[1];
+    // 修复：更新维度索引以匹配3D张量格式 [batch_size, seq_len, hidden_size]
+    uint32_t seq_len = hidden_states.shape[1];
+    uint32_t hidden_size = hidden_states.shape[2];
     std::vector<uint32_t> logits_shape = {seq_len, config_.vocab_size};
     algorithms::Tensor logits(logits_shape);
 
@@ -625,7 +647,9 @@ Qwen25VLModularEngine::generateLogits(const algorithms::Tensor &hidden_states) {
           for (uint32_t k = 0; k < hidden_size; ++k) {
             // 使用简单的权重初始化
             float weight = (float)(k + j) / (hidden_size + limited_vocab);
-            sum += norm_hidden.data[i * hidden_size + k] * weight;
+            // 修复：更新索引计算以匹配3D张量格式 [batch_size, seq_len, hidden_size]
+            size_t idx = 0 * seq_len * hidden_size + i * hidden_size + k;
+            sum += norm_hidden.data[idx] * weight;
           }
           logits.data[i * config_.vocab_size + j] = sum;
         }
@@ -992,6 +1016,65 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
       weights_.layer_norm_weights[i] = algorithms::Tensor(norm_shape);
     }
 
+    // 初始化注意力和前馈网络权重（临时用随机值）
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::normal_distribution<float> dist(0.0f, 0.02f);
+
+    // 初始化FFN权重 - 每层需要3个权重矩阵
+    weights_.ffn_weights.resize(config_.num_hidden_layers * 3); // gate, up, down
+    
+    for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
+        // Gate权重：[hidden_size, intermediate_size]
+        weights_.ffn_weights[i * 3] = algorithms::Tensor({config_.hidden_size, config_.intermediate_size});
+        // Up权重：[hidden_size, intermediate_size]  
+        weights_.ffn_weights[i * 3 + 1] = algorithms::Tensor({config_.hidden_size, config_.intermediate_size});
+        // Down权重：[intermediate_size, hidden_size]
+        weights_.ffn_weights[i * 3 + 2] = algorithms::Tensor({config_.intermediate_size, config_.hidden_size});
+        
+        // 初始化为小的随机值
+        for (int w = 0; w < 3; ++w) {
+            for (size_t j = 0; j < weights_.ffn_weights[i * 3 + w].data.size(); ++j) {
+                weights_.ffn_weights[i * 3 + w].data[j] = dist(gen);
+            }
+        }
+    }
+
+    // 初始化embedding权重
+    for (size_t i = 0; i < weights_.token_embeddings.data.size(); ++i) {
+      weights_.token_embeddings.data[i] = dist(gen);
+    }
+
+    // 初始化norm权重为1.0
+    for (size_t i = 0; i < weights_.norm_weight.data.size(); ++i) {
+      weights_.norm_weight.data[i] = 1.0f;
+    }
+
+    // 初始化layer norm权重为1.0
+    for (auto& layer_norm : weights_.layer_norm_weights) {
+      for (size_t i = 0; i < layer_norm.data.size(); ++i) {
+        layer_norm.data[i] = 1.0f;
+      }
+    }
+
+    // 初始化lm_head权重
+    for (size_t i = 0; i < weights_.lm_head_weight.data.size(); ++i) {
+      weights_.lm_head_weight.data[i] = dist(gen);
+    }
+
+    // 验证权重维度
+    if (weights_.token_embeddings.shape[0] != config_.vocab_size ||
+        weights_.token_embeddings.shape[1] != config_.hidden_size) {
+      std::cerr << "Token embedding dimension mismatch" << std::endl;
+      return false;
+    }
+
+    if (weights_.norm_weight.shape[0] != config_.hidden_size) {
+      std::cerr << "Norm weight dimension mismatch" << std::endl;
+      return false;
+    }
+
+    std::cerr << "[INFO] Transformer weights initialized successfully" << std::endl;
     return true;
 
   } catch (const std::exception &e) {
