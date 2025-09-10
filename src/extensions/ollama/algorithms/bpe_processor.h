@@ -7,6 +7,7 @@
 #include <regex>
 #include <memory>
 #include <queue>
+#include <unordered_map>
 
 namespace duorou {
 namespace extensions {
@@ -52,6 +53,11 @@ public:
 private:
     std::shared_ptr<Vocabulary> vocab_;
     std::regex pre_tokenizer_;
+    
+    // 性能优化：缓存机制
+  mutable std::unordered_map<std::string, std::vector<int32_t>> encode_cache_;
+  mutable std::unordered_map<std::string, std::string> decode_cache_;
+  static constexpr size_t MAX_CACHE_SIZE = 10000;
     
     // Helper functions
     std::vector<std::string> splitText(const std::string& text) const;

@@ -31,11 +31,11 @@ struct GenerationParams {
 };
 
 /**
- * @brief 生成结果结构
+ * @brief 文本生成结果结构
  */
 struct GenerationResult {
   std::string text; ///< 生成的文本
-  // std::vector<llama_token> tokens;  ///< 生成的token序列 - 暂时禁用
+  bool success;            ///< 是否成功
   bool finished;           ///< 是否完成生成
   std::string stop_reason; ///< 停止原因
   size_t prompt_tokens;    ///< 提示词token数
@@ -44,44 +44,38 @@ struct GenerationResult {
 
   GenerationResult()
       : finished(false), prompt_tokens(0), generated_tokens(0),
-        generation_time(0.0) {}
+        generation_time(0.0), success(false) {}
 };
 
 /**
  * @brief 流式生成回调函数类型
- * @param token 新生成的token
- * @param text 对应的文本片段
- * @param finished 是否完成
+ * @param token 当前生成的token ID
+ * @param text 当前生成的文本片段
+ * @param finished 是否完成生成
  */
-// typedef std::function<void(llama_token token, const std::string& text, bool
-// finished)> StreamCallback;  // 暂时禁用
 typedef std::function<void(int token, const std::string &text, bool finished)>
     StreamCallback;
 
 /**
  * @brief 文本生成器类
  *
- * 负责使用llama模型进行文本生成，支持多种采样策略和参数配置
+ * 提供基于大语言模型的文本生成功能，支持多种采样策略和流式输出。
+ * 可以使用本地llama.cpp模型或远程Ollama服务。
  */
 class TextGenerator {
 public:
   /**
-   * @brief 构造函数
-   * @param model llama模型指针
-   * @param context llama上下文指针
-   */
-  // TextGenerator(llama_model* model, llama_context* context);  // 暂时禁用
-
-  /**
-   * @brief 默认构造函数（用于Ollama模型）
-   * @param model_path 模型路径
+   * @brief 构造函数（使用本地模型）
+   * @param model_path 模型文件路径
+   *
+   * 注意：当前版本暂时禁用了llama.cpp功能
    */
   TextGenerator(const std::string &model_path = "");
 
   /**
-   * @brief 构造函数（使用OllamaModelManager）
-   * @param model_manager Ollama模型管理器指针
-   * @param model_id 模型ID
+   * @brief 构造函数（使用Ollama模型管理器）
+   * @param model_manager Ollama模型管理器实例
+   * @param model_id 要使用的模型ID
    */
   TextGenerator(std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>
                     model_manager,
@@ -103,6 +97,15 @@ public:
            const GenerationParams &params = GenerationParams());
 
   /**
+   * @brief 格式化输入为Qwen ChatML格式
+   * @param user_input 用户输入
+   * @param system_prompt 系统提示词（可选）
+   * @return 格式化后的ChatML字符串
+   */
+  std::string formatQwenChatML(const std::string &user_input, 
+                               const std::string &system_prompt = "") const;
+
+  /**
    * @brief 流式生成文本
    * @param prompt 输入提示词
    * @param callback 流式回调函数
@@ -121,24 +124,22 @@ public:
   size_t countTokens(const std::string &text) const;
 
   /**
-   * @brief 将文本转换为token序列
-   * @param text 输入文本
-   * @param add_bos 是否添加开始token
-   * @return token序列
+   * @brief 设置模型路径
+   * @param model_path 新的模型路径
+   * @return 是否设置成功
+   *
+   * 注意：当前版本暂时禁用了llama.cpp功能
    */
-  // std::vector<llama_token> textToTokens(const std::string& text, bool add_bos
-  // = true) const;  // 暂时禁用
+  bool setModelPath(const std::string &model_path);
 
   /**
-   * @brief 将token序列转换为文本
-   * @param tokens token序列
-   * @return 文本
+   * @brief 获取模型路径
+   * @return 当前模型路径
    */
-  // std::string tokensToText(const std::vector<llama_token>& tokens) const;  //
-  // 暂时禁用
+  std::string getModelPath() const;
 
   /**
-   * @brief 检查是否可以生成
+   * @brief 检查是否可以生成文本
    * @return 是否可以生成
    */
   bool canGenerate() const;
@@ -163,21 +164,21 @@ public:
 private:
   /**
    * @brief 应用Top-K采样
-   * @param logits logits数组
+   * @param logits 输出概率分布
    * @param k Top-K参数
    */
   void applyTopK(float *logits, int k);
 
   /**
    * @brief 应用Top-P采样
-   * @param logits logits数组
+   * @param logits 输出概率分布
    * @param p Top-P参数
    */
   void applyTopP(float *logits, float p);
 
   /**
    * @brief 应用温度采样
-   * @param logits logits数组
+   * @param logits 输出概率分布
    * @param temperature 温度参数
    */
   void applyTemperature(float *logits, float temperature);
@@ -185,7 +186,7 @@ private:
   /**
    * @brief 检查是否应该停止生成
    * @param generated_text 已生成的文本
-   * @param stop_sequences 停止序列
+   * @param stop_sequences 停止序列列表
    * @return 是否应该停止
    */
   bool shouldStop(const std::string &generated_text,
@@ -202,11 +203,11 @@ private:
 
   mutable std::mutex mutex_; ///< 线程安全互斥锁
 
-  // 模型信息
+  std::string model_path_; ///< 模型文件路径
   int context_size_; ///< 上下文大小
   int vocab_size_;   ///< 词汇表大小
 
-  // Ollama模型管理器
+  // Ollama相关成员
   std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>
       model_manager_;
   std::string model_id_; ///< 当前使用的模型ID
@@ -215,17 +216,20 @@ private:
 
 /**
  * @brief 文本生成器工厂类
+ *
+ * 提供创建不同类型文本生成器的静态方法
  */
 class TextGeneratorFactory {
 public:
   /**
-   * @brief 创建文本生成器
-   * @param model llama模型指针
-   * @param context llama上下文指针
-   * @return 文本生成器指针
+   * @brief 创建使用Ollama的文本生成器
+   * @param model_manager Ollama模型管理器
+   * @param model_id 模型ID
+   * @return 文本生成器实例
    */
-  // static std::unique_ptr<TextGenerator> create(llama_model* model,
-  // llama_context* context);  // 暂时禁用
+  static std::unique_ptr<TextGenerator>
+  createOllamaGenerator(std::shared_ptr<duorou::extensions::ollama::OllamaModelManager> model_manager,
+                       const std::string &model_id);
 };
 
 } // namespace core

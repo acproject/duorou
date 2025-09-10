@@ -36,6 +36,13 @@ std::vector<int32_t> BPEProcessor::encode(const std::string &text,
     return {};
   }
   
+  // 性能优化：检查缓存
+  auto cache_key = text + (add_special ? "_special" : "_no_special");
+  auto cache_it = encode_cache_.find(cache_key);
+  if (cache_it != encode_cache_.end()) {
+    return cache_it->second;
+  }
+  
   // Process special tokens first
   std::vector<Fragment> fragments;
   try {
@@ -116,10 +123,26 @@ std::vector<int32_t> BPEProcessor::encode(const std::string &text,
     }
   }
 
+  // 性能优化：存储到缓存（限制缓存大小）
+  if (encode_cache_.size() < MAX_CACHE_SIZE) {
+    encode_cache_[cache_key] = ids;
+  }
+
   return ids;
 }
 
 std::string BPEProcessor::decode(const std::vector<int32_t> &tokens) {
+  // 性能优化：检查缓存（使用简单的字符串key）
+  std::string cache_key;
+  for (auto token : tokens) {
+    cache_key += std::to_string(token) + ",";
+  }
+  
+  auto cache_it = decode_cache_.find(cache_key);
+  if (cache_it != decode_cache_.end()) {
+    return cache_it->second;
+  }
+  
   std::stringstream result;
   bool first_token = true;
 
@@ -164,7 +187,14 @@ std::string BPEProcessor::decode(const std::vector<int32_t> &tokens) {
     first_token = false;
   }
 
-  return result.str();
+  std::string decoded_result = result.str();
+  
+  // 性能优化：存储到缓存（限制缓存大小）
+  if (decode_cache_.size() < MAX_CACHE_SIZE) {
+    decode_cache_[cache_key] = decoded_result;
+  }
+
+  return decoded_result;
 }
 
 bool BPEProcessor::is(int32_t token_id, Special special) const {

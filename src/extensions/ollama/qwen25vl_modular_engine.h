@@ -18,6 +18,13 @@ namespace duorou {
 namespace extensions {
 namespace ollama {
 
+// Qwen特定的token ID定义
+struct QwenTokens {
+    static constexpr uint32_t ENDOFTEXT = 151643;    // <|endoftext|>
+    static constexpr uint32_t IM_END = 151645;       // <|im_end|>
+    static constexpr uint32_t IM_START = 151644;     // <|im_start|>
+};
+
 // ModelConfig在base_algorithm.h中定义
 
 // Qwen2.5-VL模型配置
@@ -183,7 +190,9 @@ private:
     uint32_t sampleToken(const algorithms::Tensor& logits,
                         float temperature,
                         uint32_t top_k,
-                        float top_p);
+                        float top_p,
+                        const std::vector<uint32_t>& history = {},
+                        float repetition_penalty = 1.0f);
     
     // 缓存管理
     void initializeKVCache();

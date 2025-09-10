@@ -1,6 +1,6 @@
 #include "text_processor.h"
 #include "sentencepiece_processor.h"
-#include "bpe_processor.h"
+#include "algorithms/bpe_processor.h"
 #include <algorithm>
 #include <sstream>
 #include <iostream>

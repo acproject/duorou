@@ -52,7 +52,8 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
       // 创建推理请求
       duorou::extensions::ollama::InferenceRequest request;
       request.model_id = model_id_;
-      request.prompt = prompt;
+      // 格式化输入为Qwen ChatML格式
+      request.prompt = formatQwenChatML(prompt);
       request.max_tokens = params.max_tokens;
       request.temperature = params.temperature;
       request.top_p = params.top_p;
@@ -356,6 +357,30 @@ void TextGenerator::initializeRNG(int64_t seed) {
   } else {
     rng_.seed(static_cast<unsigned int>(seed));
   }
+}
+
+std::string TextGenerator::formatQwenChatML(const std::string &user_input, 
+                                            const std::string &system_prompt) const {
+  std::string formatted_prompt;
+  
+  // 如果有系统提示词，先添加系统消息
+  if (!system_prompt.empty()) {
+    formatted_prompt += "<|im_start|>system\n";
+    formatted_prompt += system_prompt;
+    formatted_prompt += "<|im_end|>\n";
+  }
+  
+  // 添加用户消息
+  formatted_prompt += "<|im_start|>user\n";
+  formatted_prompt += user_input;
+  formatted_prompt += "<|im_end|>\n";
+  
+  // 添加助手开始标记
+  formatted_prompt += "<|im_start|>assistant\n";
+  
+  std::cout << "[DEBUG] Formatted prompt with ChatML: " << formatted_prompt.substr(0, 100) << "..." << std::endl;
+  
+  return formatted_prompt;
 }
 
 } // namespace core

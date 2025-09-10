@@ -175,9 +175,10 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
       algorithms::Tensor logits = generateLogits(hidden_states);
       std::cerr << "[DEBUG] Logits generated successfully" << std::endl;
 
-      // 采样下一个token
-      std::cerr << "[DEBUG] Sampling next token..." << std::endl;
-      uint32_t next_token = sampleToken(logits, temperature, top_k, top_p);
+      // 采样下一个token（应用重复惩罚）
+      std::cerr << "[DEBUG] Sampling next token with repetition penalty..." << std::endl;
+      float repetition_penalty = 1.1f; // 设置重复惩罚参数
+      uint32_t next_token = sampleToken(logits, temperature, top_k, top_p, generated_tokens, repetition_penalty);
       std::cerr << "[DEBUG] Sampled token: " << next_token << std::endl;
       
       // 详细检查token值
@@ -189,14 +190,13 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件（这里简化处理）
-      // 检查EOS token - Qwen2.5-VL使用151645作为EOS token
-        bool is_eos = (next_token == 151645 || next_token == 151643 || next_token == 151644);
-        std::cerr << "[DEBUG] EOS check result: " << (is_eos ? "TRUE" : "FALSE") << std::endl;
-        if (is_eos) {
-            std::cerr << "[DEBUG] EOS token encountered (" << next_token << "), stopping generation" << std::endl;
-            break;
-        }
+      // 检查结束条件 - 使用Qwen特定的EOS tokens
+      bool is_eos = (next_token == QwenTokens::ENDOFTEXT || next_token == QwenTokens::IM_END);
+      std::cerr << "[DEBUG] EOS check result: " << (is_eos ? "TRUE" : "FALSE") << std::endl;
+      if (is_eos) {
+          std::cerr << "[DEBUG] EOS token encountered (" << next_token << "), stopping generation" << std::endl;
+          break;
+      }
     }
 
     // 更新性能统计
@@ -305,8 +305,9 @@ void Qwen25VLModularEngine::generateTextStreaming(
       // 生成logits
       algorithms::Tensor logits = generateLogits(hidden_states);
 
-      // 采样下一个token
-      uint32_t next_token = sampleToken(logits, temperature, top_k, top_p);
+      // 采样下一个token（应用重复惩罚）
+      float repetition_penalty = 1.1f; // 设置重复惩罚参数
+      uint32_t next_token = sampleToken(logits, temperature, top_k, top_p, generated_tokens, repetition_penalty);
       std::cerr << "[DEBUG] Streaming sampled token: " << next_token << std::endl;
       
       generated_tokens.push_back(next_token);
@@ -316,8 +317,8 @@ void Qwen25VLModularEngine::generateTextStreaming(
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件
-      bool is_eos = (next_token == 151645 || next_token == 151643 || next_token == 151644);
+      // 检查结束条件 - 使用Qwen特定的EOS tokens
+      bool is_eos = (next_token == QwenTokens::ENDOFTEXT || next_token == QwenTokens::IM_END);
       bool is_final = is_eos || (step == max_new_tokens - 1) || streaming_state_.should_stop;
       
       // 立即通过回调返回token
@@ -750,7 +751,9 @@ Qwen25VLModularEngine::generateLogits(const algorithms::Tensor &hidden_states) {
 
 uint32_t Qwen25VLModularEngine::sampleToken(const algorithms::Tensor &logits,
                                             float temperature, uint32_t top_k,
-                                            float top_p) {
+                                            float top_p,
+                                            const std::vector<uint32_t>& history,
+                                            float repetition_penalty) {
 
   try {
     // 获取最后一个位置的logits
@@ -760,6 +763,20 @@ uint32_t Qwen25VLModularEngine::sampleToken(const algorithms::Tensor &logits,
     std::vector<float> last_logits(vocab_size);
     for (uint32_t i = 0; i < vocab_size; ++i) {
       last_logits[i] = logits.data[(seq_len - 1) * vocab_size + i];
+    }
+
+    // 应用重复惩罚
+    if (repetition_penalty != 1.0f && !history.empty()) {
+      std::cerr << "[DEBUG] Applying repetition penalty: " << repetition_penalty << " to " << history.size() << " history tokens" << std::endl;
+      for (uint32_t token_id : history) {
+        if (token_id < vocab_size) {
+          if (last_logits[token_id] > 0) {
+            last_logits[token_id] /= repetition_penalty;
+          } else {
+            last_logits[token_id] *= repetition_penalty;
+          }
+        }
+      }
     }
 
     // 应用温度缩放

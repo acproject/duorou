@@ -363,7 +363,6 @@ set(DUOROU_SOURCES_LIST
     src/core/model_switch_task.cpp
     src/core/safetensors_parser.cpp
     src/core/hf_tokenizer.cpp
-    src/core/qwen_safetensors_engine.cpp
 
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
