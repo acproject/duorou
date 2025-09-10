@@ -49,6 +49,16 @@ bool Qwen25VLModularEngine::initialize(const Qwen25VLConfig &config) {
     model_config.max_position_embeddings = config.max_position_embeddings;
     model_config.rope_theta = config.rope_theta;
     model_config.rms_norm_eps = config.rms_norm_eps;
+    
+    // 打印模型配置信息
+    std::cerr << "[DEBUG] Model Config:" << std::endl;
+    std::cerr << "[DEBUG]   hidden_size: " << model_config.hidden_size << std::endl;
+    std::cerr << "[DEBUG]   num_attention_heads: " << model_config.num_attention_heads << std::endl;
+    std::cerr << "[DEBUG]   num_key_value_heads: " << model_config.num_key_value_heads << std::endl;
+    std::cerr << "[DEBUG]   intermediate_size: " << model_config.intermediate_size << std::endl;
+    std::cerr << "[DEBUG]   max_position_embeddings: " << model_config.max_position_embeddings << std::endl;
+    std::cerr << "[DEBUG]   rope_theta: " << model_config.rope_theta << std::endl;
+    std::cerr << "[DEBUG]   rms_norm_eps: " << model_config.rms_norm_eps << std::endl;
 
     // 初始化算法组件
     attention_ = std::make_unique<algorithms::MultiHeadAttention>();
@@ -622,23 +632,52 @@ Qwen25VLModularEngine::applyRMSNorm(const algorithms::Tensor &input,
 algorithms::Tensor
 Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
   try {
+    std::cerr << "[DEBUG] applyEmbedding called" << std::endl;
+    std::cerr << "[DEBUG] Input IDs size: " << input_ids.size() << std::endl;
+    std::cerr << "[DEBUG] Input IDs: [";
+    for (size_t i = 0; i < std::min(input_ids.size(), size_t(10)); ++i) {
+      std::cerr << input_ids[i];
+      if (i < std::min(input_ids.size(), size_t(10)) - 1) std::cerr << ", ";
+    }
+    if (input_ids.size() > 10) std::cerr << ", ...";
+    std::cerr << "]" << std::endl;
+    
     uint32_t seq_len = input_ids.size();
     // 修复：添加batch维度以匹配MultiHeadAttention的期望输入格式 [batch_size,
     // seq_len, hidden_size]
     std::vector<uint32_t> shape = {1, seq_len, config_.hidden_size};
+    
+    std::cerr << "[DEBUG] Embedding output shape: [" << shape[0] << ", " 
+              << shape[1] << ", " << shape[2] << "]" << std::endl;
+    std::cerr << "[DEBUG] Config vocab_size: " << config_.vocab_size << std::endl;
+    std::cerr << "[DEBUG] Config hidden_size: " << config_.hidden_size << std::endl;
+    
     algorithms::Tensor embeddings(shape);
+    std::cerr << "[DEBUG] Embedding tensor created: size=" << embeddings.size 
+              << ", data_size=" << embeddings.data.size() << std::endl;
 
     // 检查token_embeddings张量是否已初始化
+    std::cerr << "[DEBUG] Token embeddings shape: [";
+    for (size_t i = 0; i < weights_.token_embeddings.shape.size(); ++i) {
+      std::cerr << weights_.token_embeddings.shape[i];
+      if (i < weights_.token_embeddings.shape.size() - 1) std::cerr << ", ";
+    }
+    std::cerr << "]" << std::endl;
+    std::cerr << "[DEBUG] Token embeddings size: " << weights_.token_embeddings.size << std::endl;
+    std::cerr << "[DEBUG] Token embeddings data size: " << weights_.token_embeddings.data.size() << std::endl;
+    
     if (weights_.token_embeddings.data.empty()) {
-      std::cerr << "Token embeddings not initialized" << std::endl;
+      std::cerr << "[ERROR] Token embeddings not initialized" << std::endl;
       throw std::runtime_error("Token embeddings not initialized");
     }
 
     // 检查token_embeddings张量大小是否正确
     size_t expected_embedding_size =
         static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
+    std::cerr << "[DEBUG] Expected embedding size: " << expected_embedding_size << std::endl;
+    
     if (weights_.token_embeddings.data.size() < expected_embedding_size) {
-      std::cerr << "Token embeddings size mismatch. Expected: "
+      std::cerr << "[ERROR] Token embeddings size mismatch. Expected: "
                 << expected_embedding_size
                 << ", Got: " << weights_.token_embeddings.data.size()
                 << std::endl;
@@ -1011,22 +1050,67 @@ uint32_t Qwen25VLModularEngine::sampleToken(
 
 void Qwen25VLModularEngine::initializeKVCache() {
   try {
+    std::cerr << "[DEBUG] Initializing KV Cache (llama.cpp inspired)" << std::endl;
+    
     state_.key_cache.clear();
     state_.value_cache.clear();
 
     uint32_t head_dim = config_.hidden_size / config_.num_attention_heads;
     uint32_t kv_head_dim = config_.hidden_size / config_.num_key_value_heads;
+    
+    // Calculate optimal cache size based on available memory (like llama.cpp n_ctx calculation)
+    const size_t available_memory_gb = 8; // Conservative estimate
+    const size_t bytes_per_element = sizeof(float);
+    const size_t elements_per_layer = config_.num_key_value_heads * kv_head_dim;
+    
+    // Calculate max elements per layer considering both K and V caches
+    const size_t total_memory_bytes = available_memory_gb * 1024 * 1024 * 1024;
+    const size_t memory_for_kv = total_memory_bytes / 4; // Use 25% of memory for KV cache
+    const size_t max_elements_per_layer = memory_for_kv / (config_.num_hidden_layers * 2 * bytes_per_element);
+    
+    uint32_t optimal_cache_length = std::min(
+        static_cast<uint32_t>(max_elements_per_layer / elements_per_layer),
+        config_.max_position_embeddings
+    );
+    
+    // Ensure minimum cache size for functionality (like llama.cpp padding strategy)
+    optimal_cache_length = std::max(optimal_cache_length, 512u);
+    
+    std::cerr << "[DEBUG] KV Cache memory calculation (llama.cpp style):" << std::endl;
+    std::cerr << "[DEBUG]   Available memory: " << available_memory_gb << " GB" << std::endl;
+    std::cerr << "[DEBUG]   Memory for KV cache: " << (memory_for_kv / (1024*1024)) << " MB" << std::endl;
+    std::cerr << "[DEBUG]   Elements per layer: " << elements_per_layer << std::endl;
+    std::cerr << "[DEBUG]   Max elements per layer: " << max_elements_per_layer << std::endl;
+    std::cerr << "[DEBUG]   Original max_position_embeddings: " << config_.max_position_embeddings << std::endl;
+    std::cerr << "[DEBUG]   Optimal cache length: " << optimal_cache_length << std::endl;
+    std::cerr << "[DEBUG]   head_dim: " << head_dim << std::endl;
+    std::cerr << "[DEBUG]   kv_head_dim: " << kv_head_dim << std::endl;
+    std::cerr << "[DEBUG]   num_hidden_layers: " << config_.num_hidden_layers << std::endl;
+    std::cerr << "[DEBUG]   num_key_value_heads: " << config_.num_key_value_heads << std::endl;
 
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      // 缓存形状应该是 [max_seq_len, num_kv_heads * kv_head_dim] 以匹配
-      // splitCacheToHeads 的期望
-      std::vector<uint32_t> cache_shape = {config_.max_position_embeddings,
-                                           config_.num_key_value_heads *
-                                               kv_head_dim};
+      // Use optimal cache length instead of max_position_embeddings
+      std::vector<uint32_t> cache_shape = {optimal_cache_length,
+                                           config_.num_key_value_heads * kv_head_dim};
 
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
+      
+      if (layer == 0) {
+        size_t cache_size_mb = (cache_shape[0] * cache_shape[1] * bytes_per_element * 2) / (1024 * 1024);
+        std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: [" 
+                  << cache_shape[0] << ", " << cache_shape[1] << "]" << std::endl;
+        std::cerr << "[DEBUG] Layer " << layer << " KV cache memory: " << cache_size_mb << " MB per layer" << std::endl;
+        std::cerr << "[DEBUG] Total estimated KV cache memory: " << (cache_size_mb * config_.num_hidden_layers) << " MB" << std::endl;
+        std::cerr << "[DEBUG] Layer " << layer << " KV cache size: " 
+                  << state_.key_cache[layer].size << std::endl;
+        std::cerr << "[DEBUG] Layer " << layer << " KV cache data size: " 
+                  << state_.key_cache[layer].data.size() << std::endl;
+      }
     }
+    
+    std::cerr << "[DEBUG] KV Cache initialized for " << config_.num_hidden_layers 
+              << " layers with optimized memory usage" << std::endl;
 
     state_.current_length = 0;
     state_.cache_position = 0;
@@ -1282,13 +1366,44 @@ Qwen25VLModularEngine::loadTensorFromFile(const std::string &file_path) {
 algorithms::Tensor
 Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
                                      const algorithms::Tensor &b) {
+  // 添加详细的调试信息
+  std::cerr << "[DEBUG] performMatMul called" << std::endl;
+  std::cerr << "[DEBUG] Tensor A: shape=[";
+  for (size_t i = 0; i < a.shape.size(); ++i) {
+    std::cerr << a.shape[i];
+    if (i < a.shape.size() - 1) std::cerr << ", ";
+  }
+  std::cerr << "], size=" << a.size << ", data_size=" << a.data.size() << std::endl;
+  
+  std::cerr << "[DEBUG] Tensor B: shape=[";
+  for (size_t i = 0; i < b.shape.size(); ++i) {
+    std::cerr << b.shape[i];
+    if (i < b.shape.size() - 1) std::cerr << ", ";
+  }
+  std::cerr << "], size=" << b.size << ", data_size=" << b.data.size() << std::endl;
+
   // 检查输入张量的维度
   if (a.shape.empty() || b.shape.empty()) {
+    std::cerr << "[ERROR] Input tensors cannot be empty" << std::endl;
     throw std::invalid_argument("Input tensors cannot be empty");
+  }
+
+  // 检查数据完整性
+  if (a.data.empty() || b.data.empty()) {
+    std::cerr << "[ERROR] Input tensor data is empty" << std::endl;
+    throw std::invalid_argument("Input tensor data is empty");
+  }
+
+  if (a.data.size() != a.size || b.data.size() != b.size) {
+    std::cerr << "[ERROR] Tensor data size mismatch with declared size" << std::endl;
+    std::cerr << "[ERROR] A: data.size()=" << a.data.size() << ", size=" << a.size << std::endl;
+    std::cerr << "[ERROR] B: data.size()=" << b.data.size() << ", size=" << b.size << std::endl;
+    throw std::invalid_argument("Tensor data size mismatch");
   }
 
   // 支持2D和3D张量的矩阵乘法
   if (a.shape.size() < 2 || b.shape.size() < 2) {
+    std::cerr << "[ERROR] Input tensors must have at least 2 dimensions" << std::endl;
     throw std::invalid_argument(
         "Input tensors must have at least 2 dimensions");
   }
@@ -1320,7 +1435,12 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   }
 
   // 检查矩阵乘法的维度兼容性
+  std::cerr << "[DEBUG] Matrix dimensions: A(" << a_rows << "x" << a_cols 
+            << "), B(" << b_rows << "x" << b_cols << "), batch_size=" << batch_size << std::endl;
+  
   if (a_cols != b_rows) {
+    std::cerr << "[ERROR] Matrix dimensions incompatible: A_cols(" << a_cols 
+              << ") != B_rows(" << b_rows << ")" << std::endl;
     throw std::invalid_argument(
         "Matrix dimensions are not compatible for multiplication");
   }
@@ -1333,10 +1453,23 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
     output_shape = {a_rows, b_cols};
   }
 
+  std::cerr << "[DEBUG] Output shape: [";
+  for (size_t i = 0; i < output_shape.size(); ++i) {
+    std::cerr << output_shape[i];
+    if (i < output_shape.size() - 1) std::cerr << ", ";
+  }
+  std::cerr << "]" << std::endl;
+
   algorithms::Tensor result(output_shape);
+  std::cerr << "[DEBUG] Result tensor created: size=" << result.size 
+            << ", data_size=" << result.data.size() << std::endl;
 
   // 执行矩阵乘法
+  std::cerr << "[DEBUG] Starting matrix multiplication loops" << std::endl;
+  
   for (uint32_t batch = 0; batch < batch_size; ++batch) {
+    if (batch == 0) std::cerr << "[DEBUG] Processing batch " << batch << std::endl;
+    
     for (uint32_t i = 0; i < a_rows; ++i) {
       for (uint32_t j = 0; j < b_cols; ++j) {
         float sum = 0.0f;
@@ -1356,6 +1489,20 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
             b_idx = k * b_cols + j;
           }
 
+          // 边界检查
+          if (a_idx >= a.data.size()) {
+            std::cerr << "[ERROR] A index out of bounds: " << a_idx 
+                      << " >= " << a.data.size() << std::endl;
+            std::cerr << "[ERROR] batch=" << batch << ", i=" << i << ", k=" << k << std::endl;
+            throw std::out_of_range("A tensor index out of bounds");
+          }
+          if (b_idx >= b.data.size()) {
+            std::cerr << "[ERROR] B index out of bounds: " << b_idx 
+                      << " >= " << b.data.size() << std::endl;
+            std::cerr << "[ERROR] batch=" << batch << ", k=" << k << ", j=" << j << std::endl;
+            throw std::out_of_range("B tensor index out of bounds");
+          }
+
           sum += a.data[a_idx] * b.data[b_idx];
         }
 
@@ -1366,10 +1513,21 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
         } else {
           out_idx = i * b_cols + j;
         }
+        
+        // 输出索引边界检查
+        if (out_idx >= result.data.size()) {
+          std::cerr << "[ERROR] Result index out of bounds: " << out_idx 
+                    << " >= " << result.data.size() << std::endl;
+          std::cerr << "[ERROR] batch=" << batch << ", i=" << i << ", j=" << j << std::endl;
+          throw std::out_of_range("Result tensor index out of bounds");
+        }
+        
         result.data[out_idx] = sum;
       }
     }
   }
+  
+  std::cerr << "[DEBUG] Matrix multiplication completed successfully" << std::endl;
 
   return result;
 }
