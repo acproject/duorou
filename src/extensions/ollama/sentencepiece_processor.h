@@ -1,9 +1,13 @@
 #ifndef SENTENCEPIECE_PROCESSOR_H
 #define SENTENCEPIECE_PROCESSOR_H
 
-#include "text_processor.h"
-#include <queue>
+#include <string>
+#include <vector>
 #include <memory>
+#include <queue>
+#include <cstdint>
+#include <functional>
+#include "text_processor.h"
 
 namespace duorou {
 namespace extensions {
@@ -64,6 +68,11 @@ private:
     
     // Fallback mechanism
     std::vector<int32_t> characterLevelFallback(const std::string& text) const;
+    
+    // UTF-8 utility functions
+    std::string bytesToUTF8(const std::vector<uint8_t>& bytes) const;
+    bool isValidUTF8(const std::string& str) const;
+    std::string cleanInvalidUTF8(const std::string& str) const;
     
     // Constants
     static const std::string WHITESPACE_SEP;

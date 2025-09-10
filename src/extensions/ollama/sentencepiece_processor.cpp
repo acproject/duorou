@@ -144,6 +144,7 @@ std::vector<int32_t> SentencePieceProcessor::encode(const std::string &text,
 }
 
 std::string SentencePieceProcessor::decode(const std::vector<int32_t> &tokens) {
+  std::vector<uint8_t> byte_buffer;
   std::stringstream result;
   bool first_token = true;
 
@@ -170,6 +171,31 @@ std::string SentencePieceProcessor::decode(const std::vector<int32_t> &tokens) {
       continue;
     }
 
+    // Handle byte tokens like "<0xEA>" - collect bytes for proper UTF-8 reconstruction
+    if (token_str.length() == 6 && token_str.substr(0, 3) == "<0x" &&
+        token_str.back() == '>') {
+      try {
+        std::string hex_str = token_str.substr(3, 2);
+        unsigned long byte_val = std::stoul(hex_str, nullptr, 16);
+        if (byte_val <= 255) {
+          byte_buffer.push_back(static_cast<uint8_t>(byte_val));
+          first_token = false;
+          continue;
+        }
+      } catch (const std::exception &) {
+        // Fall through to normal string handling
+      }
+    }
+
+    // Flush any accumulated bytes as UTF-8 string
+    if (!byte_buffer.empty()) {
+      std::string utf8_str = bytesToUTF8(byte_buffer);
+      if (!utf8_str.empty()) {
+        result << utf8_str;
+      }
+      byte_buffer.clear();
+    }
+
     // Handle Ġ prefix (GPT-style space encoding)
     if (token_str.length() >= 3 && token_str.substr(0, 3) == "Ġ") {
       if (!first_token) {
@@ -193,22 +219,6 @@ std::string SentencePieceProcessor::decode(const std::vector<int32_t> &tokens) {
       }
     }
 
-    // Handle byte tokens like "<0xEA>"
-    if (token_str.length() == 6 && token_str.substr(0, 3) == "<0x" &&
-        token_str.back() == '>') {
-      try {
-        std::string hex_str = token_str.substr(3, 2);
-        unsigned long byte_val = std::stoul(hex_str, nullptr, 16);
-        if (byte_val <= 255) {
-          result << static_cast<char>(byte_val);
-          first_token = false;
-          continue;
-        }
-      } catch (const std::exception &) {
-        // Fall through to normal string handling
-      }
-    }
-
     // Handle Chinese characters and other Unicode properly
     if (!token_str.empty()) {
       result << token_str;
@@ -217,7 +227,23 @@ std::string SentencePieceProcessor::decode(const std::vector<int32_t> &tokens) {
     first_token = false;
   }
 
-  return result.str();
+  // Flush any remaining bytes
+  if (!byte_buffer.empty()) {
+    std::string utf8_str = bytesToUTF8(byte_buffer);
+    if (!utf8_str.empty()) {
+      result << utf8_str;
+    }
+  }
+
+  std::string final_result = result.str();
+  
+  // Validate UTF-8 and clean up invalid sequences
+  if (!isValidUTF8(final_result)) {
+    std::cerr << "[WARNING] Invalid UTF-8 sequence detected, cleaning up" << std::endl;
+    final_result = cleanInvalidUTF8(final_result);
+  }
+
+  return final_result;
 }
 
 bool SentencePieceProcessor::is(int32_t token_id, Special special) const {
@@ -512,6 +538,123 @@ SentencePieceProcessor::characterLevelFallback(const std::string &text) const {
     }
   }
 
+  return result;
+}
+
+// UTF-8 utility functions implementation
+std::string SentencePieceProcessor::bytesToUTF8(const std::vector<uint8_t>& bytes) const {
+  std::string result;
+  result.reserve(bytes.size());
+  
+  for (uint8_t byte : bytes) {
+    result.push_back(static_cast<char>(byte));
+  }
+  
+  // Validate the resulting UTF-8 string
+  if (isValidUTF8(result)) {
+    return result;
+  } else {
+    // If invalid, return empty string to avoid corruption
+    std::cerr << "[WARNING] Invalid UTF-8 sequence in byte buffer, skipping" << std::endl;
+    return "";
+  }
+}
+
+bool SentencePieceProcessor::isValidUTF8(const std::string& str) const {
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(str.c_str());
+  size_t len = str.length();
+  
+  for (size_t i = 0; i < len; ) {
+    unsigned char byte = bytes[i];
+    
+    if (byte < 0x80) {
+      // ASCII character
+      i++;
+    } else if ((byte >> 5) == 0x06) {
+      // 2-byte sequence
+      if (i + 1 >= len || (bytes[i + 1] >> 6) != 0x02) {
+        return false;
+      }
+      i += 2;
+    } else if ((byte >> 4) == 0x0E) {
+      // 3-byte sequence
+      if (i + 2 >= len || (bytes[i + 1] >> 6) != 0x02 || (bytes[i + 2] >> 6) != 0x02) {
+        return false;
+      }
+      i += 3;
+    } else if ((byte >> 3) == 0x1E) {
+      // 4-byte sequence
+      if (i + 3 >= len || (bytes[i + 1] >> 6) != 0x02 || 
+          (bytes[i + 2] >> 6) != 0x02 || (bytes[i + 3] >> 6) != 0x02) {
+        return false;
+      }
+      i += 4;
+    } else {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+std::string SentencePieceProcessor::cleanInvalidUTF8(const std::string& str) const {
+  std::string result;
+  result.reserve(str.length());
+  
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(str.c_str());
+  size_t len = str.length();
+  
+  for (size_t i = 0; i < len; ) {
+    unsigned char byte = bytes[i];
+    
+    if (byte < 0x80) {
+      // ASCII character - always valid
+      result.push_back(static_cast<char>(byte));
+      i++;
+    } else if ((byte >> 5) == 0x06) {
+      // 2-byte sequence
+      if (i + 1 < len && (bytes[i + 1] >> 6) == 0x02) {
+        result.push_back(static_cast<char>(bytes[i]));
+        result.push_back(static_cast<char>(bytes[i + 1]));
+        i += 2;
+      } else {
+        // Invalid sequence, replace with replacement character
+        result.append("\uFFFD");
+        i++;
+      }
+    } else if ((byte >> 4) == 0x0E) {
+      // 3-byte sequence
+      if (i + 2 < len && (bytes[i + 1] >> 6) == 0x02 && (bytes[i + 2] >> 6) == 0x02) {
+        result.push_back(static_cast<char>(bytes[i]));
+        result.push_back(static_cast<char>(bytes[i + 1]));
+        result.push_back(static_cast<char>(bytes[i + 2]));
+        i += 3;
+      } else {
+        // Invalid sequence, replace with replacement character
+        result.append("\uFFFD");
+        i++;
+      }
+    } else if ((byte >> 3) == 0x1E) {
+      // 4-byte sequence
+      if (i + 3 < len && (bytes[i + 1] >> 6) == 0x02 && 
+          (bytes[i + 2] >> 6) == 0x02 && (bytes[i + 3] >> 6) == 0x02) {
+        result.push_back(static_cast<char>(bytes[i]));
+        result.push_back(static_cast<char>(bytes[i + 1]));
+        result.push_back(static_cast<char>(bytes[i + 2]));
+        result.push_back(static_cast<char>(bytes[i + 3]));
+        i += 4;
+      } else {
+        // Invalid sequence, replace with replacement character
+        result.append("\uFFFD");
+        i++;
+      }
+    } else {
+      // Invalid start byte, replace with replacement character
+      result.append("\uFFFD");
+      i++;
+    }
+  }
+  
   return result;
 }
 

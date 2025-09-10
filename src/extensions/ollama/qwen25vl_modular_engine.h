@@ -1,28 +1,18 @@
 #ifndef QWEN25VL_MODULAR_ENGINE_H
 #define QWEN25VL_MODULAR_ENGINE_H
 
+#include <memory>
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <functional>
+#include <cstdint>
 #include "algorithms/base_algorithm.h"
 #include "algorithms/algorithm_factory.h"
 #include "algorithms/multi_head_attention.h"
 #include "algorithms/feed_forward.h"
 #include "algorithms/rope_processor.h"
 #include "algorithms/matrix_operations.h"
-
-namespace duorou {
-namespace extensions {
-namespace ollama {
-namespace algorithms {
-
-
-
-} // namespace algorithms
-} // namespace ollama
-} // namespace extensions
-} // namespace duorou
-#include <memory>
-#include <vector>
-#include <string>
-#include <unordered_map>
 
 namespace duorou {
 namespace extensions {
@@ -65,6 +55,18 @@ struct InferenceState {
     bool is_prefill = true;                       // 是否为预填充阶段
 };
 
+// 流式生成回调函数类型
+// 参数：新生成的token ID，是否为最后一个token
+using StreamingCallback = std::function<void(uint32_t token_id, bool is_final)>;
+
+// 流式生成状态
+struct StreamingState {
+    bool is_streaming = false;                    // 是否正在流式生成
+    bool should_stop = false;                     // 是否应该停止生成
+    StreamingCallback callback = nullptr;         // 回调函数
+    std::vector<uint32_t> generated_tokens;       // 已生成的tokens
+};
+
 // 模块化Qwen2.5-VL推理引擎
 class Qwen25VLModularEngine {
 public:
@@ -92,6 +94,26 @@ public:
                                             uint32_t top_k = 50,
                                             float top_p = 0.9f);
     
+    // 流式文本生成
+    void generateTextStreaming(const std::vector<uint32_t>& input_ids,
+                              StreamingCallback callback,
+                              uint32_t max_length = 512,
+                              float temperature = 1.0f,
+                              uint32_t top_k = 50,
+                              float top_p = 0.9f);
+    
+    // 流式多模态生成
+    void generateMultimodalStreaming(const std::vector<uint32_t>& input_ids,
+                                    const algorithms::Tensor& image_features,
+                                    StreamingCallback callback,
+                                    uint32_t max_length = 512,
+                                    float temperature = 1.0f,
+                                    uint32_t top_k = 50,
+                                    float top_p = 0.9f);
+    
+    // 停止流式生成
+    void stopStreaming();
+    
     // 编码图像特征
     algorithms::Tensor encodeImage(const algorithms::Tensor& image);
     
@@ -115,6 +137,7 @@ private:
     Qwen25VLConfig config_;
     bool initialized_ = false;
     InferenceState state_;
+    StreamingState streaming_state_;
     PerformanceStats perf_stats_;
     
     // 算法组件

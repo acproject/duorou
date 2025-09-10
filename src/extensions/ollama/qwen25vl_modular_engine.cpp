@@ -245,6 +245,127 @@ std::vector<uint32_t> Qwen25VLModularEngine::generateMultimodal(
   }
 }
 
+void Qwen25VLModularEngine::generateTextStreaming(
+    const std::vector<uint32_t> &input_ids, StreamingCallback callback,
+    uint32_t max_length, float temperature, uint32_t top_k, float top_p) {
+
+  if (!initialized_) {
+    std::cerr << "[DEBUG] Engine not initialized" << std::endl;
+    if (callback) callback(0, true); // 通知错误结束
+    return;
+  }
+
+  if (!callback) {
+    std::cerr << "[DEBUG] No callback provided for streaming" << std::endl;
+    return;
+  }
+
+  std::cerr << "[DEBUG] Starting streaming text generation with " << input_ids.size() << " input tokens" << std::endl;
+
+  // 初始化流式状态
+  streaming_state_.is_streaming = true;
+  streaming_state_.should_stop = false;
+  streaming_state_.callback = callback;
+  streaming_state_.generated_tokens.clear();
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+
+  std::vector<uint32_t> generated_tokens = input_ids;
+  state_.current_length = input_ids.size();
+  state_.is_prefill = true;
+
+  try {
+    uint32_t max_new_tokens = max_length > input_ids.size() ? max_length - input_ids.size() : 100;
+    
+    for (uint32_t step = 0; step < max_new_tokens && !streaming_state_.should_stop; ++step) {
+      std::cerr << "[DEBUG] Streaming step " << step << "/" << max_new_tokens << std::endl;
+      
+      // 准备输入
+      std::vector<uint32_t> current_input;
+      if (state_.is_prefill) {
+        current_input = generated_tokens;
+        state_.is_prefill = false;
+        std::cerr << "[DEBUG] Prefill mode with " << current_input.size() << " tokens" << std::endl;
+      } else {
+        current_input = {generated_tokens.back()};
+        std::cerr << "[DEBUG] Decode mode with 1 token" << std::endl;
+      }
+
+      // 应用词嵌入
+      algorithms::Tensor embeddings = applyEmbedding(current_input);
+
+      // 通过Transformer层
+      algorithms::Tensor hidden_states = embeddings;
+      algorithms::Tensor attention_mask = createAttentionMask(current_input.size());
+
+      for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
+        hidden_states = forwardTransformerLayer(hidden_states, layer, &attention_mask);
+      }
+
+      // 生成logits
+      algorithms::Tensor logits = generateLogits(hidden_states);
+
+      // 采样下一个token
+      uint32_t next_token = sampleToken(logits, temperature, top_k, top_p);
+      std::cerr << "[DEBUG] Streaming sampled token: " << next_token << std::endl;
+      
+      generated_tokens.push_back(next_token);
+      streaming_state_.generated_tokens.push_back(next_token);
+
+      // 更新状态
+      state_.current_length++;
+      state_.cache_position++;
+
+      // 检查结束条件
+      bool is_eos = (next_token == 151645 || next_token == 151643 || next_token == 151644);
+      bool is_final = is_eos || (step == max_new_tokens - 1) || streaming_state_.should_stop;
+      
+      // 立即通过回调返回token
+      callback(next_token, is_final);
+      
+      if (is_eos) {
+        std::cerr << "[DEBUG] EOS token encountered in streaming, stopping" << std::endl;
+        break;
+      }
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    std::cerr << "[DEBUG] Streaming generation completed in " << duration.count() << "ms" << std::endl;
+
+  } catch (const std::exception &e) {
+    std::cerr << "Exception during streaming generation: " << e.what() << std::endl;
+    if (callback) callback(0, true); // 通知错误结束
+  }
+
+  // 重置流式状态
+  streaming_state_.is_streaming = false;
+  streaming_state_.callback = nullptr;
+}
+
+void Qwen25VLModularEngine::generateMultimodalStreaming(
+    const std::vector<uint32_t> &input_ids,
+    const algorithms::Tensor &image_features, StreamingCallback callback,
+    uint32_t max_length, float temperature, uint32_t top_k, float top_p) {
+
+  if (!initialized_) {
+    std::cerr << "Engine not initialized" << std::endl;
+    if (callback) callback(0, true);
+    return;
+  }
+
+  // TODO: 实现流式多模态推理
+  std::cerr << "Streaming multimodal generation not yet implemented, falling back to text-only" << std::endl;
+  generateTextStreaming(input_ids, callback, max_length, temperature, top_k, top_p);
+}
+
+void Qwen25VLModularEngine::stopStreaming() {
+  if (streaming_state_.is_streaming) {
+    std::cerr << "[DEBUG] Stopping streaming generation" << std::endl;
+    streaming_state_.should_stop = true;
+  }
+}
+
 algorithms::Tensor
 Qwen25VLModularEngine::encodeImage(const algorithms::Tensor &image) {
   if (!initialized_) {
@@ -641,31 +762,78 @@ uint32_t Qwen25VLModularEngine::sampleToken(const algorithms::Tensor &logits,
       last_logits[i] = logits.data[(seq_len - 1) * vocab_size + i];
     }
 
-    // 应用温度
+    // 应用温度缩放
     if (temperature > 0.0f && temperature != 1.0f) {
       for (float &logit : last_logits) {
         logit /= temperature;
       }
     }
 
-    // 计算softmax概率
-    float max_logit = *std::max_element(last_logits.begin(), last_logits.end());
-    std::vector<float> probs(vocab_size);
-    float sum_exp = 0.0f;
-    
-    for (uint32_t i = 0; i < vocab_size; ++i) {
-      probs[i] = std::exp(last_logits[i] - max_logit);
-      sum_exp += probs[i];
-    }
-    
-    for (uint32_t i = 0; i < vocab_size; ++i) {
-      probs[i] /= sum_exp;
+    // 如果温度为0或很小，使用贪婪采样
+    if (temperature <= 0.01f) {
+      auto max_it = std::max_element(last_logits.begin(), last_logits.end());
+      return static_cast<uint32_t>(std::distance(last_logits.begin(), max_it));
     }
 
-    // 如果温度为0或很小，选择概率最高的token（贪婪采样）
-    if (temperature <= 0.01f) {
-      auto max_it = std::max_element(probs.begin(), probs.end());
-      return static_cast<uint32_t>(std::distance(probs.begin(), max_it));
+    // 创建索引-logit对并排序
+    std::vector<std::pair<uint32_t, float>> indexed_logits;
+    for (uint32_t i = 0; i < vocab_size; ++i) {
+      indexed_logits.emplace_back(i, last_logits[i]);
+    }
+    
+    // 按logit值降序排序
+    std::sort(indexed_logits.begin(), indexed_logits.end(),
+              [](const auto &a, const auto &b) { return a.second > b.second; });
+
+    // 应用top-k过滤
+    if (top_k > 0 && top_k < vocab_size) {
+      indexed_logits.resize(top_k);
+    }
+
+    // 计算softmax概率
+    float max_logit = indexed_logits[0].second;
+    std::vector<float> probs;
+    probs.reserve(indexed_logits.size());
+    float sum_exp = 0.0f;
+    
+    for (const auto &pair : indexed_logits) {
+      float prob = std::exp(pair.second - max_logit);
+      probs.push_back(prob);
+      sum_exp += prob;
+    }
+    
+    // 归一化概率
+    for (float &prob : probs) {
+      prob /= sum_exp;
+    }
+
+    // 应用top-p (nucleus sampling) 过滤
+    if (top_p > 0.0f && top_p < 1.0f) {
+      float cumulative_prob = 0.0f;
+      size_t nucleus_size = 0;
+      
+      for (size_t i = 0; i < probs.size(); ++i) {
+        cumulative_prob += probs[i];
+        nucleus_size = i + 1;
+        if (cumulative_prob >= top_p) {
+          break;
+        }
+      }
+      
+      // 重新归一化nucleus内的概率
+      if (nucleus_size < probs.size()) {
+        indexed_logits.resize(nucleus_size);
+        probs.resize(nucleus_size);
+        
+        float nucleus_sum = 0.0f;
+        for (float prob : probs) {
+          nucleus_sum += prob;
+        }
+        
+        for (float &prob : probs) {
+          prob /= nucleus_sum;
+        }
+      }
     }
 
     // 随机采样
@@ -676,15 +844,15 @@ uint32_t Qwen25VLModularEngine::sampleToken(const algorithms::Tensor &logits,
     float random_val = dis(gen);
     float cumulative = 0.0f;
     
-    for (uint32_t i = 0; i < vocab_size; ++i) {
+    for (size_t i = 0; i < probs.size(); ++i) {
       cumulative += probs[i];
       if (random_val <= cumulative) {
-        return i;
+        return indexed_logits[i].first;
       }
     }
 
-    // 如果没有找到，返回最后一个token
-    return vocab_size - 1;
+    // 如果没有找到，返回第一个候选token
+    return indexed_logits.empty() ? 0 : indexed_logits[0].first;
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in token sampling: " << e.what() << std::endl;
