@@ -561,6 +561,22 @@ bool GGUFParser::parseArchitecture() {
     architecture_.embedding_length = kv->asUInt32();
   }
 
+  // 解析词汇表大小
+  if (const auto *kv = getMetadata(arch_prefix + ".vocab_size")) {
+    architecture_.vocab_size = kv->asUInt32();
+    log("INFO", "Found vocab_size in GGUF: " + std::to_string(architecture_.vocab_size));
+  } else {
+    // 尝试从tokenizer元数据中获取
+    if (const auto *tokens_kv = getMetadata("tokenizer.ggml.tokens")) {
+      auto token_strings = tokens_kv->asStringArray();
+      architecture_.vocab_size = static_cast<uint32_t>(token_strings.size());
+      log("INFO", "Calculated vocab_size from tokens: " + std::to_string(architecture_.vocab_size));
+    } else {
+      log("WARNING", "Could not determine vocab_size from GGUF file");
+      architecture_.vocab_size = 0; // 将由调用者设置默认值
+    }
+  }
+
   if (const auto *kv = getMetadata(arch_prefix + ".block_count")) {
     architecture_.block_count = kv->asUInt32();
   }

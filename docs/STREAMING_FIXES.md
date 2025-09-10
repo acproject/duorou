@@ -123,7 +123,7 @@ int main() {
     Qwen25VLModularEngine engine;
     engine.initialize(config);
     
-    std::vector<uint32_t> input_tokens = {151644, 8948, 25}; // "你好"
+    std::vector<uint32_t> input_tokens = {151643, 8948, 25}; // "你好"
     
     // 流式生成 - 实时输出
     engine.generateTextStreaming(

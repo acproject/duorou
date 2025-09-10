@@ -2,6 +2,7 @@
 #define ROPE_PROCESSOR_H
 
 #include "base_algorithm.h"
+#include <vector>
 #include <cmath>
 #include <chrono>
 
@@ -44,7 +45,7 @@ public:
   }
 
   bool validateInput(const Tensor& input) const override {
-    if (input.shape.size() < 2) {
+    if (input.shape.size() < 3) {
       return false;
     }
     

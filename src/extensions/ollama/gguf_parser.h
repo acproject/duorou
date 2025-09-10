@@ -118,6 +118,7 @@ struct GGUFTensorInfo {
 // 模型架构信息
 struct ModelArchitecture {
   std::string name;                              // 架构名称 (如 "qwen25vl")
+  uint32_t vocab_size;                           // 词汇表大小
   uint32_t context_length;                       // 上下文长度
   uint32_t embedding_length;                     // 嵌入维度
   uint32_t block_count;                          // 层数

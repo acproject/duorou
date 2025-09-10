@@ -1,12 +1,12 @@
 #ifndef BASE_ALGORITHM_H
 #define BASE_ALGORITHM_H
 
-#include <vector>
 #include <cstdint>
-#include <memory>
-#include <string>
-#include <stdexcept>
 #include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace duorou {
 namespace extensions {
@@ -15,22 +15,22 @@ namespace algorithms {
 
 // ModelConfig定义
 struct ModelConfig {
-    uint32_t vocab_size = 152064;
-    uint32_t hidden_size = 3584;
-    uint32_t num_layers = 28;
-    uint32_t num_attention_heads = 28;
-    uint32_t num_key_value_heads = 4;
-    uint32_t intermediate_size = 18944;
-    uint32_t max_position_embeddings = 32768;
-    float rope_theta = 1000000.0f;
-    float layer_norm_eps = 1e-6f;
-    float rms_norm_eps = 1e-6f;
-    
-    // RoPE相关配置
-    uint32_t rope_dim = 128;
-    float rope_base = 10000.0f;
-    float rope_scale = 1.0f;
-    uint32_t original_context_length = 32768;
+  uint32_t vocab_size = 152064;
+  uint32_t hidden_size = 3584;
+  uint32_t num_layers = 28;
+  uint32_t num_attention_heads = 28;
+  uint32_t num_key_value_heads = 4;
+  uint32_t intermediate_size = 18944;
+  uint32_t max_position_embeddings = 32768;
+  float rope_theta = 1000000.0f;
+  float layer_norm_eps = 1e-6f;
+  float rms_norm_eps = 1e-6f;
+
+  // RoPE相关配置
+  uint32_t rope_dim = 128;
+  float rope_base = 10000.0f;
+  float rope_scale = 1.0f;
+  uint32_t original_context_length = 32768;
 };
 
 // 张量结构（与主引擎保持一致）
@@ -80,7 +80,7 @@ struct AlgorithmContext {
   bool use_simd = true;
   bool use_blas = false;
   std::string device = "cpu";
-  
+
   // 性能统计
   mutable double total_time = 0.0;
   mutable uint64_t call_count = 0;
@@ -90,28 +90,28 @@ struct AlgorithmContext {
 class IAlgorithm {
 public:
   virtual ~IAlgorithm() = default;
-  
+
   // 初始化算法
-  virtual bool initialize(const ModelConfig& config, const AlgorithmContext& context) = 0;
-  
+  virtual bool initialize(const ModelConfig &config,
+                          const AlgorithmContext &context) = 0;
+
   // 获取算法名称
   virtual std::string getName() const = 0;
-  
+
   // 获取算法版本
   virtual std::string getVersion() const = 0;
-  
+
   // 验证输入张量
-  virtual bool validateInput(const Tensor& input) const = 0;
-  
+  virtual bool validateInput(const Tensor &input) const = 0;
+
   // 获取性能统计
   virtual double getAverageTime() const {
-    return context_.call_count > 0 ? context_.total_time / context_.call_count : 0.0;
+    return context_.call_count > 0 ? context_.total_time / context_.call_count
+                                   : 0.0;
   }
-  
-  virtual uint64_t getCallCount() const {
-    return context_.call_count;
-  }
-  
+
+  virtual uint64_t getCallCount() const { return context_.call_count; }
+
   virtual void resetStatistics() {
     context_.total_time = 0.0;
     context_.call_count = 0;
@@ -119,12 +119,13 @@ public:
 
 protected:
   AlgorithmContext context_;
-  
+
   // 日志记录
-  virtual void log(const std::string& level, const std::string& message) const {
+  virtual void log(const std::string &level, const std::string &message) const {
     if (context_.verbose) {
       // 简单的日志输出，实际项目中可以集成更复杂的日志系统
-      std::cout << "[" << level << "] " << getName() << ": " << message << std::endl;
+      std::cout << "[" << level << "] " << getName() << ": " << message
+                << std::endl;
     }
   }
 };
@@ -133,16 +134,18 @@ protected:
 class IAttentionAlgorithm : public IAlgorithm {
 public:
   virtual ~IAttentionAlgorithm() = default;
-  
+
   // 计算注意力
-  virtual Tensor compute(const Tensor& query, const Tensor& key, const Tensor& value,
-                        const Tensor* mask = nullptr, float scale = 1.0f) = 0;
-  
+  virtual Tensor compute(const Tensor &query, const Tensor &key,
+                         const Tensor &value, const Tensor *mask = nullptr,
+                         float scale = 1.0f) = 0;
+
   // 支持KV缓存的注意力计算
-  virtual Tensor computeWithCache(const Tensor& query, const Tensor& key, const Tensor& value,
-                                 Tensor& key_cache, Tensor& value_cache,
-                                 uint32_t cache_position, const Tensor* mask = nullptr,
-                                 float scale = 1.0f) {
+  virtual Tensor computeWithCache(const Tensor &query, const Tensor &key,
+                                  const Tensor &value, Tensor &key_cache,
+                                  Tensor &value_cache, uint32_t cache_position,
+                                  const Tensor *mask = nullptr,
+                                  float scale = 1.0f) {
     // 默认实现：不使用缓存
     return compute(query, key, value, mask, scale);
   }
@@ -152,44 +155,46 @@ public:
 class IFeedForwardAlgorithm : public IAlgorithm {
 public:
   virtual ~IFeedForwardAlgorithm() = default;
-  
+
   // 前馈网络计算
-  virtual Tensor compute(const Tensor& input, const Tensor& gate_weights,
-                        const Tensor& up_weights, const Tensor& down_weights) = 0;
+  virtual Tensor compute(const Tensor &input, const Tensor &gate_weights,
+                         const Tensor &up_weights,
+                         const Tensor &down_weights) = 0;
 };
 
 // 位置编码算法基类
 class IPositionalEncodingAlgorithm : public IAlgorithm {
 public:
   virtual ~IPositionalEncodingAlgorithm() = default;
-  
+
   // 应用位置编码
-  virtual Tensor apply(const Tensor& input, uint32_t position_offset = 0) = 0;
-  
+  virtual Tensor apply(const Tensor &input, uint32_t position_offset = 0) = 0;
+
   // 批量应用位置编码
-  virtual void applyInPlace(Tensor& tensor, uint32_t position_offset = 0) = 0;
+  virtual void applyInPlace(Tensor &tensor, uint32_t position_offset = 0) = 0;
 };
 
 // 矩阵运算算法基类
 class IMatrixAlgorithm : public IAlgorithm {
 public:
   virtual ~IMatrixAlgorithm() = default;
-  
+
   // 矩阵乘法
-  virtual void multiply(const float* a, const float* b, float* c,
-                       size_t m, size_t n, size_t k) = 0;
-  
+  virtual void multiply(const float *a, const float *b, float *c, size_t m,
+                        size_t n, size_t k) = 0;
+
   // 向量运算
-  virtual void vectorAdd(const float* a, const float* b, float* result, size_t size) = 0;
-  virtual void vectorMul(const float* a, const float* b, float* result, size_t size) = 0;
+  virtual void vectorAdd(const float *a, const float *b, float *result,
+                         size_t size) = 0;
+  virtual void vectorMul(const float *a, const float *b, float *result,
+                         size_t size) = 0;
 };
 
 // 算法工厂基类
-template<typename T>
-class AlgorithmFactory {
+template <typename T> class AlgorithmFactory {
 public:
   virtual ~AlgorithmFactory() = default;
-  virtual std::unique_ptr<T> create(const std::string& algorithm_type) = 0;
+  virtual std::unique_ptr<T> create(const std::string &algorithm_type) = 0;
   virtual std::vector<std::string> getSupportedTypes() const = 0;
 };
 

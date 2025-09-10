@@ -5,9 +5,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
-#include <iomanip>
 
 namespace duorou {
 namespace extensions {
@@ -194,32 +194,35 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     log("ERROR", response.error_message);
     return response;
   }
-  
+
   if (request.prompt.empty()) {
     response.error_message = "Prompt is empty";
     log("ERROR", response.error_message);
     return response;
   }
-  
+
   // 检查prompt长度的合理性
   if (request.prompt.length() > 100000) {
-    response.error_message = "Prompt is too long (" + std::to_string(request.prompt.length()) + " characters, max 100000)";
+    response.error_message = "Prompt is too long (" +
+                             std::to_string(request.prompt.length()) +
+                             " characters, max 100000)";
     log("ERROR", response.error_message);
     return response;
   }
-  
+
   // 检查max_tokens的合理性
   if (request.max_tokens > 10000) {
-    log("WARNING", "max_tokens is very large: " + std::to_string(request.max_tokens));
+    log("WARNING",
+        "max_tokens is very large: " + std::to_string(request.max_tokens));
   }
-  
+
   // 验证模型是否已注册
   if (registered_models_.find(request.model_id) == registered_models_.end()) {
     response.error_message = "Model not registered: " + request.model_id;
     log("ERROR", response.error_message);
     return response;
   }
-  
+
   // 验证模型是否已加载
   if (!isModelLoaded(request.model_id)) {
     response.error_message = "Model not loaded: " + request.model_id;
@@ -234,7 +237,7 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     log("ERROR", response.error_message);
     return response;
   }
-  
+
   // 验证文本处理器是否可用
   if (!text_processor_) {
     response.error_message = "Text processor not initialized";
@@ -244,71 +247,83 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
 
   try {
     auto start = std::chrono::high_resolution_clock::now();
-    
+
     // 分词处理，带详细错误信息
     std::vector<uint32_t> input_tokens;
     try {
       input_tokens = tokenize(request.prompt);
-    } catch (const std::exception& e) {
-      response.error_message = "Tokenization failed: " + std::string(e.what()) + " for prompt: '" + 
-                              (request.prompt.length() > 100 ? request.prompt.substr(0, 100) + "..." : request.prompt) + "'";
+    } catch (const std::exception &e) {
+      response.error_message =
+          "Tokenization failed: " + std::string(e.what()) + " for prompt: '" +
+          (request.prompt.length() > 100 ? request.prompt.substr(0, 100) + "..."
+                                         : request.prompt) +
+          "'";
       log("ERROR", response.error_message);
       return response;
     }
-    
+
     // 检查tokenization是否成功
     if (input_tokens.empty()) {
-      response.error_message = "Failed to tokenize input prompt (empty result): '" + 
-                              (request.prompt.length() > 100 ? request.prompt.substr(0, 100) + "..." : request.prompt) + "'";
+      response.error_message =
+          "Failed to tokenize input prompt (empty result): '" +
+          (request.prompt.length() > 100 ? request.prompt.substr(0, 100) + "..."
+                                         : request.prompt) +
+          "'";
       log("ERROR", response.error_message);
       return response;
     }
-    
+
     // 检查token数量的合理性
     if (input_tokens.size() > 50000) {
-      response.error_message = "Input tokens too many: " + std::to_string(input_tokens.size()) + " (max 50000)";
+      response.error_message =
+          "Input tokens too many: " + std::to_string(input_tokens.size()) +
+          " (max 50000)";
       log("ERROR", response.error_message);
       return response;
     }
-    
-    log("INFO", "Tokenized prompt into " + std::to_string(input_tokens.size()) + " tokens");
-    
+
+    log("INFO", "Tokenized prompt into " + std::to_string(input_tokens.size()) +
+                    " tokens");
+
     // 推理处理，带详细错误信息
     std::vector<uint32_t> output_tokens;
     try {
       output_tokens = engine->generateText(input_tokens, request.max_tokens);
-    } catch (const std::exception& e) {
-      response.error_message = "Inference engine failed: " + std::string(e.what());
+    } catch (const std::exception &e) {
+      response.error_message =
+          "Inference engine failed: " + std::string(e.what());
       log("ERROR", response.error_message);
       return response;
     }
-    
+
     // 检查推理结果
     if (output_tokens.empty()) {
       response.error_message = "Inference engine returned empty output";
       log("ERROR", response.error_message);
       return response;
     }
-    
+
     // 解码处理，带详细错误信息
     try {
       response.generated_text = detokenize(output_tokens);
-    } catch (const std::exception& e) {
-      response.error_message = "Detokenization failed: " + std::string(e.what());
+    } catch (const std::exception &e) {
+      response.error_message =
+          "Detokenization failed: " + std::string(e.what());
       log("ERROR", response.error_message);
       return response;
     }
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     response.success = true;
     response.tokens_generated = static_cast<uint32_t>(output_tokens.size());
     response.inference_time_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
             .count();
-            
-    log("INFO", "Generated " + std::to_string(output_tokens.size()) + " tokens in " + 
-        std::to_string(response.inference_time_ms) + "ms");
-        
+
+    log("INFO", "Generated " + std::to_string(output_tokens.size()) +
+                    " tokens in " + std::to_string(response.inference_time_ms) +
+                    "ms");
+
   } catch (const std::exception &e) {
     response.error_message =
         std::string("Unexpected exception during text generation: ") + e.what();
@@ -471,12 +486,22 @@ bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
     const auto &architecture = parser.getArchitecture();
     model_info.architecture = architecture.name;
     model_info.context_length = architecture.context_length;
-    model_info.vocab_size = 151936; // Qwen2.5VL默认值
+    
+    // 使用从GGUF文件中解析的vocab_size，如果没有则使用默认值
+    if (architecture.vocab_size > 0) {
+      model_info.vocab_size = architecture.vocab_size;
+      log("INFO", "Using vocab_size from GGUF: " + std::to_string(architecture.vocab_size));
+    } else {
+      model_info.vocab_size = 151643; // Qwen2.5VL默认值
+      log("WARNING", "Using default vocab_size: 151643");
+    }
+    
     model_info.has_vision = architecture.has_vision;
 
     // 从GGUF文件中加载词汇表数据
     if (!loadVocabularyFromGGUF(parser, gguf_file_path)) {
-      log("WARNING", "Failed to load vocabulary from GGUF file, using empty vocabulary");
+      log("WARNING",
+          "Failed to load vocabulary from GGUF file, using empty vocabulary");
     }
 
     return true;
@@ -585,11 +610,11 @@ std::vector<uint32_t> OllamaModelManager::tokenize(const std::string &text) {
     log("WARNING", "Empty text provided for tokenization");
     return {};
   }
-  
+
   try {
     // 使用BPE处理器进行分词
     auto tokens_int32 = text_processor_->encode(text, true);
-    
+
     // 转换为uint32_t
     std::vector<uint32_t> tokens;
     tokens.reserve(tokens_int32.size());
@@ -598,21 +623,23 @@ std::vector<uint32_t> OllamaModelManager::tokenize(const std::string &text) {
         tokens.push_back(static_cast<uint32_t>(token));
       }
     }
-    
+
     // 如果分词结果为空，尝试字符级回退
     if (tokens.empty()) {
-      log("WARNING", "Primary tokenization failed, attempting character-level fallback for text: '" + text + "'");
-      
+      log("WARNING", "Primary tokenization failed, attempting character-level "
+                     "fallback for text: '" +
+                         text + "'");
+
       // 字符级回退：将每个字符转换为字节级token
-      const auto* vocab = text_processor_->getVocabulary();
+      const auto *vocab = text_processor_->getVocabulary();
       if (vocab) {
         for (unsigned char c : text) {
           // 尝试查找字节级token（格式如 "<0xXX>"）
           std::stringstream ss;
-          ss << "<0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(2) 
-             << static_cast<unsigned int>(c) << ">";
+          ss << "<0x" << std::hex << std::uppercase << std::setfill('0')
+             << std::setw(2) << static_cast<unsigned int>(c) << ">";
           int32_t byte_token = vocab->encode(ss.str());
-          
+
           if (byte_token >= 0) {
             tokens.push_back(static_cast<uint32_t>(byte_token));
           } else {
@@ -626,34 +653,39 @@ std::vector<uint32_t> OllamaModelManager::tokenize(const std::string &text) {
             }
           }
         }
-        
+
         if (!tokens.empty()) {
-          log("INFO", "Character-level fallback succeeded, generated " + std::to_string(tokens.size()) + " tokens");
+          log("INFO", "Character-level fallback succeeded, generated " +
+                          std::to_string(tokens.size()) + " tokens");
         } else {
-          log("ERROR", "All tokenization methods failed for text: '" + text + "'");
+          log("ERROR",
+              "All tokenization methods failed for text: '" + text + "'");
         }
       } else {
         log("ERROR", "Cannot access vocabulary for fallback tokenization");
       }
     } else {
-      log("DEBUG", "Tokenized '" + text + "' to " + std::to_string(tokens.size()) + " tokens");
+      log("DEBUG", "Tokenized '" + text + "' to " +
+                       std::to_string(tokens.size()) + " tokens");
     }
-    
+
     return tokens;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Tokenization failed: " + std::string(e.what()));
-    
+
     // 异常情况下的最后回退
     log("WARNING", "Attempting emergency character-level tokenization");
     std::vector<uint32_t> emergency_tokens;
     for (size_t i = 0; i < std::min(text.length(), size_t(512)); ++i) {
-      emergency_tokens.push_back(static_cast<uint32_t>(static_cast<unsigned char>(text[i])));
+      emergency_tokens.push_back(
+          static_cast<uint32_t>(static_cast<unsigned char>(text[i])));
     }
-    
+
     if (!emergency_tokens.empty()) {
-      log("INFO", "Emergency tokenization generated " + std::to_string(emergency_tokens.size()) + " tokens");
+      log("INFO", "Emergency tokenization generated " +
+                      std::to_string(emergency_tokens.size()) + " tokens");
     }
-    
+
     return emergency_tokens;
   }
 }
@@ -664,7 +696,7 @@ OllamaModelManager::detokenize(const std::vector<uint32_t> &tokens) {
     log("ERROR", "Text processor not initialized");
     return "";
   }
-  
+
   try {
     // 转换为int32_t
     std::vector<int32_t> tokens_int32;
@@ -672,19 +704,21 @@ OllamaModelManager::detokenize(const std::vector<uint32_t> &tokens) {
     for (uint32_t token : tokens) {
       tokens_int32.push_back(static_cast<int32_t>(token));
     }
-    
+
     // 使用BPE处理器进行解码
     std::string text = text_processor_->decode(tokens_int32);
-    
-    log("DEBUG", "Detokenized " + std::to_string(tokens.size()) + " tokens to '" + text + "'");
+
+    log("DEBUG", "Detokenized " + std::to_string(tokens.size()) +
+                     " tokens to '" + text + "'");
     return text;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Detokenization failed: " + std::string(e.what()));
     return "";
   }
 }
 
-void OllamaModelManager::setTextProcessor(std::unique_ptr<TextProcessor> processor) {
+void OllamaModelManager::setTextProcessor(
+    std::unique_ptr<TextProcessor> processor) {
   text_processor_ = std::move(processor);
   log("DEBUG", "Text processor updated");
 }
@@ -698,20 +732,22 @@ uint32_t OllamaModelManager::getMaxConcurrentModels() const {
   return max_concurrent_models_;
 }
 
-bool OllamaModelManager::loadVocabularyFromGGUF(const GGUFParser& parser, const std::string& gguf_file_path) {
+bool OllamaModelManager::loadVocabularyFromGGUF(
+    const GGUFParser &parser, const std::string &gguf_file_path) {
   try {
     // 获取词汇表tokens
-    const auto* tokens_metadata = parser.getMetadata("tokenizer.ggml.tokens");
+    const auto *tokens_metadata = parser.getMetadata("tokenizer.ggml.tokens");
     if (!tokens_metadata) {
       log("WARNING", "No tokenizer.ggml.tokens found in GGUF file");
       return false;
     }
 
     // 获取token分数
-    const auto* scores_metadata = parser.getMetadata("tokenizer.ggml.scores");
-    
+    const auto *scores_metadata = parser.getMetadata("tokenizer.ggml.scores");
+
     // 获取token类型
-    const auto* types_metadata = parser.getMetadata("tokenizer.ggml.token_type");
+    const auto *types_metadata =
+        parser.getMetadata("tokenizer.ggml.token_type");
 
     // 解析tokens数组
     std::vector<std::string> token_strings = tokens_metadata->asStringArray();
@@ -719,14 +755,16 @@ bool OllamaModelManager::loadVocabularyFromGGUF(const GGUFParser& parser, const 
       log("ERROR", "Empty token list in GGUF file: " + gguf_file_path);
       return false;
     }
-    
+
     // 验证词汇表大小的合理性
     if (token_strings.size() < 100) {
-      log("WARNING", "Vocabulary size is suspiciously small: " + std::to_string(token_strings.size()) + " tokens");
+      log("WARNING", "Vocabulary size is suspiciously small: " +
+                         std::to_string(token_strings.size()) + " tokens");
     } else if (token_strings.size() > 1000000) {
-      log("WARNING", "Vocabulary size is very large: " + std::to_string(token_strings.size()) + " tokens");
+      log("WARNING", "Vocabulary size is very large: " +
+                         std::to_string(token_strings.size()) + " tokens");
     }
-    
+
     // 检查是否有空字符串token
     size_t empty_tokens = 0;
     for (size_t i = 0; i < token_strings.size(); ++i) {
@@ -738,14 +776,15 @@ bool OllamaModelManager::loadVocabularyFromGGUF(const GGUFParser& parser, const 
       }
     }
     if (empty_tokens > 0) {
-      log("WARNING", "Total empty tokens found: " + std::to_string(empty_tokens));
+      log("WARNING",
+          "Total empty tokens found: " + std::to_string(empty_tokens));
     }
 
     // 解析scores数组（如果存在）
     std::vector<float> token_scores;
     if (scores_metadata) {
       // scores通常是float32数组，需要从原始数据中解析
-      const auto& scores_data = scores_metadata->data;
+      const auto &scores_data = scores_metadata->data;
       size_t num_scores = scores_data.size() / sizeof(float);
       token_scores.resize(num_scores);
       std::memcpy(token_scores.data(), scores_data.data(), scores_data.size());
@@ -775,37 +814,44 @@ bool OllamaModelManager::loadVocabularyFromGGUF(const GGUFParser& parser, const 
     // 创建新的词汇表并初始化
     auto vocab = std::make_shared<Vocabulary>();
     vocab->initialize(token_strings, token_types, token_scores);
-    
+
     // 验证词汇表初始化是否成功
     if (vocab->size() == 0) {
       log("ERROR", "Vocabulary initialization failed - size is 0");
       return false;
     }
-    
+
     if (vocab->size() != token_strings.size()) {
-      log("WARNING", "Vocabulary size mismatch: expected " + std::to_string(token_strings.size()) + 
-          ", got " + std::to_string(vocab->size()));
+      log("WARNING", "Vocabulary size mismatch: expected " +
+                         std::to_string(token_strings.size()) + ", got " +
+                         std::to_string(vocab->size()));
     }
-    
+
     // 测试基本的编码/解码功能
     try {
       // 测试单个token编码
       int32_t test_token = vocab->encode("test");
       if (test_token >= 0) {
         std::string decoded = vocab->decode(test_token);
-        log("INFO", "Vocabulary test passed: 'test' -> token " + std::to_string(test_token) + " -> '" + decoded + "'");
+        log("INFO", "Vocabulary test passed: 'test' -> token " +
+                        std::to_string(test_token) + " -> '" + decoded + "'");
       } else {
-        log("WARNING", "Vocabulary test: 'test' produced invalid token: " + std::to_string(test_token));
+        log("WARNING", "Vocabulary test: 'test' produced invalid token: " +
+                           std::to_string(test_token));
       }
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
       log("WARNING", "Vocabulary test failed: " + std::string(e.what()));
     }
 
     // 设置特殊tokens（如果存在）
-    const auto* bos_metadata = parser.getMetadata("tokenizer.ggml.bos_token_id");
-    const auto* eos_metadata = parser.getMetadata("tokenizer.ggml.eos_token_id");
-    const auto* add_bos_metadata = parser.getMetadata("tokenizer.ggml.add_bos_token");
-    const auto* add_eos_metadata = parser.getMetadata("tokenizer.ggml.add_eos_token");
+    const auto *bos_metadata =
+        parser.getMetadata("tokenizer.ggml.bos_token_id");
+    const auto *eos_metadata =
+        parser.getMetadata("tokenizer.ggml.eos_token_id");
+    const auto *add_bos_metadata =
+        parser.getMetadata("tokenizer.ggml.add_bos_token");
+    const auto *add_eos_metadata =
+        parser.getMetadata("tokenizer.ggml.add_eos_token");
 
     if (bos_metadata) {
       int32_t bos_token = bos_metadata->asInt32();
@@ -821,32 +867,37 @@ bool OllamaModelManager::loadVocabularyFromGGUF(const GGUFParser& parser, const 
 
     // 获取tokenizer模型类型
     std::string tokenizer_model = "bpe"; // 默认使用BPE
-    const auto* model_metadata = parser.getMetadata("tokenizer.ggml.model");
+    const auto *model_metadata = parser.getMetadata("tokenizer.ggml.model");
     if (model_metadata) {
       std::string original_model = model_metadata->asString();
       // 只支持 "sentencepiece" 和 "bpe"，其他类型使用 "bpe" 作为fallback
       if (original_model == "sentencepiece" || original_model == "bpe") {
         tokenizer_model = original_model;
       } else {
-        log("WARNING", "Unsupported tokenizer model type: " + original_model + ", using BPE as fallback");
+        log("WARNING", "Unsupported tokenizer model type: " + original_model +
+                           ", using BPE as fallback");
         tokenizer_model = "bpe";
       }
     }
 
     // 重新创建text processor
     text_processor_ = createTextProcessor(tokenizer_model, vocab);
-    
+
     // 确保text processor创建成功
     if (!text_processor_) {
-      log("ERROR", "Failed to create text processor with type: " + tokenizer_model);
+      log("ERROR",
+          "Failed to create text processor with type: " + tokenizer_model);
       return false;
     }
-    
-    log("INFO", "Successfully loaded vocabulary from GGUF: " + std::to_string(vocab_size) + " tokens, model: " + tokenizer_model);
+
+    log("INFO", "Successfully loaded vocabulary from GGUF: " +
+                    std::to_string(vocab_size) +
+                    " tokens, model: " + tokenizer_model);
     return true;
 
-  } catch (const std::exception& e) {
-    log("ERROR", "Exception loading vocabulary from GGUF: " + std::string(e.what()));
+  } catch (const std::exception &e) {
+    log("ERROR",
+        "Exception loading vocabulary from GGUF: " + std::string(e.what()));
     return false;
   }
 }
