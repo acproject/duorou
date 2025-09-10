@@ -557,7 +557,13 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] Exception in transformer layer " << layer_idx << ": "
               << e.what() << std::endl;
-    return input; // 返回原始输入作为fallback
+    // 对于严重错误（如维度不匹配），应该停止执行而不是继续
+    if (std::string(e.what()).find("dimensions") != std::string::npos ||
+        std::string(e.what()).find("head splitting") != std::string::npos) {
+      std::cerr << "[FATAL] Critical dimension error detected, stopping execution" << std::endl;
+      throw; // 重新抛出异常以停止执行
+    }
+    return input; // 对于其他错误，返回原始输入作为fallback
   }
 }
 
@@ -1445,11 +1451,13 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
         "Matrix dimensions are not compatible for multiplication");
   }
 
-  // 创建输出张量
+  // 创建输出张量 - 始终保持3维以兼容注意力机制
   std::vector<uint32_t> output_shape;
-  if (batch_size > 1) {
+  if (a.shape.size() == 3 || b.shape.size() == 3) {
+    // 如果输入是3维，输出也保持3维
     output_shape = {batch_size, a_rows, b_cols};
   } else {
+    // 如果输入都是2维，输出为2维
     output_shape = {a_rows, b_cols};
   }
 
@@ -1508,7 +1516,7 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
 
         // 计算输出索引
         size_t out_idx;
-        if (batch_size > 1) {
+        if (a.shape.size() == 3 || b.shape.size() == 3) {
           out_idx = batch * a_rows * b_cols + i * b_cols + j;
         } else {
           out_idx = i * b_cols + j;

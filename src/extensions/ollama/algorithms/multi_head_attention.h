@@ -115,12 +115,25 @@ public:
     // 如果输入是2D张量，添加batch维度
     if (query.shape.size() == 2) {
       query_3d.shape.insert(query_3d.shape.begin(), 1);
+      // 重新计算size以保持一致性
+      query_3d.size = 1;
+      for (auto dim : query_3d.shape) {
+        query_3d.size *= dim;
+      }
     }
     if (key.shape.size() == 2) {
       key_3d.shape.insert(key_3d.shape.begin(), 1);
+      key_3d.size = 1;
+      for (auto dim : key_3d.shape) {
+        key_3d.size *= dim;
+      }
     }
     if (value.shape.size() == 2) {
       value_3d.shape.insert(value_3d.shape.begin(), 1);
+      value_3d.size = 1;
+      for (auto dim : value_3d.shape) {
+        value_3d.size *= dim;
+      }
     }
     
     // 获取批次大小和序列长度
