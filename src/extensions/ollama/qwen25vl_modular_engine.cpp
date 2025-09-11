@@ -558,8 +558,11 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     std::cerr << "[ERROR] Exception in transformer layer " << layer_idx << ": "
               << e.what() << std::endl;
     // 对于严重错误（如维度不匹配），应该停止执行而不是继续
-    if (std::string(e.what()).find("dimensions") != std::string::npos ||
-        std::string(e.what()).find("head splitting") != std::string::npos) {
+    std::string error_msg = std::string(e.what());
+    if (error_msg.find("dimensions") != std::string::npos ||
+        error_msg.find("head splitting") != std::string::npos ||
+        error_msg.find("Hidden size mismatch") != std::string::npos ||
+        error_msg.find("mismatch") != std::string::npos) {
       std::cerr << "[FATAL] Critical dimension error detected, stopping execution" << std::endl;
       throw; // 重新抛出异常以停止执行
     }
@@ -1062,22 +1065,29 @@ void Qwen25VLModularEngine::initializeKVCache() {
     state_.value_cache.clear();
 
     uint32_t head_dim = config_.hidden_size / config_.num_attention_heads;
-    uint32_t kv_head_dim = config_.hidden_size / config_.num_key_value_heads;
+    uint32_t kv_head_dim = head_dim; // In GQA, KV heads have same dimension as query heads
     
     // Calculate optimal cache size based on available memory (like llama.cpp n_ctx calculation)
     const size_t available_memory_gb = 8; // Conservative estimate
     const size_t bytes_per_element = sizeof(float);
     const size_t elements_per_layer = config_.num_key_value_heads * kv_head_dim;
     
-    // Calculate max elements per layer considering both K and V caches
+    // 修复：正确计算每层可用的序列长度
     const size_t total_memory_bytes = available_memory_gb * 1024 * 1024 * 1024;
     const size_t memory_for_kv = total_memory_bytes / 4; // Use 25% of memory for KV cache
-    const size_t max_elements_per_layer = memory_for_kv / (config_.num_hidden_layers * 2 * bytes_per_element);
+    const size_t memory_per_layer = memory_for_kv / config_.num_hidden_layers;
+    const size_t memory_per_kv_pair = memory_per_layer / 2; // K and V caches
+    const size_t max_seq_length = memory_per_kv_pair / (elements_per_layer * bytes_per_element);
     
-    uint32_t optimal_cache_length = std::min(
-        static_cast<uint32_t>(max_elements_per_layer / elements_per_layer),
-        config_.max_position_embeddings
-    );
+    // 直接使用计算出的序列长度，添加合理的上限
+    uint32_t memory_based_length = static_cast<uint32_t>(max_seq_length);
+    
+    // 限制缓存长度在合理范围内：最小512，最大4096（对于大多数应用足够）
+    uint32_t optimal_cache_length = std::min({
+        memory_based_length,
+        config_.max_position_embeddings,
+        4096u  // 硬编码最大值，防止内存溢出
+    });
     
     // Ensure minimum cache size for functionality (like llama.cpp padding strategy)
     optimal_cache_length = std::max(optimal_cache_length, 512u);
@@ -1086,7 +1096,7 @@ void Qwen25VLModularEngine::initializeKVCache() {
     std::cerr << "[DEBUG]   Available memory: " << available_memory_gb << " GB" << std::endl;
     std::cerr << "[DEBUG]   Memory for KV cache: " << (memory_for_kv / (1024*1024)) << " MB" << std::endl;
     std::cerr << "[DEBUG]   Elements per layer: " << elements_per_layer << std::endl;
-    std::cerr << "[DEBUG]   Max elements per layer: " << max_elements_per_layer << std::endl;
+    std::cerr << "[DEBUG]   Max sequence length: " << max_seq_length << std::endl;
     std::cerr << "[DEBUG]   Original max_position_embeddings: " << config_.max_position_embeddings << std::endl;
     std::cerr << "[DEBUG]   Optimal cache length: " << optimal_cache_length << std::endl;
     std::cerr << "[DEBUG]   head_dim: " << head_dim << std::endl;
@@ -1095,17 +1105,18 @@ void Qwen25VLModularEngine::initializeKVCache() {
     std::cerr << "[DEBUG]   num_key_value_heads: " << config_.num_key_value_heads << std::endl;
 
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      // Use optimal cache length instead of max_position_embeddings
-      std::vector<uint32_t> cache_shape = {optimal_cache_length,
+      // 修复：使用3维格式初始化KV缓存以匹配MultiHeadAttention的期望
+      // 格式：[batch_size, seq_length, hidden_dim]
+      std::vector<uint32_t> cache_shape = {1, optimal_cache_length,
                                            config_.num_key_value_heads * kv_head_dim};
 
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
       
       if (layer == 0) {
-        size_t cache_size_mb = (cache_shape[0] * cache_shape[1] * bytes_per_element * 2) / (1024 * 1024);
+        size_t cache_size_mb = (cache_shape[0] * cache_shape[1] * cache_shape[2] * bytes_per_element * 2) / (1024 * 1024);
         std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: [" 
-                  << cache_shape[0] << ", " << cache_shape[1] << "]" << std::endl;
+                  << cache_shape[0] << ", " << cache_shape[1] << ", " << cache_shape[2] << "]" << std::endl;
         std::cerr << "[DEBUG] Layer " << layer << " KV cache memory: " << cache_size_mb << " MB per layer" << std::endl;
         std::cerr << "[DEBUG] Total estimated KV cache memory: " << (cache_size_mb * config_.num_hidden_layers) << " MB" << std::endl;
         std::cerr << "[DEBUG] Layer " << layer << " KV cache size: " 
@@ -1221,7 +1232,7 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
     weights_.o_proj_weights.resize(config_.num_hidden_layers);
 
     for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
-      // Q投影权重：[hidden_size, hidden_size]
+      // Q投影权重：[hidden_size, hidden_size] - 修复：确保输出维度正确
       weights_.q_proj_weights[i] =
           algorithms::Tensor({config_.hidden_size, config_.hidden_size});
       // K投影权重：[hidden_size, num_kv_heads * head_dim]

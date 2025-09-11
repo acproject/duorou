@@ -55,11 +55,19 @@ public:
 
   Tensor compute(const Tensor& query, const Tensor& key, const Tensor& value,
                 const Tensor* mask = nullptr, float scale = 1.0f) override {
+    std::cerr << "[DEBUG] FastAttention::compute called" << std::endl;
     auto start_time = std::chrono::high_resolution_clock::now();
     
     // 验证输入
     if (!validateInput(query) || !validateInput(key) || !validateInput(value)) {
       throw std::invalid_argument("Invalid input tensors for FastAttention");
+    }
+    std::cerr << "[DEBUG] FastAttention input validation passed" << std::endl;
+    
+    // 早期退出机制：对于小序列长度使用简化算法
+    const uint32_t seq_len = key.shape[key.shape.size() - 2];
+    if (seq_len <= 16) {
+      return computeSimpleAttention(query, key, value);
     }
     
     // 检查张量维度兼容性
@@ -177,6 +185,46 @@ private:
   float scale_factor_ = 1.0f;
   uint32_t block_size_ = 64;
 
+  // 简化的注意力计算，用于小序列长度
+  Tensor computeSimpleAttention(const Tensor& query, const Tensor& key, const Tensor& value) {
+    const uint32_t seq_len_q = query.shape[query.shape.size() - 2];
+    const uint32_t seq_len_k = key.shape[key.shape.size() - 2];
+    const uint32_t head_dim = query.shape[query.shape.size() - 1];
+    const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    
+    Tensor output;
+    output.shape = query.shape;
+    output.data.resize(seq_len_q * head_dim);
+    
+    // 简单的三重循环实现，适用于小序列
+    for (uint32_t i = 0; i < seq_len_q; ++i) {
+      std::vector<float> scores(seq_len_k);
+      
+      // 计算注意力分数
+      for (uint32_t j = 0; j < seq_len_k; ++j) {
+        float score = 0.0f;
+        for (uint32_t d = 0; d < head_dim; ++d) {
+          score += query.data[i * head_dim + d] * key.data[j * head_dim + d];
+        }
+        scores[j] = score * scale;
+      }
+      
+      // 应用softmax
+      applySoftmax(scores, 1, seq_len_k);
+      
+      // 计算输出
+      for (uint32_t d = 0; d < head_dim; ++d) {
+        float sum = 0.0f;
+        for (uint32_t j = 0; j < seq_len_k; ++j) {
+          sum += scores[j] * value.data[j * head_dim + d];
+        }
+        output.data[i * head_dim + d] = sum;
+      }
+    }
+    
+    return output;
+  }
+
   void computeStandardAttention(const Tensor& query, const Tensor& key, const Tensor& value,
                                Tensor& output, float scale, const Tensor* mask, uint32_t head_dim) {
     // 边界检查
@@ -195,15 +243,32 @@ private:
       throw std::runtime_error("Tensor data size insufficient for attention computation");
     }
     
-    // 计算注意力分数 Q * K^T
+    // 优化的注意力分数计算 Q * K^T
     std::vector<float> scores(seq_len_q * seq_len_k);
     
+    // 使用更高效的矩阵乘法：批量计算所有点积
     for (uint32_t i = 0; i < seq_len_q; ++i) {
+      const float* q_row = &query.data[i * head_dim];
       for (uint32_t j = 0; j < seq_len_k; ++j) {
+        const float* k_row = &key.data[j * head_dim];
+        
+        // 向量化点积计算
         float score = 0.0f;
-        for (uint32_t d = 0; d < head_dim; ++d) {
-          score += query.data[i * head_dim + d] * key.data[j * head_dim + d];
+        uint32_t d = 0;
+        
+        // 4路展开优化
+        for (; d + 3 < head_dim; d += 4) {
+          score += q_row[d] * k_row[d] + 
+                   q_row[d+1] * k_row[d+1] + 
+                   q_row[d+2] * k_row[d+2] + 
+                   q_row[d+3] * k_row[d+3];
         }
+        
+        // 处理剩余元素
+        for (; d < head_dim; ++d) {
+          score += q_row[d] * k_row[d];
+        }
+        
         scores[i * seq_len_k + j] = score * scale;
       }
     }
@@ -222,14 +287,32 @@ private:
     // Softmax
     applySoftmax(scores, seq_len_q, seq_len_k);
     
-    // 计算输出 Attention * V
+    // 优化的输出计算 Attention * V
     for (uint32_t i = 0; i < seq_len_q; ++i) {
-      for (uint32_t d = 0; d < head_dim; ++d) {
-        float sum = 0.0f;
-        for (uint32_t j = 0; j < seq_len_k; ++j) {
-          sum += scores[i * seq_len_k + j] * value.data[j * head_dim + d];
+      const float* attention_row = &scores[i * seq_len_k];
+      float* output_row = &output.data[i * head_dim];
+      
+      // 初始化输出行为零
+      std::fill(output_row, output_row + head_dim, 0.0f);
+      
+      // 向量化的加权求和
+      for (uint32_t j = 0; j < seq_len_k; ++j) {
+        const float attention_weight = attention_row[j];
+        const float* value_row = &value.data[j * head_dim];
+        
+        // 4路展开优化
+        uint32_t d = 0;
+        for (; d + 3 < head_dim; d += 4) {
+          output_row[d] += attention_weight * value_row[d];
+          output_row[d+1] += attention_weight * value_row[d+1];
+          output_row[d+2] += attention_weight * value_row[d+2];
+          output_row[d+3] += attention_weight * value_row[d+3];
         }
-        output.data[i * head_dim + d] = sum;
+        
+        // 处理剩余元素
+        for (; d < head_dim; ++d) {
+          output_row[d] += attention_weight * value_row[d];
+        }
       }
     }
   }
@@ -254,12 +337,27 @@ private:
     
     std::vector<float> scores(seq_len_k);
     
-    // 计算注意力分数
+    // 优化的注意力分数计算
+    const float* q_data = query.data.data();
     for (uint32_t j = 0; j < seq_len_k; ++j) {
+      const float* k_row = &key.data[j * head_dim];
+      
       float score = 0.0f;
-      for (uint32_t d = 0; d < head_dim; ++d) {
-        score += query.data[d] * key.data[j * head_dim + d];
+      uint32_t d = 0;
+      
+      // 4路展开优化
+      for (; d + 3 < head_dim; d += 4) {
+        score += q_data[d] * k_row[d] + 
+                 q_data[d+1] * k_row[d+1] + 
+                 q_data[d+2] * k_row[d+2] + 
+                 q_data[d+3] * k_row[d+3];
       }
+      
+      // 处理剩余元素
+      for (; d < head_dim; ++d) {
+        score += q_data[d] * k_row[d];
+      }
+      
       scores[j] = score * scale;
     }
     
@@ -275,13 +373,26 @@ private:
     // Softmax
     applySoftmax(scores, 1, seq_len_k);
     
-    // 计算输出
-    for (uint32_t d = 0; d < head_dim; ++d) {
-      float sum = 0.0f;
-      for (uint32_t j = 0; j < seq_len_k; ++j) {
-        sum += scores[j] * value.data[j * head_dim + d];
+    // 优化的输出计算
+    std::fill(output.data.begin(), output.data.begin() + head_dim, 0.0f);
+    
+    for (uint32_t j = 0; j < seq_len_k; ++j) {
+      const float attention_weight = scores[j];
+      const float* value_row = &value.data[j * head_dim];
+      
+      // 4路展开优化
+      uint32_t d = 0;
+      for (; d + 3 < head_dim; d += 4) {
+        output.data[d] += attention_weight * value_row[d];
+        output.data[d+1] += attention_weight * value_row[d+1];
+        output.data[d+2] += attention_weight * value_row[d+2];
+        output.data[d+3] += attention_weight * value_row[d+3];
       }
-      output.data[d] = sum;
+      
+      // 处理剩余元素
+      for (; d < head_dim; ++d) {
+        output.data[d] += attention_weight * value_row[d];
+      }
     }
   }
 
