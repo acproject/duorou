@@ -138,6 +138,48 @@ endif()
 
 # OpenSSL 支持 (用于SHA256计算)
 find_package(OpenSSL REQUIRED)
+
+# OpenMP 支持 (用于并行计算)
+if(APPLE)
+    # macOS 特殊处理 - 手动配置 OpenMP
+    find_path(OpenMP_INCLUDE_DIR omp.h
+        PATHS /opt/homebrew/Cellar/libomp/21.1.1/include /opt/homebrew/include /usr/local/include
+        NO_DEFAULT_PATH
+    )
+    find_library(OpenMP_LIBRARY omp
+        PATHS /opt/homebrew/Cellar/libomp/21.1.1/lib /opt/homebrew/lib /usr/local/lib
+        NO_DEFAULT_PATH
+    )
+    
+    if(OpenMP_INCLUDE_DIR AND OpenMP_LIBRARY)
+        set(OpenMP_CXX_FOUND TRUE)
+        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp")
+        set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp")
+        set(OpenMP_CXX_LIBRARIES "${OpenMP_LIBRARY}")
+        set(OpenMP_CXX_LIB_NAMES "omp")
+        set(OpenMP_C_LIB_NAMES "omp")
+        add_library(OpenMP::OpenMP_CXX INTERFACE IMPORTED)
+        set_target_properties(OpenMP::OpenMP_CXX PROPERTIES
+            INTERFACE_COMPILE_OPTIONS "${OpenMP_CXX_FLAGS}"
+            INTERFACE_INCLUDE_DIRECTORIES "${OpenMP_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES "${OpenMP_LIBRARY}"
+        )
+        set(OpenMP_FOUND TRUE)
+        message(STATUS "Found OpenMP (manual): ${OpenMP_LIBRARY}")
+    else()
+        set(OpenMP_CXX_FOUND FALSE)
+        set(OpenMP_FOUND FALSE)
+        message(WARNING "OpenMP not found. Install with: brew install libomp")
+    endif()
+else()
+    # 非 macOS 系统使用标准查找
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "Found OpenMP: ${OpenMP_CXX_VERSION}")
+    else()
+        message(WARNING "OpenMP not found. Parallel computation will be disabled.")
+    endif()
+endif()
 if(OPENSSL_FOUND)
     message(STATUS "Found OpenSSL: ${OPENSSL_VERSION}")
 else()
@@ -283,6 +325,22 @@ endif()
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+
+# 启用BLAS优化
+if(APPLE)
+    set(GGML_BLAS ON CACHE BOOL "" FORCE)
+    set(GGML_BLAS_VENDOR "Apple" CACHE STRING "" FORCE)
+    set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
+    message(STATUS "Enabled BLAS with Accelerate framework for llama.cpp")
+else()
+    set(GGML_BLAS ON CACHE BOOL "" FORCE)
+    set(GGML_BLAS_VENDOR "OpenBLAS" CACHE STRING "" FORCE)
+    message(STATUS "Enabled BLAS with OpenBLAS for llama.cpp")
+endif()
+
+# 启用OpenMP支持
+set(GGML_OPENMP ON CACHE BOOL "" FORCE)
+message(STATUS "Enabled OpenMP support for llama.cpp")
 
 # 根据选项配置 llama.cpp
 if(DUOROU_ENABLE_CUDA)
@@ -485,6 +543,12 @@ if(DUOROU_SOURCES)
         OpenSSL::SSL
         OpenSSL::Crypto
     )
+    
+    # 链接OpenMP (如果可用)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(duorou OpenMP::OpenMP_CXX)
+        message(STATUS "Linking OpenMP for parallel computation")
+    endif()
     
     # 链接视频音频处理库
     if(FFMPEG_FOUND)

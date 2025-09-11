@@ -10,6 +10,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace duorou {
 namespace extensions {
@@ -178,8 +181,27 @@ public:
     head_outputs.reserve(num_heads_);
 
     std::cerr << "[DEBUG] MultiHeadAttention: Processing " << num_heads_ << " attention heads" << std::endl;
+    
+    // 使用OpenMP并行化多头注意力计算
+#ifdef _OPENMP
+    // 设置线程数，但不超过头数和可用线程数
+    int num_threads = std::min(static_cast<int>(num_heads_), omp_get_max_threads());
+    if (context_.num_threads > 0) {
+      num_threads = std::min(num_threads, static_cast<int>(context_.num_threads));
+    }
+    omp_set_num_threads(num_threads);
+    
+    std::cerr << "[DEBUG] Using OpenMP with " << num_threads << " threads for " << num_heads_ << " heads" << std::endl;
+    
+    #pragma omp parallel for schedule(dynamic)
+#endif
     for (uint32_t i = 0; i < num_heads_; ++i) {
+#ifdef _OPENMP
+      int thread_id = omp_get_thread_num();
+      std::cerr << "[DEBUG] Thread " << thread_id << " processing attention head " << i << "/" << num_heads_ << std::endl;
+#else
       std::cerr << "[DEBUG] Processing attention head " << i << "/" << num_heads_ << std::endl;
+#endif
       // 使用分组查询注意力：多个query头共享同一个key-value头
       uint32_t kv_head_idx = i / group_size_;
 
@@ -187,8 +209,17 @@ public:
           attention_heads_[i]->compute(query_heads[i], key_heads[kv_head_idx],
                                        value_heads[kv_head_idx], mask, scale);
 
-      head_outputs.push_back(std::move(head_output));
+#ifdef _OPENMP
+      #pragma omp critical
+#endif
+      {
+        head_outputs.push_back(std::move(head_output));
+      }
+#ifdef _OPENMP
+      std::cerr << "[DEBUG] Thread " << thread_id << " completed attention head " << i << std::endl;
+#else
       std::cerr << "[DEBUG] Completed attention head " << i << std::endl;
+#endif
     }
     std::cerr << "[DEBUG] MultiHeadAttention: All heads processed" << std::endl;
 
@@ -281,6 +312,17 @@ public:
     std::vector<Tensor> head_outputs;
     head_outputs.reserve(num_heads_);
 
+    // 使用OpenMP并行化多头注意力计算（带缓存）
+#ifdef _OPENMP
+    // 设置线程数，但不超过头数和可用线程数
+    int num_threads = std::min(static_cast<int>(num_heads_), omp_get_max_threads());
+    if (context_.num_threads > 0) {
+      num_threads = std::min(num_threads, static_cast<int>(context_.num_threads));
+    }
+    omp_set_num_threads(num_threads);
+    
+    #pragma omp parallel for schedule(dynamic)
+#endif
     for (uint32_t i = 0; i < num_heads_; ++i) {
       // 使用分组查询注意力
       uint32_t kv_head_idx = i / group_size_;
@@ -290,7 +332,12 @@ public:
           key_cache_heads[kv_head_idx], value_cache_heads[kv_head_idx],
           cache_position, mask, scale);
 
-      head_outputs.push_back(std::move(head_output));
+#ifdef _OPENMP
+      #pragma omp critical
+#endif
+      {
+        head_outputs.push_back(std::move(head_output));
+      }
     }
 
     // 连接所有头的输出

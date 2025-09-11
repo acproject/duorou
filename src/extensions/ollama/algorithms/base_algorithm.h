@@ -7,13 +7,86 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 
 namespace duorou {
 namespace extensions {
 namespace ollama {
 namespace algorithms {
 
-// ModelConfig定义
+// 内存池类 - 减少动态内存分配开销
+class MemoryPool {
+public:
+  static MemoryPool& getInstance() {
+    static MemoryPool instance;
+    return instance;
+  }
+  
+  // 获取指定大小的内存块
+  std::vector<float>* getBuffer(size_t size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 查找合适大小的缓存
+    auto it = free_buffers_.find(size);
+    if (it != free_buffers_.end() && !it->second.empty()) {
+      auto buffer = it->second.back();
+      it->second.pop_back();
+      return buffer;
+    }
+    
+    // 创建新的缓存
+    auto buffer = std::make_unique<std::vector<float>>();
+    buffer->reserve(size);
+    buffer->resize(size);
+    
+    auto* ptr = buffer.get();
+    allocated_buffers_.push_back(std::move(buffer));
+    return ptr;
+  }
+  
+  // 归还内存块到池中
+  void returnBuffer(std::vector<float>* buffer, size_t size) {
+    if (!buffer) return;
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 清理数据但保留容量
+    buffer->clear();
+    buffer->resize(size);
+    
+    // 限制每个大小的缓存数量，避免内存泄漏
+    if (free_buffers_[size].size() < max_buffers_per_size_) {
+      free_buffers_[size].push_back(buffer);
+    }
+  }
+  
+  // 清理内存池
+  void clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    free_buffers_.clear();
+    allocated_buffers_.clear();
+  }
+  
+  // 获取内存池统计信息
+  size_t getTotalAllocatedBuffers() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return allocated_buffers_.size();
+  }
+  
+private:
+  MemoryPool() = default;
+  ~MemoryPool() = default;
+  MemoryPool(const MemoryPool&) = delete;
+  MemoryPool& operator=(const MemoryPool&) = delete;
+  
+  mutable std::mutex mutex_;
+  std::unordered_map<size_t, std::vector<std::vector<float>*>> free_buffers_;
+  std::vector<std::unique_ptr<std::vector<float>>> allocated_buffers_;
+  static constexpr size_t max_buffers_per_size_ = 10; // 限制每个大小的缓存数量
+};
+
+// 模型配置结构体
 struct ModelConfig {
   uint32_t vocab_size = 152064;
   uint32_t hidden_size = 3584;
@@ -33,11 +106,13 @@ struct ModelConfig {
   uint32_t original_context_length = 32768;
 };
 
-// 张量结构（与主引擎保持一致）
+// 张量结构（支持内存池优化）
 struct Tensor {
   std::vector<float> data;
   std::vector<uint32_t> shape;
   size_t size;
+  bool use_memory_pool = false;
+  std::vector<float>* pooled_buffer = nullptr;
 
   Tensor() : size(0) {}
 
@@ -52,6 +127,67 @@ struct Tensor {
       size *= dim;
     }
     data.resize(size);
+  }
+  
+  // 使用内存池的构造函数
+  Tensor(const std::vector<uint32_t> &s, bool use_pool) : shape(s), size(1), use_memory_pool(use_pool) {
+    for (uint32_t dim : shape) {
+      if (dim == 0) {
+        throw std::invalid_argument("Tensor dimension cannot be zero");
+      }
+      if (size > SIZE_MAX / dim) {
+        throw std::overflow_error("Tensor size overflow");
+      }
+      size *= dim;
+    }
+    
+    if (use_memory_pool) {
+      pooled_buffer = MemoryPool::getInstance().getBuffer(size);
+      // 使用pooled_buffer的引用，避免数据复制
+      data.clear();
+      data.reserve(size);
+      data.resize(size);
+      // 将pooled_buffer的数据复制到data中
+      if (pooled_buffer && pooled_buffer->size() >= size) {
+        std::copy(pooled_buffer->begin(), pooled_buffer->begin() + size, data.begin());
+      }
+    } else {
+      data.resize(size);
+    }
+  }
+  
+  // 析构函数 - 归还内存池缓存
+  ~Tensor() {
+    if (use_memory_pool && pooled_buffer) {
+      // 将数据复制回pooled_buffer
+      if (pooled_buffer->size() >= size) {
+        std::copy(data.begin(), data.end(), pooled_buffer->begin());
+      }
+      MemoryPool::getInstance().returnBuffer(pooled_buffer, size);
+    }
+  }
+  
+  // 拷贝构造函数
+  Tensor(const Tensor& other) : shape(other.shape), size(other.size), use_memory_pool(false) {
+    data = other.data;
+    // 不复制内存池相关信息，避免双重释放
+  }
+  
+  // 赋值操作符
+  Tensor& operator=(const Tensor& other) {
+    if (this != &other) {
+      // 先释放当前的内存池缓存
+      if (use_memory_pool && pooled_buffer) {
+        MemoryPool::getInstance().returnBuffer(pooled_buffer, size);
+        pooled_buffer = nullptr;
+      }
+      
+      shape = other.shape;
+      size = other.size;
+      data = other.data;
+      use_memory_pool = false; // 赋值后不使用内存池
+    }
+    return *this;
   }
 
   void reshape(const std::vector<uint32_t> &new_shape) {

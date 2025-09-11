@@ -1483,70 +1483,65 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   std::cerr << "[DEBUG] Result tensor created: size=" << result.size 
             << ", data_size=" << result.data.size() << std::endl;
 
-  // 执行矩阵乘法
-  std::cerr << "[DEBUG] Starting matrix multiplication loops" << std::endl;
+  // 使用BLAS优化的矩阵乘法
+  std::cerr << "[DEBUG] Starting optimized BLAS matrix multiplication" << std::endl;
   
   for (uint32_t batch = 0; batch < batch_size; ++batch) {
     if (batch == 0) std::cerr << "[DEBUG] Processing batch " << batch << std::endl;
     
+    // 计算当前批次的数据指针
+    const float* a_ptr;
+    const float* b_ptr;
+    float* c_ptr;
+    
+    if (a.shape.size() == 3) {
+      a_ptr = a.data.data() + batch * a_rows * a_cols;
+    } else {
+      a_ptr = a.data.data();
+    }
+    
+    if (b.shape.size() == 3) {
+      size_t b_batch = (b.shape[0] == 1) ? 0 : batch;
+      b_ptr = b.data.data() + b_batch * b_rows * b_cols;
+    } else {
+      b_ptr = b.data.data();
+    }
+    
+    if (output_shape.size() == 3) {
+      c_ptr = result.data.data() + batch * a_rows * b_cols;
+    } else {
+      c_ptr = result.data.data();
+    }
+    
+#ifdef __APPLE__
+    // 使用Apple Accelerate框架的BLAS
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                a_rows, b_cols, a_cols,
+                1.0f, a_ptr, a_cols,
+                b_ptr, b_cols,
+                0.0f, c_ptr, b_cols);
+#elif defined(USE_OPENBLAS)
+    // 使用OpenBLAS
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                a_rows, b_cols, a_cols,
+                1.0f, a_ptr, a_cols,
+                b_ptr, b_cols,
+                0.0f, c_ptr, b_cols);
+#else
+    // 回退到原始三重循环实现
     for (uint32_t i = 0; i < a_rows; ++i) {
       for (uint32_t j = 0; j < b_cols; ++j) {
         float sum = 0.0f;
         for (uint32_t k = 0; k < a_cols; ++k) {
-          // 计算索引
-          size_t a_idx, b_idx;
-          if (a.shape.size() == 3) {
-            a_idx = batch * a_rows * a_cols + i * a_cols + k;
-          } else {
-            a_idx = i * a_cols + k;
-          }
-
-          if (b.shape.size() == 3) {
-            size_t b_batch = (b.shape[0] == 1) ? 0 : batch;
-            b_idx = b_batch * b_rows * b_cols + k * b_cols + j;
-          } else {
-            b_idx = k * b_cols + j;
-          }
-
-          // 边界检查
-          if (a_idx >= a.data.size()) {
-            std::cerr << "[ERROR] A index out of bounds: " << a_idx 
-                      << " >= " << a.data.size() << std::endl;
-            std::cerr << "[ERROR] batch=" << batch << ", i=" << i << ", k=" << k << std::endl;
-            throw std::out_of_range("A tensor index out of bounds");
-          }
-          if (b_idx >= b.data.size()) {
-            std::cerr << "[ERROR] B index out of bounds: " << b_idx 
-                      << " >= " << b.data.size() << std::endl;
-            std::cerr << "[ERROR] batch=" << batch << ", k=" << k << ", j=" << j << std::endl;
-            throw std::out_of_range("B tensor index out of bounds");
-          }
-
-          sum += a.data[a_idx] * b.data[b_idx];
+          sum += a_ptr[i * a_cols + k] * b_ptr[k * b_cols + j];
         }
-
-        // 计算输出索引
-        size_t out_idx;
-        if (a.shape.size() == 3 || b.shape.size() == 3) {
-          out_idx = batch * a_rows * b_cols + i * b_cols + j;
-        } else {
-          out_idx = i * b_cols + j;
-        }
-        
-        // 输出索引边界检查
-        if (out_idx >= result.data.size()) {
-          std::cerr << "[ERROR] Result index out of bounds: " << out_idx 
-                    << " >= " << result.data.size() << std::endl;
-          std::cerr << "[ERROR] batch=" << batch << ", i=" << i << ", j=" << j << std::endl;
-          throw std::out_of_range("Result tensor index out of bounds");
-        }
-        
-        result.data[out_idx] = sum;
+        c_ptr[i * b_cols + j] = sum;
       }
     }
+#endif
   }
   
-  std::cerr << "[DEBUG] Matrix multiplication completed successfully" << std::endl;
+  std::cerr << "[DEBUG] Optimized matrix multiplication completed successfully" << std::endl;
 
   return result;
 }

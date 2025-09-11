@@ -92,15 +92,20 @@ public:
     uint32_t seq_len_q = query.shape[query.shape.size() - 2];
     uint32_t seq_len_k = key.shape[key.shape.size() - 2];
     
-    // 创建输出张量
+    // 使用内存池创建输出张量
     std::vector<uint32_t> output_shape = query.shape;
+    auto& output_buffer = getTempOutputBuffer(seq_len_q * actual_head_dim);
     Tensor output(output_shape);
+    output.data.assign(output_buffer.begin(), output_buffer.begin() + seq_len_q * actual_head_dim);
     
     // 使用传入的scale或默认的scale_factor_
     float effective_scale = (scale != 1.0f) ? scale : scale_factor_;
     
     // 执行快速注意力计算
-    if (seq_len_q == 1 && seq_len_k > 1) {
+    if (seq_len_k == 1) {
+      // 特殊优化：当key/value只有一个token时的快速路径
+      computeFastSingleKeyAttention(query, key, value, output, effective_scale, mask, actual_head_dim);
+    } else if (seq_len_q == 1 && seq_len_k > 1) {
       // 增量解码模式
       computeIncrementalAttention(query, key, value, output, effective_scale, mask, actual_head_dim);
     } else {
@@ -143,7 +148,7 @@ public:
     return output;
   }
 
-  // 公有方法：更新KV缓存
+  // 公有方法：更新KV缓存（带重复检测优化）
   void updateKVCache(const Tensor& key, const Tensor& value,
                     Tensor& key_cache, Tensor& value_cache,
                     uint32_t cache_position) {
@@ -164,6 +169,13 @@ public:
       value_cache.data.resize(required_cache_size);
     }
     
+    // 优化：检查是否已存在相同的key/value（避免重复计算）
+    if (cache_position > 0 && isCacheHit(key, value, key_cache, value_cache, cache_position, head_dim)) {
+      std::cerr << "[DEBUG] KV Cache hit detected at position " << cache_position 
+                << ", skipping redundant update" << std::endl;
+      return;
+    }
+    
     // 复制新的key和value到缓存
     for (uint32_t i = 0; i < head_dim; ++i) {
       key_cache.data[cache_position * head_dim + i] = key.data[i];
@@ -177,6 +189,9 @@ public:
     if (value_cache.shape.size() >= 2) {
       value_cache.shape[value_cache.shape.size() - 2] = cache_position + 1;
     }
+    
+    std::cerr << "[DEBUG] KV Cache updated at position " << cache_position 
+              << ", cache size: " << (cache_position + 1) << std::endl;
   }
 
 private:
@@ -184,8 +199,64 @@ private:
   uint32_t num_heads_ = 32;
   float scale_factor_ = 1.0f;
   uint32_t block_size_ = 64;
-
-  // 简化的注意力计算，用于小序列长度
+  AlgorithmContext context_;
+  
+  // 内存池优化：预分配的临时缓存
+  mutable std::vector<float> temp_scores_buffer_;
+  mutable std::vector<float> temp_output_buffer_;
+  
+  // 获取临时分数缓存
+  std::vector<float>& getTempScoresBuffer(size_t required_size) const {
+    if (temp_scores_buffer_.size() < required_size) {
+      temp_scores_buffer_.resize(required_size);
+    }
+    return temp_scores_buffer_;
+  }
+  
+  // 获取临时输出缓存
+  std::vector<float>& getTempOutputBuffer(size_t required_size) const {
+    if (temp_output_buffer_.size() < required_size) {
+      temp_output_buffer_.resize(required_size);
+    }
+    return temp_output_buffer_;
+  }
+  
+  // 检测KV缓存命中（避免重复计算相同的key/value）
+  bool isCacheHit(const Tensor& key, const Tensor& value,
+                  const Tensor& key_cache, const Tensor& value_cache,
+                  uint32_t cache_position, uint32_t head_dim) {
+    // 简单的相似性检测：检查最近几个位置是否有相同的key/value
+    const float tolerance = 1e-6f;
+    const uint32_t check_range = std::min(cache_position, 3u); // 检查最近3个位置
+    
+    for (uint32_t pos = cache_position - check_range; pos < cache_position; ++pos) {
+      bool key_match = true;
+      bool value_match = true;
+      
+      // 检查key是否匹配
+      for (uint32_t i = 0; i < head_dim && key_match; ++i) {
+        float diff = std::abs(key.data[i] - key_cache.data[pos * head_dim + i]);
+        if (diff > tolerance) {
+          key_match = false;
+        }
+      }
+      
+      // 检查value是否匹配
+      for (uint32_t i = 0; i < head_dim && value_match; ++i) {
+        float diff = std::abs(value.data[i] - value_cache.data[pos * head_dim + i]);
+        if (diff > tolerance) {
+          value_match = false;
+        }
+      }
+      
+      // 如果key和value都匹配，则为缓存命中
+      if (key_match && value_match) {
+        return true;
+      }
+    }
+    
+    return false;
+  }// 简化的注意力计算，用于小序列长度
   Tensor computeSimpleAttention(const Tensor& query, const Tensor& key, const Tensor& value) {
     const uint32_t seq_len_q = query.shape[query.shape.size() - 2];
     const uint32_t seq_len_k = key.shape[key.shape.size() - 2];
@@ -198,7 +269,8 @@ private:
     
     // 简单的三重循环实现，适用于小序列
     for (uint32_t i = 0; i < seq_len_q; ++i) {
-      std::vector<float> scores(seq_len_k);
+      auto& scores_buffer = getTempScoresBuffer(seq_len_k);
+    std::vector<float>& scores = scores_buffer;
       
       // 计算注意力分数
       for (uint32_t j = 0; j < seq_len_k; ++j) {
@@ -225,6 +297,47 @@ private:
     return output;
   }
 
+  // 特殊优化：当key/value只有一个token时的快速路径
+  void computeFastSingleKeyAttention(const Tensor& query, const Tensor& key, const Tensor& value,
+                                    Tensor& output, float scale, const Tensor* mask, uint32_t head_dim) {
+    std::cerr << "[DEBUG] FastAttention::computeFastSingleKeyAttention called with seq_len_q=" 
+              << query.shape[query.shape.size() - 2] << ", seq_len_k=1, head_dim=" << head_dim << std::endl;
+    
+    uint32_t seq_len_q = query.shape[query.shape.size() - 2];
+    
+    // 检查数据大小
+    if (query.data.size() < seq_len_q * head_dim || 
+        key.data.size() < head_dim ||
+        value.data.size() < head_dim ||
+        output.data.size() < seq_len_q * head_dim) {
+      throw std::runtime_error("Tensor data size insufficient for fast single key attention computation");
+    }
+    
+    // 当只有一个key/value时，注意力权重对所有query位置都是1.0
+    // 直接将value复制到所有输出位置，无需计算softmax
+    const float* value_data = value.data.data();
+    
+    for (uint32_t i = 0; i < seq_len_q; ++i) {
+      float* output_row = &output.data[i * head_dim];
+      
+      // 直接复制value到输出（4路展开优化）
+      uint32_t d = 0;
+      for (; d + 3 < head_dim; d += 4) {
+        output_row[d] = value_data[d];
+        output_row[d+1] = value_data[d+1];
+        output_row[d+2] = value_data[d+2];
+        output_row[d+3] = value_data[d+3];
+      }
+      
+      // 处理剩余元素
+      for (; d < head_dim; ++d) {
+        output_row[d] = value_data[d];
+      }
+    }
+    
+    std::cerr << "[DEBUG] Fast single key attention computation completed" << std::endl;
+  }
+
   void computeStandardAttention(const Tensor& query, const Tensor& key, const Tensor& value,
                                Tensor& output, float scale, const Tensor* mask, uint32_t head_dim) {
     // 边界检查
@@ -243,8 +356,9 @@ private:
       throw std::runtime_error("Tensor data size insufficient for attention computation");
     }
     
-    // 优化的注意力分数计算 Q * K^T
-    std::vector<float> scores(seq_len_q * seq_len_k);
+    // 使用内存池优化的注意力分数计算 Q * K^T
+    auto& scores_buffer = getTempScoresBuffer(seq_len_q * seq_len_k);
+    std::vector<float>& scores = scores_buffer;
     
     // 使用更高效的矩阵乘法：批量计算所有点积
     for (uint32_t i = 0; i < seq_len_q; ++i) {
@@ -335,7 +449,8 @@ private:
       throw std::runtime_error("Tensor data size insufficient for incremental attention computation");
     }
     
-    std::vector<float> scores(seq_len_k);
+    auto& scores_buffer = getTempScoresBuffer(seq_len_k);
+    std::vector<float>& scores = scores_buffer;
     
     // 优化的注意力分数计算
     const float* q_data = query.data.data();
