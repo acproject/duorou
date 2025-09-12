@@ -4,11 +4,11 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <mutex>
+#include <vector>
 
 namespace duorou {
 namespace extensions {
@@ -18,15 +18,15 @@ namespace algorithms {
 // 内存池类 - 减少动态内存分配开销
 class MemoryPool {
 public:
-  static MemoryPool& getInstance() {
+  static MemoryPool &getInstance() {
     static MemoryPool instance;
     return instance;
   }
-  
+
   // 获取指定大小的内存块
-  std::vector<float>* getBuffer(size_t size) {
+  std::vector<float> *getBuffer(size_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     // 查找合适大小的缓存
     auto it = free_buffers_.find(size);
     if (it != free_buffers_.end() && !it->second.empty()) {
@@ -34,54 +34,55 @@ public:
       it->second.pop_back();
       return buffer;
     }
-    
+
     // 创建新的缓存
     auto buffer = std::make_unique<std::vector<float>>();
     buffer->reserve(size);
     buffer->resize(size);
-    
-    auto* ptr = buffer.get();
+
+    auto *ptr = buffer.get();
     allocated_buffers_.push_back(std::move(buffer));
     return ptr;
   }
-  
+
   // 归还内存块到池中
-  void returnBuffer(std::vector<float>* buffer, size_t size) {
-    if (!buffer) return;
-    
+  void returnBuffer(std::vector<float> *buffer, size_t size) {
+    if (!buffer)
+      return;
+
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     // 清理数据但保留容量
     buffer->clear();
     buffer->resize(size);
-    
+
     // 限制每个大小的缓存数量，避免内存泄漏
     if (free_buffers_[size].size() < max_buffers_per_size_) {
       free_buffers_[size].push_back(buffer);
     }
   }
-  
+
   // 清理内存池
   void clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     free_buffers_.clear();
     allocated_buffers_.clear();
   }
-  
+
   // 获取内存池统计信息
   size_t getTotalAllocatedBuffers() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return allocated_buffers_.size();
   }
-  
+
 private:
   MemoryPool() = default;
   ~MemoryPool() = default;
-  MemoryPool(const MemoryPool&) = delete;
-  MemoryPool& operator=(const MemoryPool&) = delete;
-  
+  MemoryPool(const MemoryPool &) = delete;
+  MemoryPool &operator=(const MemoryPool &) = delete;
+
   mutable std::mutex mutex_;
-  std::unordered_map<size_t, std::vector<std::vector<float>*>> free_buffers_;
+  std::unordered_map<size_t, std::vector<std::vector<float> *>> free_buffers_;
   std::vector<std::unique_ptr<std::vector<float>>> allocated_buffers_;
   static constexpr size_t max_buffers_per_size_ = 10; // 限制每个大小的缓存数量
 };
@@ -112,7 +113,7 @@ struct Tensor {
   std::vector<uint32_t> shape;
   size_t size;
   bool use_memory_pool = false;
-  std::vector<float>* pooled_buffer = nullptr;
+  std::vector<float> *pooled_buffer = nullptr;
 
   Tensor() : size(0) {}
 
@@ -128,9 +129,10 @@ struct Tensor {
     }
     data.resize(size);
   }
-  
+
   // 使用内存池的构造函数
-  Tensor(const std::vector<uint32_t> &s, bool use_pool) : shape(s), size(1), use_memory_pool(use_pool) {
+  Tensor(const std::vector<uint32_t> &s, bool use_pool)
+      : shape(s), size(1), use_memory_pool(use_pool) {
     for (uint32_t dim : shape) {
       if (dim == 0) {
         throw std::invalid_argument("Tensor dimension cannot be zero");
@@ -140,7 +142,7 @@ struct Tensor {
       }
       size *= dim;
     }
-    
+
     if (use_memory_pool) {
       pooled_buffer = MemoryPool::getInstance().getBuffer(size);
       // 使用pooled_buffer的引用，避免数据复制
@@ -149,13 +151,14 @@ struct Tensor {
       data.resize(size);
       // 将pooled_buffer的数据复制到data中
       if (pooled_buffer && pooled_buffer->size() >= size) {
-        std::copy(pooled_buffer->begin(), pooled_buffer->begin() + size, data.begin());
+        std::copy(pooled_buffer->begin(), pooled_buffer->begin() + size,
+                  data.begin());
       }
     } else {
       data.resize(size);
     }
   }
-  
+
   // 析构函数 - 归还内存池缓存
   ~Tensor() {
     if (use_memory_pool && pooled_buffer) {
@@ -166,22 +169,23 @@ struct Tensor {
       MemoryPool::getInstance().returnBuffer(pooled_buffer, size);
     }
   }
-  
+
   // 拷贝构造函数
-  Tensor(const Tensor& other) : shape(other.shape), size(other.size), use_memory_pool(false) {
+  Tensor(const Tensor &other)
+      : shape(other.shape), size(other.size), use_memory_pool(false) {
     data = other.data;
     // 不复制内存池相关信息，避免双重释放
   }
-  
+
   // 赋值操作符
-  Tensor& operator=(const Tensor& other) {
+  Tensor &operator=(const Tensor &other) {
     if (this != &other) {
       // 先释放当前的内存池缓存
       if (use_memory_pool && pooled_buffer) {
         MemoryPool::getInstance().returnBuffer(pooled_buffer, size);
         pooled_buffer = nullptr;
       }
-      
+
       shape = other.shape;
       size = other.size;
       data = other.data;
@@ -216,7 +220,7 @@ struct AlgorithmContext {
   bool use_simd = true;
   bool use_blas = false;
   std::string device = "cpu";
-  MemoryPool* memory_pool = nullptr; // 内存池指针
+  MemoryPool *memory_pool = nullptr; // 内存池指针
 
   // 性能统计
   mutable double total_time = 0.0;

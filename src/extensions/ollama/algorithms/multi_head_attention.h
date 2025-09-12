@@ -352,33 +352,36 @@ private:
   std::vector<std::unique_ptr<FastAttention>> kv_attention_heads_;
   AlgorithmContext context_;
 
-  // 专门处理4维KV缓存的分割方法 [B, kv_heads, T, head_dim] -> vector<Tensor>
+  // 处理3维KV缓存的分割方法 [B, T, num_kv_heads * head_dim] -> vector<Tensor>
   std::vector<Tensor> splitKVCacheToHeads(const Tensor &kv_cache) {
-    if (kv_cache.shape.size() != 4) {
-      throw std::invalid_argument("KV cache must be 4D tensor [B, kv_heads, T, head_dim]");
+    if (kv_cache.shape.size() != 3) {
+      throw std::invalid_argument("KV cache must be 3D tensor [B, T, num_kv_heads * head_dim]");
     }
     
     uint32_t batch_size = kv_cache.shape[0];
-    uint32_t num_kv_heads = kv_cache.shape[1];
-    uint32_t seq_len = kv_cache.shape[2];
-    uint32_t head_dim = kv_cache.shape[3];
+    uint32_t seq_len = kv_cache.shape[1];
+    uint32_t total_kv_dim = kv_cache.shape[2];
+    
+    // 计算实际的head_dim
+    uint32_t head_dim = total_kv_dim / num_kv_heads_;
+    if (total_kv_dim % num_kv_heads_ != 0) {
+      throw std::invalid_argument("KV cache dimension must be divisible by num_kv_heads");
+    }
     
     std::vector<Tensor> heads;
-    heads.reserve(num_kv_heads);
+    heads.reserve(num_kv_heads_);
     
-    for (uint32_t h = 0; h < num_kv_heads; ++h) {
+    for (uint32_t h = 0; h < num_kv_heads_; ++h) {
       Tensor head_tensor({batch_size, seq_len, head_dim});
       
       // 复制对应头的数据
       for (uint32_t b = 0; b < batch_size; ++b) {
         for (uint32_t s = 0; s < seq_len; ++s) {
-          for (uint32_t d = 0; d < head_dim; ++d) {
-            uint32_t src_idx = b * (num_kv_heads * seq_len * head_dim) + 
-                              h * (seq_len * head_dim) + 
-                              s * head_dim + d;
-            uint32_t dst_idx = b * (seq_len * head_dim) + s * head_dim + d;
-            head_tensor.data[dst_idx] = kv_cache.data[src_idx];
-          }
+          const float* src = &kv_cache.data[b * seq_len * total_kv_dim + 
+                                          s * total_kv_dim + 
+                                          h * head_dim];
+          float* dst = &head_tensor.data[b * seq_len * head_dim + s * head_dim];
+          std::memcpy(dst, src, head_dim * sizeof(float));
         }
       }
       

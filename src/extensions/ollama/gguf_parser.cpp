@@ -495,18 +495,21 @@ bool GGUFParser::readTensorInfo(std::ifstream &file) {
       log("ERROR", "Failed to read type for tensor " + tensor_info.name);
       return false;
     }
-    
+
     // 验证张量类型是否支持
-    if (type_value > 39) {  // MXFP4 is the highest supported type (39)
-      log("ERROR", "Unsupported tensor type value " + std::to_string(type_value) + " for tensor " + tensor_info.name);
+    if (type_value > 39) { // MXFP4 is the highest supported type (39)
+      log("ERROR", "Unsupported tensor type value " +
+                       std::to_string(type_value) + " for tensor " +
+                       tensor_info.name);
       return false;
     }
-    
+
     tensor_info.type = static_cast<GGMLTensorType>(type_value);
-    
+
     // 验证类型是否在getGGMLTypeSize中有对应处理
     if (getGGMLTypeSize(tensor_info.type) == 0) {
-      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " + tensor_info.name + " may not be fully supported");
+      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " +
+                      tensor_info.name + " may not be fully supported");
     }
 
     // 读取偏移量
@@ -564,13 +567,15 @@ bool GGUFParser::parseArchitecture() {
   // 解析词汇表大小
   if (const auto *kv = getMetadata(arch_prefix + ".vocab_size")) {
     architecture_.vocab_size = kv->asUInt32();
-    log("INFO", "Found vocab_size in GGUF: " + std::to_string(architecture_.vocab_size));
+    log("INFO", "Found vocab_size in GGUF: " +
+                    std::to_string(architecture_.vocab_size));
   } else {
     // 尝试从tokenizer元数据中获取
     if (const auto *tokens_kv = getMetadata("tokenizer.ggml.tokens")) {
       auto token_strings = tokens_kv->asStringArray();
       architecture_.vocab_size = static_cast<uint32_t>(token_strings.size());
-      log("INFO", "Calculated vocab_size from tokens: " + std::to_string(architecture_.vocab_size));
+      log("INFO", "Calculated vocab_size from tokens: " +
+                      std::to_string(architecture_.vocab_size));
     } else {
       log("WARNING", "Could not determine vocab_size from GGUF file");
       architecture_.vocab_size = 0; // 将由调用者设置默认值
@@ -872,26 +877,82 @@ GGUFKeyValue GGUFParser::readKeyValue(std::ifstream &file) {
 
 uint64_t
 GGUFParser::calculateTensorSize(const GGUFTensorInfo &tensor_info) const {
+  // 计算张量中的总元素数量
+  // 张量的维度存储在dimensions数组中,例如[2,3,4]表示一个2x3x4的三维张量
+  // 总元素数量等于所有维度大小的乘积,即2*3*4=24个元素
   uint64_t total_elements = 1;
   for (uint64_t dim : tensor_info.dimensions) {
     total_elements *= dim;
   }
 
-  uint32_t type_size = getGGMLTypeSize(tensor_info.type);
-  uint64_t calculated_size = total_elements * type_size;
+  switch (tensor_info.type) {
+  case GGMLTensorType::F32:
+    return total_elements * 4;
+  case GGMLTensorType::F16:
+    return total_elements * 2;
+  case GGMLTensorType::BF16:
+    return total_elements * 2;
+  case GGMLTensorType::Q4_0:
+    return (total_elements + 31) / 32 * 18; // 32个元素18字节 (2+16)
+  case GGMLTensorType::Q4_1:
+    return (total_elements + 31) / 32 * 20; // 32个元素20字节 (2+2+16)
+  case GGMLTensorType::Q5_0:
+    return (total_elements + 31) / 32 * 22; // 32个元素22字节 (2+4+16)
+  case GGMLTensorType::Q5_1:
+    return (total_elements + 31) / 32 * 24; // 32个元素24字节 (2+2+4+16)
+  case GGMLTensorType::Q8_0:
+    return (total_elements + 31) / 32 * 34; // 32个元素34字节 (2+32)
+  case GGMLTensorType::Q8_1:
+    return (total_elements + 31) / 32 * 40; // 32个元素40字节 (4+4+32)
 
-  // 对于量化类型，限制计算出的大小以避免内存问题
-  if (tensor_info.type != GGMLTensorType::F32 &&
-      tensor_info.type != GGMLTensorType::F16) {
-    // 量化tensor的实际大小通常比计算值小得多
-    // 这里使用一个保守的估计来避免过度分配
-    uint64_t max_size = 100 * 1024 * 1024; // 100MB限制
-    if (calculated_size > max_size) {
-      calculated_size = max_size;
-    }
+  // K-量化系列 - 基于llama.cpp官方实现
+  case GGMLTensorType::Q2_K:
+    return (total_elements + 255) / 256 * 80; // 256个元素80字节
+  case GGMLTensorType::Q3_K:
+    return (total_elements + 255) / 256 * 104; // 256个元素104字节
+  case GGMLTensorType::Q4_K:
+    return (total_elements + 255) / 256 * 144; // 256个元素144字节
+  case GGMLTensorType::Q5_K:
+    return (total_elements + 255) / 256 * 176; // 256个元素176字节
+  case GGMLTensorType::Q6_K:
+    return (total_elements + 255) / 256 * 210; // 256个元素210字节
+  case GGMLTensorType::Q8_K:
+    return (total_elements + 255) / 256 * 320; // 256个元素320字节
+
+  // IQ系列量化格式
+  case GGMLTensorType::IQ2_XXS:
+    return (total_elements + 255) / 256 * 66;  // 256个元素66字节
+  case GGMLTensorType::IQ2_XS:
+    return (total_elements + 255) / 256 * 74;  // 256个元素74字节
+  case GGMLTensorType::IQ2_S:
+    return (total_elements + 255) / 256 * 82;  // 256个元素82字节
+  case GGMLTensorType::IQ3_XXS:
+    return (total_elements + 255) / 256 * 98;  // 256个元素98字节
+  case GGMLTensorType::IQ3_S:
+    return (total_elements + 255) / 256 * 114; // 256个元素114字节
+  case GGMLTensorType::IQ4_NL:
+    return (total_elements + 31) / 32 * 18;  // 32个元素18字节
+  case GGMLTensorType::IQ4_XS:
+    return (total_elements + 255) / 256 * 146; // 256个元素146字节
+  case GGMLTensorType::IQ1_S:
+    return (total_elements + 255) / 256 * 52;  // 256个元素52字节
+  case GGMLTensorType::IQ1_M:
+    return (total_elements + 255) / 256 * 52;  // 256个元素52字节
+
+  // 三值量化格式
+  case GGMLTensorType::TQ1_0:
+    return (total_elements + 255) / 256 * 66;  // 256个元素66字节
+  case GGMLTensorType::TQ2_0:
+    return (total_elements + 255) / 256 * 66;  // 256个元素66字节
+
+  // 混合精度FP4格式
+  case GGMLTensorType::MXFP4:
+    return (total_elements + 31) / 32 * 18; // 32个元素18字节
+
+  default:
+    // 对于未知类型，使用保守估计
+    return total_elements * 4;
   }
-
-  return calculated_size;
 }
 
 uint32_t GGUFParser::getTypeSize(GGUFType type) {
@@ -1261,18 +1322,21 @@ bool GGUFParser::readTensorInfoFromMmap() {
       log("ERROR", "Failed to read type for tensor " + tensor_info.name);
       return false;
     }
-    
+
     // 验证张量类型是否支持
-    if (type_value > 39) {  // MXFP4 is the highest supported type (39)
-      log("ERROR", "Unsupported tensor type value " + std::to_string(type_value) + " for tensor " + tensor_info.name);
+    if (type_value > 39) { // MXFP4 is the highest supported type (39)
+      log("ERROR", "Unsupported tensor type value " +
+                       std::to_string(type_value) + " for tensor " +
+                       tensor_info.name);
       return false;
     }
-    
+
     tensor_info.type = static_cast<GGMLTensorType>(type_value);
-    
+
     // 验证类型是否在getGGMLTypeSize中有对应处理
     if (getGGMLTypeSize(tensor_info.type) == 0) {
-      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " + tensor_info.name + " may not be fully supported");
+      log("WARN", "Tensor type " + std::to_string(type_value) + " for tensor " +
+                      tensor_info.name + " may not be fully supported");
     }
 
     // 读取偏移量

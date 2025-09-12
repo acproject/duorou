@@ -1,58 +1,359 @@
-[INFO] GGUFParser: Parsed architecture: qwen25vl
-[INFO] GGUFParser:   Context length: 128000
-[INFO] GGUFParser:   Embedding length: 3584
-[INFO] GGUFParser:   Block count: 28
-[INFO] GGUFParser:   Has vision: Yes
-[DEBUG] GGUFParser: Architecture parsed successfully
-[INFO] GGUFParser: Successfully parsed GGUF file with mmap: /Users/acproject/.ollama/models/blobs/sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
-[INFO] GGUFParser: Architecture: qwen25vl
-[INFO] GGUFParser: Metadata keys: 36
-[INFO] GGUFParser: Tensor count: 858
-[INFO] OllamaModelManager: Using vocab_size from GGUF: 152064
-[INFO] OllamaModelManager: Vocabulary test passed: 'test' -> token 1944 -> 'test'
-[WARNING] OllamaModelManager: Unsupported tokenizer model type: gpt2, using BPE as fallback
-Warning: Invalid regex pattern, using simple whitespace split: One of *?+{ was not preceded by a valid regular expression.
-[INFO] OllamaModelManager: Successfully loaded vocabulary from GGUF: 152064 tokens, model: bpe
+[WARNING] Size mismatch for blk.8.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.8.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.8.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.8.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.8.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.9.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.9.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.9.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.9.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.9.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.9.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.9.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.9.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.9.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.9.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.10.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.10.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.10.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.10.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.10.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.10.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.10.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.10.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.10.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.10.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.11.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.11.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.11.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.11.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.11.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.11.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.11.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.11.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.11.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.11.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.12.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.12.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.12.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.12.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.12.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.12.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.12.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.12.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.12.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.12.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.13.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.13.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.13.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.13.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.13.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.13.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.13.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.13.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.13.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.13.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.14.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.14.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.14.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.14.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.14.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.14.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.14.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.14.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.14.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.14.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.15.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.15.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.15.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.15.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.15.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.15.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.15.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.15.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.15.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.15.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.16.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.16.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.16.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.16.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.16.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.16.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.16.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.16.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.16.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.16.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.17.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.17.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.17.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.17.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.17.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.17.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.17.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.17.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.17.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.17.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.18.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.18.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.18.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.18.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.18.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.18.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.18.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.18.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.18.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.18.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.19.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.19.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.19.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.19.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.19.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.19.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.19.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.19.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.19.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.19.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.20.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.20.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.20.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.20.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.20.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.20.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.20.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.20.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.20.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.20.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.21.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.21.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.21.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.21.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.21.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.21.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.21.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.21.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.21.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.21.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.22.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.22.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.22.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.22.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.22.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.22.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.ffn_down.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.22.ffn_down.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.22.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.22.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.22.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.23.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.23.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.23.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.23.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.23.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.23.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.23.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.23.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.23.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.23.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.24.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.24.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.24.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.24.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.24.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.24.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.24.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.24.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.24.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.24.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.25.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.25.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.25.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.25.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.25.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.25.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.25.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.25.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.25.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.25.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.26.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.26.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.attn_v.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.26.attn_v.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.26.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.26.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.26.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.26.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.26.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.26.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.26.ffn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.attn_q.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.27.attn_q.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.attn_k.weight, size: 1003520 bytes
+[WARNING] Size mismatch for blk.27.attn_k.weight: expected 7340032, got 1003520
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.attn_v.weight, size: 1462272 bytes
+[WARNING] Size mismatch for blk.27.attn_v.weight: expected 7340032, got 1462272
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.attn_output.weight, size: 7024640 bytes
+[WARNING] Size mismatch for blk.27.attn_output.weight: expected 51380224, got 7024640
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.ffn_gate.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.27.ffn_gate.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.ffn_up.weight, size: 37130240 bytes
+[WARNING] Size mismatch for blk.27.ffn_up.weight: expected 271581184, got 37130240
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.ffn_down.weight, size: 54104064 bytes
+[WARNING] Size mismatch for blk.27.ffn_down.weight: expected 271581184, got 54104064
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.attn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.27.attn_norm.weight
+[DEBUG] GGUFParser: Successfully read tensor data for: blk.27.ffn_norm.weight, size: 14336 bytes
+[DEBUG] Loaded blk.27.ffn_norm.weight
+[INFO] Transformer weights loaded successfully
 [DEBUG] GGUFParser: GGUFParser destroyed
-[INFO] OllamaModelManager: Model registered: sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025 -> /Users/acproject/.ollama/models/blobs/sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
-[INFO] OllamaModelManager: Model alias registered: registry.ollama.ai/library/qwen2.5vl:7b -> /Users/acproject/.ollama/models/blobs/sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
-[DEBUG] OllamaModelImpl: Using registered model_id: sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025 for path: registry.ollama.ai/library/qwen2.5vl:7b
-[DEBUG] Model Config:
-[DEBUG]   hidden_size: 3584
-[DEBUG]   num_attention_heads: 28
-[DEBUG]   num_key_value_heads: 4
-[DEBUG]   intermediate_size: 18944
-[DEBUG]   max_position_embeddings: 32768
-[DEBUG]   rope_theta: 1e+06
-[DEBUG]   rms_norm_eps: 1e-06
-[DEBUG] Initializing KV Cache (llama.cpp inspired)
-[DEBUG] KV Cache memory calculation (llama.cpp style):
-[DEBUG]   Available memory: 8 GB
-[DEBUG]   Memory for KV cache: 2048 MB
-[DEBUG]   Elements per layer: 512
-[DEBUG]   Max sequence length: 18724
-[DEBUG]   Original max_position_embeddings: 32768
-[DEBUG]   Optimal cache length: 4096
-[DEBUG]   head_dim: 128
-[DEBUG]   kv_head_dim: 128
-[DEBUG]   num_hidden_layers: 28
-[DEBUG]   num_key_value_heads: 4
-[DEBUG] Layer 0 KV cache shape: [1, 4096, 512]
-[DEBUG] Layer 0 KV cache memory: 16 MB per layer
-[DEBUG] Total estimated KV cache memory: 448 MB
-[DEBUG] Layer 0 KV cache size: 2097152
-[DEBUG] Layer 0 KV cache data size: 2097152
-[DEBUG] KV Cache initialized for 28 layers with optimized memory usage
-Qwen2.5-VL Modular Engine initialized successfully
-[DEBUG] OllamaModelManager: Inference engine created and initialized for model: sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
-[INFO] Transformer weights initialized successfully
 Model weights loaded successfully from: /Users/acproject/.ollama/models/blobs/sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
 [DEBUG] OllamaModelManager: engine->loadWeights() completed successfully
 [INFO] OllamaModelManager: Model loaded successfully: sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025
 [DEBUG] OllamaModelImpl: Setting loaded status to true
 [DEBUG] OllamaModelImpl: Created TextGenerator with Ollama backend
 [DEBUG] OllamaModelImpl::load completed successfully
-[SUCCESS] Model loaded successfully: registry.ollama.ai/library/qwen2.5vl:7b (took 303635ms)
+[SUCCESS] Model loaded successfully: registry.ollama.ai/library/qwen2.5vl:7b (took 25364ms)
 [DEBUG] ChatView: Model loaded successfully: registry.ollama.ai/library/qwen2.5vl:7b
 [DEBUG] ChatView: Getting text generator for model: registry.ollama.ai/library/qwen2.5vl:7b
 [DEBUG] ModelManager::getTextGenerator called for: registry.ollama.ai/library/qwen2.5vl:7b
@@ -129,102 +430,10 @@ Model weights loaded successfully from: /Users/acproject/.ollama/models/blobs/sh
 [DEBUG] splitToHeads input shape size: 3
 [DEBUG] splitToHeads input shape: [1, 28, 512], num_heads=4, head_dim=128
 [DEBUG] splitToHeads input data size: 14336, tensor size: 14336
-[DEBUG] splitToHeads input shape size: 3
-[DEBUG] splitToHeads input shape: [1, 4096, 512], num_heads=4, head_dim=128
-[DEBUG] splitToHeads input data size: 2097152, tensor size: 2097152
-[DEBUG] splitToHeads input shape size: 3
-[DEBUG] splitToHeads input shape: [1, 4096, 512], num_heads=4, head_dim=128
-[DEBUG] splitToHeads input data size: 2097152, tensor size: 2097152
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] KV Cache updated at position 0, cache size: 1
-[DEBUG] FastAttention::compute called
-[DEBUG] FastAttention input validation passed
-[DEBUG] performMatMul called
-[DEBUG] Tensor A: shape=[1, 28, 3584], size=100352, data_size=100352
-[DEBUG] Tensor B: shape=[3584, 3584], size=12845056, data_size=12845056
-[DEBUG] Matrix dimensions: A(28x3584), B(3584x3584), batch_size=1
-[DEBUG] Output shape: [1, 28, 3584]
-[DEBUG] Result tensor created: size=100352, data_size=100352
-[DEBUG] Starting optimized BLAS matrix multiplication
-[DEBUG] Processing batch 0
-[DEBUG] Optimized matrix multiplication completed successfully
+[ERROR] Exception in transformer layer 0: Head dimension mismatch: key=128, cache=0
+[FATAL] Critical dimension error detected, stopping execution
+Exception during text generation: Head dimension mismatch: key=128, cache=0
+[ERROR] OllamaModelManager: Inference engine returned empty output
+[DEBUG] Ollama inference failed: Inference engine returned empty output
+[DEBUG] TextGenerator returning result: 抱歉，推理过程中出现...
+[DEBUG] ChatView: Text generation completed successfully

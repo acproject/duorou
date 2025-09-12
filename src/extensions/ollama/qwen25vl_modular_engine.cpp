@@ -1108,10 +1108,10 @@ void Qwen25VLModularEngine::initializeKVCache() {
     std::cerr << "[DEBUG]   num_key_value_heads: " << config_.num_key_value_heads << std::endl;
 
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      // 修复：使用3维格式初始化KV缓存以匹配MultiHeadAttention的期望
-      // 格式：[batch_size, num_kv_heads, seq_length, head_dim] - 正确的GQA布局
-      std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads, 
-                                           optimal_cache_length, kv_head_dim};
+      // 修复：使用正确的4维格式初始化KV缓存 [batch_size, seq_length, num_kv_heads * head_dim]
+      // 这与MultiHeadAttention::computeWithCache期望的格式匹配
+      uint32_t kv_total_dim = config_.num_key_value_heads * kv_head_dim;
+      std::vector<uint32_t> cache_shape = {1, optimal_cache_length, kv_total_dim};
 
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
@@ -1151,8 +1151,45 @@ void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
       throw std::out_of_range("Layer index out of range");
     }
 
-    // 简化的缓存更新实现
-    // 实际实现需要根据cache_position更新特定位置
+    // 检查维度匹配
+    if (key.shape.size() != 3 || value.shape.size() != 3) {
+      throw std::invalid_argument("Key/Value tensors must be 3D [batch, seq_len, kv_dim]");
+    }
+    
+    uint32_t batch_size = key.shape[0];
+    uint32_t seq_len = key.shape[1];
+    uint32_t kv_dim = key.shape[2];
+    
+    if (batch_size != 1) {
+      throw std::invalid_argument("Batch size must be 1 for KV cache update");
+    }
+    
+    // 获取当前缓存位置
+    uint32_t cache_pos = state_.cache_position;
+    
+    // 检查缓存容量
+    if (cache_pos + seq_len > state_.key_cache[layer_idx].shape[1]) {
+      throw std::runtime_error("KV cache overflow");
+    }
+    
+    // 更新KV缓存 - 使用正确的3维格式
+    const uint32_t kv_total_dim = kv_dim;
+    
+    for (uint32_t s = 0; s < seq_len; ++s) {
+      size_t src_offset = s * kv_total_dim;
+      size_t dst_offset = (cache_pos + s) * kv_total_dim;
+      
+      std::memcpy(&state_.key_cache[layer_idx].data[dst_offset], 
+                 &key.data[src_offset], 
+                 kv_total_dim * sizeof(float));
+      
+      std::memcpy(&state_.value_cache[layer_idx].data[dst_offset], 
+                 &value.data[src_offset], 
+                 kv_total_dim * sizeof(float));
+    }
+    
+    // 更新缓存位置
+    state_.cache_position += seq_len;
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in KV cache update: " << e.what() << std::endl;
