@@ -3,11 +3,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <thread>
+#include <vector>
 
 // BLAS支持
 #ifdef __APPLE__
@@ -50,16 +54,23 @@ bool Qwen25VLModularEngine::initialize(const Qwen25VLConfig &config) {
     model_config.max_position_embeddings = config.max_position_embeddings;
     model_config.rope_theta = config.rope_theta;
     model_config.rms_norm_eps = config.rms_norm_eps;
-    
+
     // 打印模型配置信息
     std::cerr << "[DEBUG] Model Config:" << std::endl;
-    std::cerr << "[DEBUG]   hidden_size: " << model_config.hidden_size << std::endl;
-    std::cerr << "[DEBUG]   num_attention_heads: " << model_config.num_attention_heads << std::endl;
-    std::cerr << "[DEBUG]   num_key_value_heads: " << model_config.num_key_value_heads << std::endl;
-    std::cerr << "[DEBUG]   intermediate_size: " << model_config.intermediate_size << std::endl;
-    std::cerr << "[DEBUG]   max_position_embeddings: " << model_config.max_position_embeddings << std::endl;
-    std::cerr << "[DEBUG]   rope_theta: " << model_config.rope_theta << std::endl;
-    std::cerr << "[DEBUG]   rms_norm_eps: " << model_config.rms_norm_eps << std::endl;
+    std::cerr << "[DEBUG]   hidden_size: " << model_config.hidden_size
+              << std::endl;
+    std::cerr << "[DEBUG]   num_attention_heads: "
+              << model_config.num_attention_heads << std::endl;
+    std::cerr << "[DEBUG]   num_key_value_heads: "
+              << model_config.num_key_value_heads << std::endl;
+    std::cerr << "[DEBUG]   intermediate_size: "
+              << model_config.intermediate_size << std::endl;
+    std::cerr << "[DEBUG]   max_position_embeddings: "
+              << model_config.max_position_embeddings << std::endl;
+    std::cerr << "[DEBUG]   rope_theta: " << model_config.rope_theta
+              << std::endl;
+    std::cerr << "[DEBUG]   rms_norm_eps: " << model_config.rms_norm_eps
+              << std::endl;
 
     // 初始化算法组件
     attention_ = std::make_unique<algorithms::MultiHeadAttention>();
@@ -493,7 +504,8 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     } else {
       attention_output = attention_->computeWithCache(
           q_proj, k_proj, v_proj, state_.key_cache[layer_idx],
-          state_.value_cache[layer_idx], state_.cache_position, attention_mask);
+          state_.value_cache[layer_idx], state_.cache_position, layer_idx,
+          attention_mask);
     }
 
     // 输出投影
@@ -566,7 +578,9 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
         error_msg.find("head splitting") != std::string::npos ||
         error_msg.find("Hidden size mismatch") != std::string::npos ||
         error_msg.find("mismatch") != std::string::npos) {
-      std::cerr << "[FATAL] Critical dimension error detected, stopping execution" << std::endl;
+      std::cerr
+          << "[FATAL] Critical dimension error detected, stopping execution"
+          << std::endl;
       throw; // 重新抛出异常以停止执行
     }
     return input; // 对于其他错误，返回原始输入作为fallback
@@ -649,35 +663,42 @@ Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
     std::cerr << "[DEBUG] Input IDs: [";
     for (size_t i = 0; i < std::min(input_ids.size(), size_t(10)); ++i) {
       std::cerr << input_ids[i];
-      if (i < std::min(input_ids.size(), size_t(10)) - 1) std::cerr << ", ";
+      if (i < std::min(input_ids.size(), size_t(10)) - 1)
+        std::cerr << ", ";
     }
-    if (input_ids.size() > 10) std::cerr << ", ...";
+    if (input_ids.size() > 10)
+      std::cerr << ", ...";
     std::cerr << "]" << std::endl;
-    
+
     uint32_t seq_len = input_ids.size();
     // 修复：添加batch维度以匹配MultiHeadAttention的期望输入格式 [batch_size,
     // seq_len, hidden_size]
     std::vector<uint32_t> shape = {1, seq_len, config_.hidden_size};
-    
-    std::cerr << "[DEBUG] Embedding output shape: [" << shape[0] << ", " 
+
+    std::cerr << "[DEBUG] Embedding output shape: [" << shape[0] << ", "
               << shape[1] << ", " << shape[2] << "]" << std::endl;
-    std::cerr << "[DEBUG] Config vocab_size: " << config_.vocab_size << std::endl;
-    std::cerr << "[DEBUG] Config hidden_size: " << config_.hidden_size << std::endl;
-    
+    std::cerr << "[DEBUG] Config vocab_size: " << config_.vocab_size
+              << std::endl;
+    std::cerr << "[DEBUG] Config hidden_size: " << config_.hidden_size
+              << std::endl;
+
     algorithms::Tensor embeddings(shape);
-    std::cerr << "[DEBUG] Embedding tensor created: size=" << embeddings.size 
+    std::cerr << "[DEBUG] Embedding tensor created: size=" << embeddings.size
               << ", data_size=" << embeddings.data.size() << std::endl;
 
     // 检查token_embeddings张量是否已初始化
     std::cerr << "[DEBUG] Token embeddings shape: [";
     for (size_t i = 0; i < weights_.token_embeddings.shape.size(); ++i) {
       std::cerr << weights_.token_embeddings.shape[i];
-      if (i < weights_.token_embeddings.shape.size() - 1) std::cerr << ", ";
+      if (i < weights_.token_embeddings.shape.size() - 1)
+        std::cerr << ", ";
     }
     std::cerr << "]" << std::endl;
-    std::cerr << "[DEBUG] Token embeddings size: " << weights_.token_embeddings.size << std::endl;
-    std::cerr << "[DEBUG] Token embeddings data size: " << weights_.token_embeddings.data.size() << std::endl;
-    
+    std::cerr << "[DEBUG] Token embeddings size: "
+              << weights_.token_embeddings.size << std::endl;
+    std::cerr << "[DEBUG] Token embeddings data size: "
+              << weights_.token_embeddings.data.size() << std::endl;
+
     if (weights_.token_embeddings.data.empty()) {
       std::cerr << "[ERROR] Token embeddings not initialized" << std::endl;
       throw std::runtime_error("Token embeddings not initialized");
@@ -686,8 +707,9 @@ Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
     // 检查token_embeddings张量大小是否正确
     size_t expected_embedding_size =
         static_cast<size_t>(config_.vocab_size) * config_.hidden_size;
-    std::cerr << "[DEBUG] Expected embedding size: " << expected_embedding_size << std::endl;
-    
+    std::cerr << "[DEBUG] Expected embedding size: " << expected_embedding_size
+              << std::endl;
+
     if (weights_.token_embeddings.data.size() < expected_embedding_size) {
       std::cerr << "[ERROR] Token embeddings size mismatch. Expected: "
                 << expected_embedding_size
@@ -1062,132 +1084,230 @@ uint32_t Qwen25VLModularEngine::sampleToken(
 
 void Qwen25VLModularEngine::initializeKVCache() {
   try {
-    std::cerr << "[DEBUG] Initializing KV Cache (llama.cpp inspired)" << std::endl;
-    
+    std::cerr << "[DEBUG] Initializing KV Cache (llama.cpp inspired)"
+              << std::endl;
+
     state_.key_cache.clear();
     state_.value_cache.clear();
 
+    // 确保head_dim计算正确
     uint32_t head_dim = config_.hidden_size / config_.num_attention_heads;
-    uint32_t kv_head_dim = head_dim; // In GQA, KV heads have same dimension as query heads
-    
-    // Calculate optimal cache size based on available memory (like llama.cpp n_ctx calculation)
-    const size_t available_memory_gb = 8; // Conservative estimate
-    const size_t bytes_per_element = sizeof(float);
-    const size_t elements_per_layer = config_.num_key_value_heads * kv_head_dim;
-    
-    // 修复：正确计算每层可用的序列长度
-    const size_t total_memory_bytes = available_memory_gb * 1024 * 1024 * 1024;
-    const size_t memory_for_kv = total_memory_bytes / 4; // Use 25% of memory for KV cache
-    const size_t memory_per_layer = memory_for_kv / config_.num_hidden_layers;
-    const size_t memory_per_kv_pair = memory_per_layer / 2; // K and V caches
-    const size_t max_seq_length = memory_per_kv_pair / (elements_per_layer * bytes_per_element);
-    
-    // 直接使用计算出的序列长度，添加合理的上限
-    uint32_t memory_based_length = static_cast<uint32_t>(max_seq_length);
-    
-    // 限制缓存长度在合理范围内：最小512，最大4096（对于大多数应用足够）
-    uint32_t optimal_cache_length = std::min({
-        memory_based_length,
-        config_.max_position_embeddings,
-        4096u  // 硬编码最大值，防止内存溢出
-    });
-    
-    // Ensure minimum cache size for functionality (like llama.cpp padding strategy)
-    optimal_cache_length = std::max(optimal_cache_length, 512u);
-    
-    std::cerr << "[DEBUG] KV Cache memory calculation (llama.cpp style):" << std::endl;
-    std::cerr << "[DEBUG]   Available memory: " << available_memory_gb << " GB" << std::endl;
-    std::cerr << "[DEBUG]   Memory for KV cache: " << (memory_for_kv / (1024*1024)) << " MB" << std::endl;
-    std::cerr << "[DEBUG]   Elements per layer: " << elements_per_layer << std::endl;
-    std::cerr << "[DEBUG]   Max sequence length: " << max_seq_length << std::endl;
-    std::cerr << "[DEBUG]   Original max_position_embeddings: " << config_.max_position_embeddings << std::endl;
-    std::cerr << "[DEBUG]   Optimal cache length: " << optimal_cache_length << std::endl;
-    std::cerr << "[DEBUG]   head_dim: " << head_dim << std::endl;
-    std::cerr << "[DEBUG]   kv_head_dim: " << kv_head_dim << std::endl;
-    std::cerr << "[DEBUG]   num_hidden_layers: " << config_.num_hidden_layers << std::endl;
-    std::cerr << "[DEBUG]   num_key_value_heads: " << config_.num_key_value_heads << std::endl;
+    uint32_t kv_head_dim =
+        head_dim; // In GQA, KV heads have same dimension as query heads
+    // 添加调试信息
+    std::cerr << "[DEBUG] Head dim calculation: " << config_.hidden_size
+              << " / " << config_.num_attention_heads << " = " << head_dim
+              << std::endl;
+    // 直接使用配置中的max_position_embeddings 作为缓存长度
+    uint32_t optimal_cache_length = config_.max_position_embeddings;
+
+    std::cerr << "[DEBUG] Using cache length: " << optimal_cache_length
+              << " (from max_position_embedding)" << std::endl;
 
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      // 修复：使用正确的4维格式初始化KV缓存 [batch_size, seq_length, num_kv_heads * head_dim]
-      // 这与MultiHeadAttention::computeWithCache期望的格式匹配
-      uint32_t kv_total_dim = config_.num_key_value_heads * kv_head_dim;
-      std::vector<uint32_t> cache_shape = {1, optimal_cache_length, kv_total_dim};
-
+      std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads,
+                                           optimal_cache_length, kv_head_dim};
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
-      
+
+      // 初始化缓存数据为0
+      std::fill(state_.key_cache[layer].data.begin(),
+                state_.key_cache[layer].data.end(), 0.0f);
+      std::fill(state_.value_cache[layer].data.begin(),
+                state_.value_cache[layer].data.end(), 0.0f);
+
       if (layer == 0) {
-        size_t cache_size_mb = (cache_shape[0] * cache_shape[1] * cache_shape[2] * bytes_per_element * 2) / (1024 * 1024);
-        std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: [" 
-                  << cache_shape[0] << ", " << cache_shape[1] << ", " << cache_shape[2] << "]" << std::endl;
-        std::cerr << "[DEBUG] Layer " << layer << " KV cache memory: " << cache_size_mb << " MB per layer" << std::endl;
-        std::cerr << "[DEBUG] Total estimated KV cache memory: " << (cache_size_mb * config_.num_hidden_layers) << " MB" << std::endl;
-        std::cerr << "[DEBUG] Layer " << layer << " KV cache size: " 
-                  << state_.key_cache[layer].size << std::endl;
-        std::cerr << "[DEBUG] Layer " << layer << " KV cache data size: " 
-                  << state_.key_cache[layer].data.size() << std::endl;
+        size_t cache_size_mb =
+            (cache_shape[0] * cache_shape[1] * cache_shape[2] * cache_shape[3] *
+             sizeof(float) * 2) /
+            (1024 * 1024);
+        std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: ["
+                  << cache_shape[0] << ", " << cache_shape[1] << ", "
+                  << cache_shape[2] << "," << cache_shape[3] << "]"
+                  << std::endl;
+        std::cerr << "[DEBUG] Layer" << layer
+                  << " KV cache memory: " << cache_size_mb << " MB per layer"
+                  << std::endl;
       }
     }
-    
-    std::cerr << "[DEBUG] KV Cache initialized for " << config_.num_hidden_layers 
-              << " layers with optimized memory usage" << std::endl;
-
+    std::cerr << "[DEBUG] KV Cache initialized for "
+              << config_.num_hidden_layers << " layers" << std::endl;
     state_.current_length = 0;
     state_.cache_position = 0;
-
   } catch (const std::exception &e) {
     std::cerr << "Exception in KV cache initialization: " << e.what()
               << std::endl;
     throw;
   }
+  //   // Calculate optimal cache size based on available memory (like llama.cpp
+  //   // n_ctx calculation)
+  //   const size_t available_memory_gb = 8; // Conservative estimate
+  //   const size_t bytes_per_element = sizeof(float);
+  //   const size_t elements_per_layer = config_.num_key_value_heads *
+  //   kv_head_dim;
+
+  //   // 修复：正确计算每层可用的序列长度
+  //   const size_t total_memory_bytes = available_memory_gb * 1024 * 1024 *
+  //   1024; const size_t memory_for_kv =
+  //       total_memory_bytes / 4; // Use 25% of memory for KV cache
+  //   const size_t memory_per_layer = memory_for_kv /
+  //   config_.num_hidden_layers; const size_t memory_per_kv_pair =
+  //   memory_per_layer / 2; // K and V caches const size_t max_seq_length =
+  //       memory_per_kv_pair / (elements_per_layer * bytes_per_element);
+
+  //   // 直接使用计算出的序列长度，添加合理的上限
+  //   uint32_t memory_based_length = static_cast<uint32_t>(max_seq_length);
+
+  //   // 限制缓存长度在合理范围内：最小512，最大4096（对于大多数应用足够）
+  //   uint32_t optimal_cache_length = std::min({
+  //       memory_based_length, config_.max_position_embeddings,
+  //       4096u // 硬编码最大值，防止内存溢出
+  //   });
+
+  //   // Ensure minimum cache size for functionality (like llama.cpp padding
+  //   // strategy)
+  //   optimal_cache_length = std::max(optimal_cache_length, 512u);
+
+  //   std::cerr << "[DEBUG] KV Cache memory calculation (llama.cpp style):"
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   Available memory: " << available_memory_gb << "
+  //   GB"
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   Memory for KV cache: "
+  //             << (memory_for_kv / (1024 * 1024)) << " MB" << std::endl;
+  //   std::cerr << "[DEBUG]   Elements per layer: " << elements_per_layer
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   Max sequence length: " << max_seq_length
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   Original max_position_embeddings: "
+  //             << config_.max_position_embeddings << std::endl;
+  //   std::cerr << "[DEBUG]   Optimal cache length: " << optimal_cache_length
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   head_dim: " << head_dim << std::endl;
+  //   std::cerr << "[DEBUG]   kv_head_dim: " << kv_head_dim << std::endl;
+  //   std::cerr << "[DEBUG]   num_hidden_layers: " << config_.num_hidden_layers
+  //             << std::endl;
+  //   std::cerr << "[DEBUG]   num_key_value_heads: "
+  //             << config_.num_key_value_heads << std::endl;
+
+  //   for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
+  //     // 修复：使用正确的4维格式初始化KV缓存 [batch_size, num_kv_heads,
+  //     // seq_length, head_dim]
+  //     这与FastAttention::computeWithCache期望的格式匹配 std::vector<uint32_t>
+  //     cache_shape = {1, config_.num_key_value_heads,
+  //                                          optimal_cache_length,
+  //                                          kv_head_dim};
+
+  //     state_.key_cache.emplace_back(cache_shape);
+  //     state_.value_cache.emplace_back(cache_shape);
+
+  //     if (layer == 0) {
+  //       size_t cache_size_mb =
+  //           (cache_shape[0] * cache_shape[1] * cache_shape[2] *
+  //           cache_shape[3] *
+  //            bytes_per_element * 2) /
+  //           (1024 * 1024);
+  //       std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: ["
+  //                 << cache_shape[0] << ", " << cache_shape[1] << ", "
+  //                 << cache_shape[2] << ", " << cache_shape[3] << "]"
+  //                 << std::endl;
+  //       std::cerr << "[DEBUG] Layer " << layer
+  //                 << " KV cache memory: " << cache_size_mb << " MB per layer"
+  //                 << std::endl;
+  //       std::cerr << "[DEBUG] Total estimated KV cache memory: "
+  //                 << (cache_size_mb * config_.num_hidden_layers) << " MB"
+  //                 << std::endl;
+  //       std::cerr << "[DEBUG] Layer " << layer
+  //                 << " KV cache size: " << state_.key_cache[layer].size
+  //                 << std::endl;
+  //       std::cerr << "[DEBUG] Layer " << layer << " KV cache data size: "
+  //                 << state_.key_cache[layer].data.size() << std::endl;
+  //     }
+  //   }
+
+  //   std::cerr << "[DEBUG] KV Cache initialized for "
+  //             << config_.num_hidden_layers
+  //             << " layers with optimized memory usage" << std::endl;
+
+  //   state_.current_length = 0;
+  //   state_.cache_position = 0;
+
+  // } catch (const std::exception &e) {
+  //   std::cerr << "Exception in KV cache initialization: " << e.what()
+  //             << std::endl;
+  //   throw;
+  // }
 }
 
 void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
                                           const algorithms::Tensor &key,
-                                          const algorithms::Tensor &value) {
+                                          const algorithms::Tensor &value,
+                                          uint32_t head_idx) {
 
   try {
     if (layer_idx >= state_.key_cache.size()) {
       throw std::out_of_range("Layer index out of range");
     }
 
-    // 检查维度匹配
+    // 检查维度匹配 - key/value应该是3维格式 [batch, seq_len, kv_total_dim]
     if (key.shape.size() != 3 || value.shape.size() != 3) {
-      throw std::invalid_argument("Key/Value tensors must be 3D [batch, seq_len, kv_dim]");
+      throw std::invalid_argument(
+          "Key/Value tensors must be 3D [batch, seq_len, kv_dim]");
     }
-    
+
     uint32_t batch_size = key.shape[0];
     uint32_t seq_len = key.shape[1];
-    uint32_t kv_dim = key.shape[2];
-    
+    uint32_t kv_total_dim = key.shape[2];
+
     if (batch_size != 1) {
       throw std::invalid_argument("Batch size must be 1 for KV cache update");
     }
-    
+
+    // 获取缓存维度信息
+    uint32_t cache_batch_size = state_.key_cache[layer_idx].shape[0];
+    uint32_t num_kv_heads = state_.key_cache[layer_idx].shape[1];
+    uint32_t max_seq_len = state_.key_cache[layer_idx].shape[2];
+    uint32_t head_dim = state_.key_cache[layer_idx].shape[3];
+
+    // 验证维度匹配
+    uint32_t expected_kv_dim = num_kv_heads * head_dim;
+    if (kv_total_dim != expected_kv_dim) {
+      throw std::invalid_argument("KV dimension mismatch: expected " +
+                                  std::to_string(expected_kv_dim) + ", got " +
+                                  std::to_string(kv_total_dim));
+    }
+
     // 获取当前缓存位置
     uint32_t cache_pos = state_.cache_position;
-    
+
     // 检查缓存容量
-    if (cache_pos + seq_len > state_.key_cache[layer_idx].shape[1]) {
+    if (cache_pos + seq_len > max_seq_len) {
       throw std::runtime_error("KV cache overflow");
     }
-    
-    // 更新KV缓存 - 使用正确的3维格式
-    const uint32_t kv_total_dim = kv_dim;
-    
+
+    // 将3维格式的key/value转换为4维格式并更新到缓存
     for (uint32_t s = 0; s < seq_len; ++s) {
+      // 计算源偏移（3维格式）
       size_t src_offset = s * kv_total_dim;
-      size_t dst_offset = (cache_pos + s) * kv_total_dim;
-      
-      std::memcpy(&state_.key_cache[layer_idx].data[dst_offset], 
-                 &key.data[src_offset], 
-                 kv_total_dim * sizeof(float));
-      
-      std::memcpy(&state_.value_cache[layer_idx].data[dst_offset], 
-                 &value.data[src_offset], 
-                 kv_total_dim * sizeof(float));
+
+      // 对于每个KV头，复制对应的数据
+      for (uint32_t h = 0; h < num_kv_heads; ++h) {
+        // 计算目标偏移（4维格式）
+        size_t dst_offset =
+            h * max_seq_len * head_dim + (cache_pos + s) * head_dim;
+
+        // 计算当前头的源偏移
+        size_t head_src_offset = src_offset + h * head_dim;
+
+        // 复制当前头的数据
+        std::memcpy(&state_.key_cache[layer_idx].data[dst_offset],
+                    &key.data[head_src_offset], head_dim * sizeof(float));
+
+        std::memcpy(&state_.value_cache[layer_idx].data[dst_offset],
+                    &value.data[head_src_offset], head_dim * sizeof(float));
+      }
     }
-    
+
     // 更新缓存位置
     state_.cache_position += seq_len;
 
@@ -1247,7 +1367,8 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
     // 使用GGUF解析器加载权重
     GGUFParser parser(true); // 启用详细日志
     if (!parser.parseFile(model_path)) {
-      std::cerr << "[ERROR] Failed to parse GGUF file: " << model_path << std::endl;
+      std::cerr << "[ERROR] Failed to parse GGUF file: " << model_path
+                << std::endl;
       return false;
     }
 
@@ -1338,7 +1459,9 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
     // 从GGUF文件加载实际权重数据
     bool weights_loaded = loadWeightsFromGGUF(parser);
     if (!weights_loaded) {
-      std::cerr << "[WARNING] Failed to load weights from GGUF, using random initialization" << std::endl;
+      std::cerr << "[WARNING] Failed to load weights from GGUF, using random "
+                   "initialization"
+                << std::endl;
       // 回退到随机初始化
       initializeRandomWeights();
     }
@@ -1357,14 +1480,17 @@ bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
   try {
     // 加载特殊token ID
     if (!loadSpecialTokens(parser)) {
-      std::cerr << "Warning: Failed to load special tokens, using defaults" << std::endl;
+      std::cerr << "Warning: Failed to load special tokens, using defaults"
+                << std::endl;
     }
 
     // 加载token embeddings
     std::vector<uint8_t> tensor_data;
     if (parser.getTensorData("token_embd.weight", tensor_data)) {
-      if (tensor_data.size() == weights_.token_embeddings.size * sizeof(float)) {
-        std::memcpy(weights_.token_embeddings.data.data(), tensor_data.data(), tensor_data.size());
+      if (tensor_data.size() ==
+          weights_.token_embeddings.size * sizeof(float)) {
+        std::memcpy(weights_.token_embeddings.data.data(), tensor_data.data(),
+                    tensor_data.size());
         std::cerr << "[INFO] Loaded token_embd.weight" << std::endl;
       }
     }
@@ -1372,7 +1498,8 @@ bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
     // 加载最终层归一化权重
     if (parser.getTensorData("output_norm.weight", tensor_data)) {
       if (tensor_data.size() == weights_.norm_weight.size * sizeof(float)) {
-        std::memcpy(weights_.norm_weight.data.data(), tensor_data.data(), tensor_data.size());
+        std::memcpy(weights_.norm_weight.data.data(), tensor_data.data(),
+                    tensor_data.size());
         std::cerr << "[INFO] Loaded output_norm.weight" << std::endl;
       }
     }
@@ -1380,7 +1507,8 @@ bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
     // 加载lm_head权重
     if (parser.getTensorData("output.weight", tensor_data)) {
       if (tensor_data.size() == weights_.lm_head_weight.size * sizeof(float)) {
-        std::memcpy(weights_.lm_head_weight.data.data(), tensor_data.data(), tensor_data.size());
+        std::memcpy(weights_.lm_head_weight.data.data(), tensor_data.data(),
+                    tensor_data.size());
         std::cerr << "[INFO] Loaded output.weight" << std::endl;
       }
     }
@@ -1388,50 +1516,62 @@ bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
     // 加载各层权重
     for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
       std::string layer_prefix = "blk." + std::to_string(i) + ".";
-      
+
       // 加载注意力权重
-      loadLayerWeight(parser, layer_prefix + "attn_q.weight", weights_.q_proj_weights[i]);
-      loadLayerWeight(parser, layer_prefix + "attn_k.weight", weights_.k_proj_weights[i]);
-      loadLayerWeight(parser, layer_prefix + "attn_v.weight", weights_.v_proj_weights[i]);
-      loadLayerWeight(parser, layer_prefix + "attn_output.weight", weights_.o_proj_weights[i]);
-      
+      loadLayerWeight(parser, layer_prefix + "attn_q.weight",
+                      weights_.q_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_k.weight",
+                      weights_.k_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_v.weight",
+                      weights_.v_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_output.weight",
+                      weights_.o_proj_weights[i]);
+
       // 加载FFN权重
-      loadLayerWeight(parser, layer_prefix + "ffn_gate.weight", weights_.ffn_weights[i * 3]);
-      loadLayerWeight(parser, layer_prefix + "ffn_up.weight", weights_.ffn_weights[i * 3 + 1]);
-      loadLayerWeight(parser, layer_prefix + "ffn_down.weight", weights_.ffn_weights[i * 3 + 2]);
-      
+      loadLayerWeight(parser, layer_prefix + "ffn_gate.weight",
+                      weights_.ffn_weights[i * 3]);
+      loadLayerWeight(parser, layer_prefix + "ffn_up.weight",
+                      weights_.ffn_weights[i * 3 + 1]);
+      loadLayerWeight(parser, layer_prefix + "ffn_down.weight",
+                      weights_.ffn_weights[i * 3 + 2]);
+
       // 加载层归一化权重
       if (i * 2 < weights_.layer_norm_weights.size()) {
-        loadLayerWeight(parser, layer_prefix + "attn_norm.weight", weights_.layer_norm_weights[i * 2]);
+        loadLayerWeight(parser, layer_prefix + "attn_norm.weight",
+                        weights_.layer_norm_weights[i * 2]);
       }
       if (i * 2 + 1 < weights_.layer_norm_weights.size()) {
-        loadLayerWeight(parser, layer_prefix + "ffn_norm.weight", weights_.layer_norm_weights[i * 2 + 1]);
+        loadLayerWeight(parser, layer_prefix + "ffn_norm.weight",
+                        weights_.layer_norm_weights[i * 2 + 1]);
       }
     }
 
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in loadWeightsFromGGUF: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Exception in loadWeightsFromGGUF: " << e.what()
+              << std::endl;
     return false;
   }
 }
 
-bool Qwen25VLModularEngine::loadLayerWeight(const GGUFParser &parser, 
-                                           const std::string &tensor_name,
-                                           algorithms::Tensor &target_tensor) {
+bool Qwen25VLModularEngine::loadLayerWeight(const GGUFParser &parser,
+                                            const std::string &tensor_name,
+                                            algorithms::Tensor &target_tensor) {
   std::vector<uint8_t> tensor_data;
   if (parser.getTensorData(tensor_name, tensor_data)) {
     if (tensor_data.size() == target_tensor.size * sizeof(float)) {
-      std::memcpy(target_tensor.data.data(), tensor_data.data(), tensor_data.size());
+      std::memcpy(target_tensor.data.data(), tensor_data.data(),
+                  tensor_data.size());
       std::cerr << "[DEBUG] Loaded " << tensor_name << std::endl;
       return true;
     } else {
-      std::cerr << "[WARNING] Size mismatch for " << tensor_name 
+      std::cerr << "[WARNING] Size mismatch for " << tensor_name
                 << ": expected " << target_tensor.size * sizeof(float)
                 << ", got " << tensor_data.size() << std::endl;
     }
   } else {
-    std::cerr << "[WARNING] Failed to load tensor: " << tensor_name << std::endl;
+    std::cerr << "[WARNING] Failed to load tensor: " << tensor_name
+              << std::endl;
   }
   return false;
 }
@@ -1520,16 +1660,20 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   std::cerr << "[DEBUG] Tensor A: shape=[";
   for (size_t i = 0; i < a.shape.size(); ++i) {
     std::cerr << a.shape[i];
-    if (i < a.shape.size() - 1) std::cerr << ", ";
+    if (i < a.shape.size() - 1)
+      std::cerr << ", ";
   }
-  std::cerr << "], size=" << a.size << ", data_size=" << a.data.size() << std::endl;
-  
+  std::cerr << "], size=" << a.size << ", data_size=" << a.data.size()
+            << std::endl;
+
   std::cerr << "[DEBUG] Tensor B: shape=[";
   for (size_t i = 0; i < b.shape.size(); ++i) {
     std::cerr << b.shape[i];
-    if (i < b.shape.size() - 1) std::cerr << ", ";
+    if (i < b.shape.size() - 1)
+      std::cerr << ", ";
   }
-  std::cerr << "], size=" << b.size << ", data_size=" << b.data.size() << std::endl;
+  std::cerr << "], size=" << b.size << ", data_size=" << b.data.size()
+            << std::endl;
 
   // 检查输入张量的维度
   if (a.shape.empty() || b.shape.empty()) {
@@ -1544,15 +1688,19 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   }
 
   if (a.data.size() != a.size || b.data.size() != b.size) {
-    std::cerr << "[ERROR] Tensor data size mismatch with declared size" << std::endl;
-    std::cerr << "[ERROR] A: data.size()=" << a.data.size() << ", size=" << a.size << std::endl;
-    std::cerr << "[ERROR] B: data.size()=" << b.data.size() << ", size=" << b.size << std::endl;
+    std::cerr << "[ERROR] Tensor data size mismatch with declared size"
+              << std::endl;
+    std::cerr << "[ERROR] A: data.size()=" << a.data.size()
+              << ", size=" << a.size << std::endl;
+    std::cerr << "[ERROR] B: data.size()=" << b.data.size()
+              << ", size=" << b.size << std::endl;
     throw std::invalid_argument("Tensor data size mismatch");
   }
 
   // 支持2D和3D张量的矩阵乘法
   if (a.shape.size() < 2 || b.shape.size() < 2) {
-    std::cerr << "[ERROR] Input tensors must have at least 2 dimensions" << std::endl;
+    std::cerr << "[ERROR] Input tensors must have at least 2 dimensions"
+              << std::endl;
     throw std::invalid_argument(
         "Input tensors must have at least 2 dimensions");
   }
@@ -1584,11 +1732,12 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   }
 
   // 检查矩阵乘法的维度兼容性
-  std::cerr << "[DEBUG] Matrix dimensions: A(" << a_rows << "x" << a_cols 
-            << "), B(" << b_rows << "x" << b_cols << "), batch_size=" << batch_size << std::endl;
-  
+  std::cerr << "[DEBUG] Matrix dimensions: A(" << a_rows << "x" << a_cols
+            << "), B(" << b_rows << "x" << b_cols
+            << "), batch_size=" << batch_size << std::endl;
+
   if (a_cols != b_rows) {
-    std::cerr << "[ERROR] Matrix dimensions incompatible: A_cols(" << a_cols 
+    std::cerr << "[ERROR] Matrix dimensions incompatible: A_cols(" << a_cols
               << ") != B_rows(" << b_rows << ")" << std::endl;
     throw std::invalid_argument(
         "Matrix dimensions are not compatible for multiplication");
@@ -1607,58 +1756,57 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   std::cerr << "[DEBUG] Output shape: [";
   for (size_t i = 0; i < output_shape.size(); ++i) {
     std::cerr << output_shape[i];
-    if (i < output_shape.size() - 1) std::cerr << ", ";
+    if (i < output_shape.size() - 1)
+      std::cerr << ", ";
   }
   std::cerr << "]" << std::endl;
 
   algorithms::Tensor result(output_shape);
-  std::cerr << "[DEBUG] Result tensor created: size=" << result.size 
+  std::cerr << "[DEBUG] Result tensor created: size=" << result.size
             << ", data_size=" << result.data.size() << std::endl;
 
   // 使用BLAS优化的矩阵乘法
-  std::cerr << "[DEBUG] Starting optimized BLAS matrix multiplication" << std::endl;
-  
+  std::cerr << "[DEBUG] Starting optimized BLAS matrix multiplication"
+            << std::endl;
+
   for (uint32_t batch = 0; batch < batch_size; ++batch) {
-    if (batch == 0) std::cerr << "[DEBUG] Processing batch " << batch << std::endl;
-    
+    if (batch == 0)
+      std::cerr << "[DEBUG] Processing batch " << batch << std::endl;
+
     // 计算当前批次的数据指针
-    const float* a_ptr;
-    const float* b_ptr;
-    float* c_ptr;
-    
+    const float *a_ptr;
+    const float *b_ptr;
+    float *c_ptr;
+
     if (a.shape.size() == 3) {
       a_ptr = a.data.data() + batch * a_rows * a_cols;
     } else {
       a_ptr = a.data.data();
     }
-    
+
     if (b.shape.size() == 3) {
       size_t b_batch = (b.shape[0] == 1) ? 0 : batch;
       b_ptr = b.data.data() + b_batch * b_rows * b_cols;
     } else {
       b_ptr = b.data.data();
     }
-    
+
     if (output_shape.size() == 3) {
       c_ptr = result.data.data() + batch * a_rows * b_cols;
     } else {
       c_ptr = result.data.data();
     }
-    
+
 #ifdef __APPLE__
     // 使用Apple Accelerate框架的BLAS
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                a_rows, b_cols, a_cols,
-                1.0f, a_ptr, a_cols,
-                b_ptr, b_cols,
-                0.0f, c_ptr, b_cols);
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, a_rows, b_cols,
+                a_cols, 1.0f, a_ptr, a_cols, b_ptr, b_cols, 0.0f, c_ptr,
+                b_cols);
 #elif defined(USE_OPENBLAS)
     // 使用OpenBLAS
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                a_rows, b_cols, a_cols,
-                1.0f, a_ptr, a_cols,
-                b_ptr, b_cols,
-                0.0f, c_ptr, b_cols);
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, a_rows, b_cols,
+                a_cols, 1.0f, a_ptr, a_cols, b_ptr, b_cols, 0.0f, c_ptr,
+                b_cols);
 #else
     // 回退到原始三重循环实现
     for (uint32_t i = 0; i < a_rows; ++i) {
@@ -1672,8 +1820,9 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
     }
 #endif
   }
-  
-  std::cerr << "[DEBUG] Optimized matrix multiplication completed successfully" << std::endl;
+
+  std::cerr << "[DEBUG] Optimized matrix multiplication completed successfully"
+            << std::endl;
 
   return result;
 }
@@ -1682,19 +1831,25 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
 bool Qwen25VLModularEngine::loadSpecialTokens(const GGUFParser &parser) {
   try {
     // 从GGUF元数据中获取BOS和EOS token ID
-    const auto *bos_metadata = parser.getMetadata("tokenizer.ggml.bos_token_id");
-    const auto *eos_metadata = parser.getMetadata("tokenizer.ggml.eos_token_id");
-    
+    const auto *bos_metadata =
+        parser.getMetadata("tokenizer.ggml.bos_token_id");
+    const auto *eos_metadata =
+        parser.getMetadata("tokenizer.ggml.eos_token_id");
+
     if (bos_metadata) {
-      special_tokens_.bos_token_id = static_cast<uint32_t>(bos_metadata->asInt32());
-      std::cerr << "[INFO] Loaded BOS token ID: " << special_tokens_.bos_token_id << std::endl;
+      special_tokens_.bos_token_id =
+          static_cast<uint32_t>(bos_metadata->asInt32());
+      std::cerr << "[INFO] Loaded BOS token ID: "
+                << special_tokens_.bos_token_id << std::endl;
     }
-    
+
     if (eos_metadata) {
-      special_tokens_.eos_token_id = static_cast<uint32_t>(eos_metadata->asInt32());
-      std::cerr << "[INFO] Loaded EOS token ID: " << special_tokens_.eos_token_id << std::endl;
+      special_tokens_.eos_token_id =
+          static_cast<uint32_t>(eos_metadata->asInt32());
+      std::cerr << "[INFO] Loaded EOS token ID: "
+                << special_tokens_.eos_token_id << std::endl;
     }
-    
+
     // 尝试从词汇表中查找Qwen特定的特殊token
     const auto *tokens_metadata = parser.getMetadata("tokenizer.ggml.tokens");
     if (tokens_metadata) {
@@ -1703,37 +1858,43 @@ bool Qwen25VLModularEngine::loadSpecialTokens(const GGUFParser &parser) {
         const std::string &token = token_strings[i];
         if (token == "<|endoftext|>") {
           special_tokens_.endoftext_id = static_cast<uint32_t>(i);
-          std::cerr << "[INFO] Found <|endoftext|> token ID: " << special_tokens_.endoftext_id << std::endl;
+          std::cerr << "[INFO] Found <|endoftext|> token ID: "
+                    << special_tokens_.endoftext_id << std::endl;
         } else if (token == "<|im_end|>") {
           special_tokens_.im_end_id = static_cast<uint32_t>(i);
-          std::cerr << "[INFO] Found <|im_end|> token ID: " << special_tokens_.im_end_id << std::endl;
+          std::cerr << "[INFO] Found <|im_end|> token ID: "
+                    << special_tokens_.im_end_id << std::endl;
         } else if (token == "<|im_start|>") {
           special_tokens_.im_start_id = static_cast<uint32_t>(i);
-          std::cerr << "[INFO] Found <|im_start|> token ID: " << special_tokens_.im_start_id << std::endl;
+          std::cerr << "[INFO] Found <|im_start|> token ID: "
+                    << special_tokens_.im_start_id << std::endl;
         }
       }
     }
-    
+
     // 如果没有找到特殊token，使用默认值
-    if (special_tokens_.endoftext_id == 0 && special_tokens_.eos_token_id != 0) {
+    if (special_tokens_.endoftext_id == 0 &&
+        special_tokens_.eos_token_id != 0) {
       special_tokens_.endoftext_id = special_tokens_.eos_token_id;
     }
-    
+
     special_tokens_.initialized = true;
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to load special tokens: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Failed to load special tokens: " << e.what()
+              << std::endl;
     return false;
   }
 }
 
 // 获取特殊token ID
-uint32_t Qwen25VLModularEngine::getSpecialTokenId(const std::string &token_name) const {
+uint32_t
+Qwen25VLModularEngine::getSpecialTokenId(const std::string &token_name) const {
   if (!special_tokens_.initialized) {
     std::cerr << "[WARNING] Special tokens not initialized" << std::endl;
     return 0;
   }
-  
+
   if (token_name == "endoftext" || token_name == "<|endoftext|>") {
     return special_tokens_.endoftext_id;
   } else if (token_name == "im_end" || token_name == "<|im_end|>") {
@@ -1745,7 +1906,7 @@ uint32_t Qwen25VLModularEngine::getSpecialTokenId(const std::string &token_name)
   } else if (token_name == "eos" || token_name == "eos_token") {
     return special_tokens_.eos_token_id;
   }
-  
+
   std::cerr << "[WARNING] Unknown special token: " << token_name << std::endl;
   return 0;
 }

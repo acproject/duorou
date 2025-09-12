@@ -285,6 +285,7 @@ public:
   virtual Tensor computeWithCache(const Tensor &query, const Tensor &key,
                                   const Tensor &value, Tensor &key_cache,
                                   Tensor &value_cache, uint32_t cache_position,
+                                  uint32_t head_idx,
                                   const Tensor *mask = nullptr,
                                   float scale = 1.0f) {
     // 默认实现：不使用缓存

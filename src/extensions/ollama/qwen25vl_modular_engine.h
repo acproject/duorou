@@ -23,31 +23,32 @@ class GGUFParser;
 
 // Qwen特定的token ID定义（动态从GGUF文件获取）
 struct QwenTokens {
-  uint32_t endoftext_id = 0;  // <|endoftext|> - 动态获取
-  uint32_t im_end_id = 0;     // <|im_end|> - 动态获取  
-  uint32_t im_start_id = 0;   // <|im_start|> - 动态获取
-  uint32_t bos_token_id = 0;  // BOS token - 动态获取
-  uint32_t eos_token_id = 0;  // EOS token - 动态获取
-  bool initialized = false;   // 是否已初始化
+  uint32_t endoftext_id = 0; // <|endoftext|> - 动态获取
+  uint32_t im_end_id = 0;    // <|im_end|> - 动态获取
+  uint32_t im_start_id = 0;  // <|im_start|> - 动态获取
+  uint32_t bos_token_id = 0; // BOS token - 动态获取
+  uint32_t eos_token_id = 0; // EOS token - 动态获取
+  bool initialized = false;  // 是否已初始化
 };
 
 // ModelConfig在base_algorithm.h中定义
 
 // Qwen2.5-VL模型配置
 struct Qwen25VLConfig {
-  uint32_t vocab_size = 152064;             // 词汇表大小
-  uint32_t hidden_size = 3584;              // 隐藏层维度
-  uint32_t intermediate_size = 18944;       // 前馈网络中间层维度
-  uint32_t num_hidden_layers = 28;          // Transformer层数
-  uint32_t num_attention_heads = 28;        // 注意力头数
-  uint32_t num_key_value_heads = 4;         // KV头数（GQA）
-  uint32_t max_position_embeddings = 131072; // 最大位置编码（与sliding_window保持一致）
-  uint32_t max_window_layers = 21;           // 滑动窗口层数
-  uint32_t sliding_window = 131072;          // 滑动窗口大小
-  float rope_theta = 1000000.0f;            // RoPE基础频率
-  float rms_norm_eps = 1e-6f;               // RMSNorm epsilon
-  std::string activation = "silu";          // 激活函数类型
-  bool use_sliding_window = true;           // 是否使用滑动窗口
+  uint32_t vocab_size = 152064;       // 词汇表大小
+  uint32_t hidden_size = 3584;        // 隐藏层维度
+  uint32_t intermediate_size = 18944; // 前馈网络中间层维度
+  uint32_t num_hidden_layers = 28;    // Transformer层数
+  uint32_t num_attention_heads = 28;  // 注意力头数
+  uint32_t num_key_value_heads = 4;   // KV头数（GQA）
+  uint32_t max_position_embeddings =
+      131072;                       // 最大位置编码（与sliding_window保持一致）
+  uint32_t max_window_layers = 21;  // 滑动窗口层数
+  uint32_t sliding_window = 131072; // 滑动窗口大小
+  float rope_theta = 1000000.0f;    // RoPE基础频率
+  float rms_norm_eps = 1e-6f;       // RMSNorm epsilon
+  std::string activation = "silu";  // 激活函数类型
+  bool use_sliding_window = true;   // 是否使用滑动窗口
 
   // 视觉相关配置
   uint32_t vision_hidden_size = 1280;       // 视觉编码器隐藏层维度
@@ -151,7 +152,7 @@ private:
   InferenceState state_;
   StreamingState streaming_state_;
   PerformanceStats perf_stats_;
-  QwenTokens special_tokens_;  // 特殊token ID
+  QwenTokens special_tokens_; // 特殊token ID
 
   // 算法组件
   std::unique_ptr<algorithms::MultiHeadAttention> attention_;
@@ -161,10 +162,10 @@ private:
 
   // 模型权重
   struct ModelWeights {
-    algorithms::Tensor token_embeddings;    // 词嵌入
+    algorithms::Tensor token_embeddings; // 词嵌入
     // 注意：Qwen2.5-VL使用RoPE，不需要position_embeddings
-    algorithms::Tensor norm_weight;         // 最终层归一化权重
-    algorithms::Tensor lm_head_weight;      // 语言模型头权重
+    algorithms::Tensor norm_weight;    // 最终层归一化权重
+    algorithms::Tensor lm_head_weight; // 语言模型头权重
 
     // Transformer层权重
     std::vector<algorithms::Tensor> attention_weights;  // 注意力权重
@@ -205,7 +206,7 @@ private:
   // 缓存管理
   void initializeKVCache();
   void updateKVCache(uint32_t layer_idx, const algorithms::Tensor &key,
-                     const algorithms::Tensor &value);
+                     const algorithms::Tensor &value, uint32_t head_idx);
 
   // 工具方法
   algorithms::Tensor createAttentionMask(uint32_t seq_length,
@@ -217,18 +218,19 @@ private:
   bool loadTransformerWeights(const std::string &model_path);
   bool loadVisionWeights(const std::string &model_path);
   algorithms::Tensor loadTensorFromFile(const std::string &file_path);
-  
+
   // 权重加载相关
   bool loadWeightsFromGGUF(const GGUFParser &parser);
   bool loadLayerWeight(const GGUFParser &parser, const std::string &tensor_name,
                        algorithms::Tensor &target_tensor);
   void initializeRandomWeights();
-  
+
   // 特殊token加载
   bool loadSpecialTokens(const GGUFParser &parser);
-  
+
   // 矩阵乘法函数
-  algorithms::Tensor performMatMul(const algorithms::Tensor &a, const algorithms::Tensor &b);
+  algorithms::Tensor performMatMul(const algorithms::Tensor &a,
+                                   const algorithms::Tensor &b);
 };
 
 } // namespace ollama
