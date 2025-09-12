@@ -1,4 +1,5 @@
 #include "qwen25vl_modular_engine.h"
+#include "gguf_parser.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -210,9 +211,10 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件 - 使用Qwen特定的EOS tokens
-      bool is_eos = (next_token == QwenTokens::ENDOFTEXT ||
-                     next_token == QwenTokens::IM_END);
+      // 检查结束条件 - 使用动态获取的EOS tokens
+      bool is_eos = (next_token == special_tokens_.eos_token_id ||
+                     next_token == special_tokens_.endoftext_id ||
+                     next_token == special_tokens_.im_end_id);
       std::cerr << "[DEBUG] EOS check result: " << (is_eos ? "TRUE" : "FALSE")
                 << std::endl;
       if (is_eos) {
@@ -350,9 +352,10 @@ void Qwen25VLModularEngine::generateTextStreaming(
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件 - 使用Qwen特定的EOS tokens
-      bool is_eos = (next_token == QwenTokens::ENDOFTEXT ||
-                     next_token == QwenTokens::IM_END);
+      // 检查结束条件 - 使用动态获取的EOS tokens
+      bool is_eos = (next_token == special_tokens_.eos_token_id ||
+                     next_token == special_tokens_.endoftext_id ||
+                     next_token == special_tokens_.im_end_id);
       bool is_final = is_eos || (step == max_new_tokens - 1) ||
                       streaming_state_.should_stop;
 
@@ -1106,9 +1109,9 @@ void Qwen25VLModularEngine::initializeKVCache() {
 
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
       // 修复：使用3维格式初始化KV缓存以匹配MultiHeadAttention的期望
-      // 格式：[batch_size, seq_length, hidden_dim]
-      std::vector<uint32_t> cache_shape = {1, optimal_cache_length,
-                                           config_.num_key_value_heads * kv_head_dim};
+      // 格式：[batch_size, num_kv_heads, seq_length, head_dim] - 正确的GQA布局
+      std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads, 
+                                           optimal_cache_length, kv_head_dim};
 
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
@@ -1204,8 +1207,14 @@ bool Qwen25VLModularEngine::validateConfig(const Qwen25VLConfig &config) {
 bool Qwen25VLModularEngine::loadTransformerWeights(
     const std::string &model_path) {
   try {
-    // 简化的权重加载实现
-    // 实际实现需要从文件加载权重
+    // 使用GGUF解析器加载权重
+    GGUFParser parser(true); // 启用详细日志
+    if (!parser.parseFile(model_path)) {
+      std::cerr << "[ERROR] Failed to parse GGUF file: " << model_path << std::endl;
+      return false;
+    }
+
+    std::cerr << "[INFO] Successfully parsed GGUF file" << std::endl;
 
     // 初始化权重张量
     std::vector<uint32_t> embedding_shape = {config_.vocab_size,
@@ -1287,68 +1296,17 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
       // Down权重：[intermediate_size, hidden_size]
       weights_.ffn_weights[i * 3 + 2] =
           algorithms::Tensor({config_.intermediate_size, config_.hidden_size});
-
-      // 初始化为小的随机值
-      for (int w = 0; w < 3; ++w) {
-        for (size_t j = 0; j < weights_.ffn_weights[i * 3 + w].data.size();
-             ++j) {
-          weights_.ffn_weights[i * 3 + w].data[j] = dist(gen);
-        }
-      }
     }
 
-    // 初始化Q/K/V/O投影权重
-    for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
-      for (size_t j = 0; j < weights_.q_proj_weights[i].data.size(); ++j) {
-        weights_.q_proj_weights[i].data[j] = dist(gen);
-      }
-      for (size_t j = 0; j < weights_.k_proj_weights[i].data.size(); ++j) {
-        weights_.k_proj_weights[i].data[j] = dist(gen);
-      }
-      for (size_t j = 0; j < weights_.v_proj_weights[i].data.size(); ++j) {
-        weights_.v_proj_weights[i].data[j] = dist(gen);
-      }
-      for (size_t j = 0; j < weights_.o_proj_weights[i].data.size(); ++j) {
-        weights_.o_proj_weights[i].data[j] = dist(gen);
-      }
+    // 从GGUF文件加载实际权重数据
+    bool weights_loaded = loadWeightsFromGGUF(parser);
+    if (!weights_loaded) {
+      std::cerr << "[WARNING] Failed to load weights from GGUF, using random initialization" << std::endl;
+      // 回退到随机初始化
+      initializeRandomWeights();
     }
 
-    // 初始化embedding权重
-    for (size_t i = 0; i < weights_.token_embeddings.data.size(); ++i) {
-      weights_.token_embeddings.data[i] = dist(gen);
-    }
-
-    // 初始化norm权重为1.0
-    for (size_t i = 0; i < weights_.norm_weight.data.size(); ++i) {
-      weights_.norm_weight.data[i] = 1.0f;
-    }
-
-    // 初始化layer norm权重为1.0
-    for (auto &layer_norm : weights_.layer_norm_weights) {
-      for (size_t i = 0; i < layer_norm.data.size(); ++i) {
-        layer_norm.data[i] = 1.0f;
-      }
-    }
-
-    // 初始化lm_head权重
-    for (size_t i = 0; i < weights_.lm_head_weight.data.size(); ++i) {
-      weights_.lm_head_weight.data[i] = dist(gen);
-    }
-
-    // 验证权重维度
-    if (weights_.token_embeddings.shape[0] != config_.vocab_size ||
-        weights_.token_embeddings.shape[1] != config_.hidden_size) {
-      std::cerr << "Token embedding dimension mismatch" << std::endl;
-      return false;
-    }
-
-    if (weights_.norm_weight.shape[0] != config_.hidden_size) {
-      std::cerr << "Norm weight dimension mismatch" << std::endl;
-      return false;
-    }
-
-    std::cerr << "[INFO] Transformer weights initialized successfully"
-              << std::endl;
+    std::cerr << "[INFO] Transformer weights loaded successfully" << std::endl;
     return true;
 
   } catch (const std::exception &e) {
@@ -1356,6 +1314,143 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
               << std::endl;
     return false;
   }
+}
+
+bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
+  try {
+    // 加载特殊token ID
+    if (!loadSpecialTokens(parser)) {
+      std::cerr << "Warning: Failed to load special tokens, using defaults" << std::endl;
+    }
+
+    // 加载token embeddings
+    std::vector<uint8_t> tensor_data;
+    if (parser.getTensorData("token_embd.weight", tensor_data)) {
+      if (tensor_data.size() == weights_.token_embeddings.size * sizeof(float)) {
+        std::memcpy(weights_.token_embeddings.data.data(), tensor_data.data(), tensor_data.size());
+        std::cerr << "[INFO] Loaded token_embd.weight" << std::endl;
+      }
+    }
+
+    // 加载最终层归一化权重
+    if (parser.getTensorData("output_norm.weight", tensor_data)) {
+      if (tensor_data.size() == weights_.norm_weight.size * sizeof(float)) {
+        std::memcpy(weights_.norm_weight.data.data(), tensor_data.data(), tensor_data.size());
+        std::cerr << "[INFO] Loaded output_norm.weight" << std::endl;
+      }
+    }
+
+    // 加载lm_head权重
+    if (parser.getTensorData("output.weight", tensor_data)) {
+      if (tensor_data.size() == weights_.lm_head_weight.size * sizeof(float)) {
+        std::memcpy(weights_.lm_head_weight.data.data(), tensor_data.data(), tensor_data.size());
+        std::cerr << "[INFO] Loaded output.weight" << std::endl;
+      }
+    }
+
+    // 加载各层权重
+    for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
+      std::string layer_prefix = "blk." + std::to_string(i) + ".";
+      
+      // 加载注意力权重
+      loadLayerWeight(parser, layer_prefix + "attn_q.weight", weights_.q_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_k.weight", weights_.k_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_v.weight", weights_.v_proj_weights[i]);
+      loadLayerWeight(parser, layer_prefix + "attn_output.weight", weights_.o_proj_weights[i]);
+      
+      // 加载FFN权重
+      loadLayerWeight(parser, layer_prefix + "ffn_gate.weight", weights_.ffn_weights[i * 3]);
+      loadLayerWeight(parser, layer_prefix + "ffn_up.weight", weights_.ffn_weights[i * 3 + 1]);
+      loadLayerWeight(parser, layer_prefix + "ffn_down.weight", weights_.ffn_weights[i * 3 + 2]);
+      
+      // 加载层归一化权重
+      if (i * 2 < weights_.layer_norm_weights.size()) {
+        loadLayerWeight(parser, layer_prefix + "attn_norm.weight", weights_.layer_norm_weights[i * 2]);
+      }
+      if (i * 2 + 1 < weights_.layer_norm_weights.size()) {
+        loadLayerWeight(parser, layer_prefix + "ffn_norm.weight", weights_.layer_norm_weights[i * 2 + 1]);
+      }
+    }
+
+    return true;
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Exception in loadWeightsFromGGUF: " << e.what() << std::endl;
+    return false;
+  }
+}
+
+bool Qwen25VLModularEngine::loadLayerWeight(const GGUFParser &parser, 
+                                           const std::string &tensor_name,
+                                           algorithms::Tensor &target_tensor) {
+  std::vector<uint8_t> tensor_data;
+  if (parser.getTensorData(tensor_name, tensor_data)) {
+    if (tensor_data.size() == target_tensor.size * sizeof(float)) {
+      std::memcpy(target_tensor.data.data(), tensor_data.data(), tensor_data.size());
+      std::cerr << "[DEBUG] Loaded " << tensor_name << std::endl;
+      return true;
+    } else {
+      std::cerr << "[WARNING] Size mismatch for " << tensor_name 
+                << ": expected " << target_tensor.size * sizeof(float)
+                << ", got " << tensor_data.size() << std::endl;
+    }
+  } else {
+    std::cerr << "[WARNING] Failed to load tensor: " << tensor_name << std::endl;
+  }
+  return false;
+}
+
+void Qwen25VLModularEngine::initializeRandomWeights() {
+  // 随机初始化权重作为回退方案
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::normal_distribution<float> dist(0.0f, 0.02f);
+
+  // 初始化Q/K/V/O投影权重
+  for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
+    for (size_t j = 0; j < weights_.q_proj_weights[i].data.size(); ++j) {
+      weights_.q_proj_weights[i].data[j] = dist(gen);
+    }
+    for (size_t j = 0; j < weights_.k_proj_weights[i].data.size(); ++j) {
+      weights_.k_proj_weights[i].data[j] = dist(gen);
+    }
+    for (size_t j = 0; j < weights_.v_proj_weights[i].data.size(); ++j) {
+      weights_.v_proj_weights[i].data[j] = dist(gen);
+    }
+    for (size_t j = 0; j < weights_.o_proj_weights[i].data.size(); ++j) {
+      weights_.o_proj_weights[i].data[j] = dist(gen);
+    }
+  }
+
+  // 初始化FFN权重
+  for (size_t i = 0; i < weights_.ffn_weights.size(); ++i) {
+    for (size_t j = 0; j < weights_.ffn_weights[i].data.size(); ++j) {
+      weights_.ffn_weights[i].data[j] = dist(gen);
+    }
+  }
+
+  // 初始化embedding权重
+  for (size_t i = 0; i < weights_.token_embeddings.data.size(); ++i) {
+    weights_.token_embeddings.data[i] = dist(gen);
+  }
+
+  // 初始化norm权重为1.0
+  for (size_t i = 0; i < weights_.norm_weight.data.size(); ++i) {
+    weights_.norm_weight.data[i] = 1.0f;
+  }
+
+  // 初始化layer norm权重为1.0
+  for (auto &layer_norm : weights_.layer_norm_weights) {
+    for (size_t i = 0; i < layer_norm.data.size(); ++i) {
+      layer_norm.data[i] = 1.0f;
+    }
+  }
+
+  // 初始化lm_head权重
+  for (size_t i = 0; i < weights_.lm_head_weight.data.size(); ++i) {
+    weights_.lm_head_weight.data[i] = dist(gen);
+  }
+
+  std::cerr << "[INFO] Random weights initialized as fallback" << std::endl;
 }
 
 bool Qwen25VLModularEngine::loadVisionWeights(const std::string &model_path) {
@@ -1544,6 +1639,78 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
   std::cerr << "[DEBUG] Optimized matrix multiplication completed successfully" << std::endl;
 
   return result;
+}
+
+// 加载特殊token ID
+bool Qwen25VLModularEngine::loadSpecialTokens(const GGUFParser &parser) {
+  try {
+    // 从GGUF元数据中获取BOS和EOS token ID
+    const auto *bos_metadata = parser.getMetadata("tokenizer.ggml.bos_token_id");
+    const auto *eos_metadata = parser.getMetadata("tokenizer.ggml.eos_token_id");
+    
+    if (bos_metadata) {
+      special_tokens_.bos_token_id = static_cast<uint32_t>(bos_metadata->asInt32());
+      std::cerr << "[INFO] Loaded BOS token ID: " << special_tokens_.bos_token_id << std::endl;
+    }
+    
+    if (eos_metadata) {
+      special_tokens_.eos_token_id = static_cast<uint32_t>(eos_metadata->asInt32());
+      std::cerr << "[INFO] Loaded EOS token ID: " << special_tokens_.eos_token_id << std::endl;
+    }
+    
+    // 尝试从词汇表中查找Qwen特定的特殊token
+    const auto *tokens_metadata = parser.getMetadata("tokenizer.ggml.tokens");
+    if (tokens_metadata) {
+      auto token_strings = tokens_metadata->asStringArray();
+      for (size_t i = 0; i < token_strings.size(); ++i) {
+        const std::string &token = token_strings[i];
+        if (token == "<|endoftext|>") {
+          special_tokens_.endoftext_id = static_cast<uint32_t>(i);
+          std::cerr << "[INFO] Found <|endoftext|> token ID: " << special_tokens_.endoftext_id << std::endl;
+        } else if (token == "<|im_end|>") {
+          special_tokens_.im_end_id = static_cast<uint32_t>(i);
+          std::cerr << "[INFO] Found <|im_end|> token ID: " << special_tokens_.im_end_id << std::endl;
+        } else if (token == "<|im_start|>") {
+          special_tokens_.im_start_id = static_cast<uint32_t>(i);
+          std::cerr << "[INFO] Found <|im_start|> token ID: " << special_tokens_.im_start_id << std::endl;
+        }
+      }
+    }
+    
+    // 如果没有找到特殊token，使用默认值
+    if (special_tokens_.endoftext_id == 0 && special_tokens_.eos_token_id != 0) {
+      special_tokens_.endoftext_id = special_tokens_.eos_token_id;
+    }
+    
+    special_tokens_.initialized = true;
+    return true;
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Failed to load special tokens: " << e.what() << std::endl;
+    return false;
+  }
+}
+
+// 获取特殊token ID
+uint32_t Qwen25VLModularEngine::getSpecialTokenId(const std::string &token_name) const {
+  if (!special_tokens_.initialized) {
+    std::cerr << "[WARNING] Special tokens not initialized" << std::endl;
+    return 0;
+  }
+  
+  if (token_name == "endoftext" || token_name == "<|endoftext|>") {
+    return special_tokens_.endoftext_id;
+  } else if (token_name == "im_end" || token_name == "<|im_end|>") {
+    return special_tokens_.im_end_id;
+  } else if (token_name == "im_start" || token_name == "<|im_start|>") {
+    return special_tokens_.im_start_id;
+  } else if (token_name == "bos" || token_name == "bos_token") {
+    return special_tokens_.bos_token_id;
+  } else if (token_name == "eos" || token_name == "eos_token") {
+    return special_tokens_.eos_token_id;
+  }
+  
+  std::cerr << "[WARNING] Unknown special token: " << token_name << std::endl;
+  return 0;
 }
 
 } // namespace ollama

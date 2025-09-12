@@ -40,11 +40,15 @@ namespace algorithms {
 // 基础矩阵运算类
 class MatrixOperations : public IMatrixAlgorithm {
 public:
-  MatrixOperations() = default;
+  MatrixOperations() : memory_pool_(nullptr) {}
   virtual ~MatrixOperations() = default;
 
   bool initialize(const ModelConfig& config, const AlgorithmContext& context) override {
     context_ = context;
+    // 获取内存池引用
+    if (context.memory_pool) {
+      memory_pool_ = context.memory_pool;
+    }
     return true;
   }
 
@@ -111,6 +115,7 @@ public:
 
 protected:
   AlgorithmContext context_;
+  MemoryPool* memory_pool_; // 内存池指针
 
   void multiplyStandard(const float* a, const float* b, float* c,
                        size_t m, size_t n, size_t k) {
@@ -308,11 +313,28 @@ private:
     const size_t rows_per_thread = std::max(size_t(1), m / num_threads_);
     std::vector<std::future<void>> futures;
     
+    // 为每个线程预分配临时缓冲区（如果使用内存池）
+    std::vector<std::vector<float>*> temp_buffers;
+    if (memory_pool_) {
+      temp_buffers.reserve(num_threads_);
+      for (unsigned int t = 0; t < num_threads_; ++t) {
+        size_t start_row = t * rows_per_thread;
+        size_t end_row = (t == num_threads_ - 1) ? m : std::min(m, (t + 1) * rows_per_thread);
+        if (start_row < end_row) {
+          size_t temp_size = (end_row - start_row) * k; // 临时缓冲区大小
+          temp_buffers.push_back(memory_pool_->getBuffer(temp_size));
+        }
+      }
+    }
+    
+    size_t buffer_idx = 0;
     for (unsigned int t = 0; t < num_threads_; ++t) {
       size_t start_row = t * rows_per_thread;
       size_t end_row = (t == num_threads_ - 1) ? m : std::min(m, (t + 1) * rows_per_thread);
       
       if (start_row >= end_row) break;
+      
+      std::vector<float>* temp_buffer = memory_pool_ ? temp_buffers[buffer_idx++] : nullptr;
       
       futures.emplace_back(std::async(std::launch::async, [=]() {
         if (canUseSIMD(end_row - start_row, n, k)) {
@@ -328,6 +350,19 @@ private:
     // 等待所有线程完成
     for (auto& future : futures) {
       future.wait();
+    }
+    
+    // 归还临时缓冲区到内存池
+    if (memory_pool_) {
+      buffer_idx = 0;
+      for (unsigned int t = 0; t < num_threads_; ++t) {
+        size_t start_row = t * rows_per_thread;
+        size_t end_row = (t == num_threads_ - 1) ? m : std::min(m, (t + 1) * rows_per_thread);
+        if (start_row < end_row) {
+          size_t temp_size = (end_row - start_row) * k;
+          memory_pool_->returnBuffer(temp_buffers[buffer_idx++], temp_size);
+        }
+      }
     }
   }
 };

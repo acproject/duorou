@@ -113,7 +113,7 @@ private:
   uint32_t rope_dim_ = 128;
   float rope_base_ = 10000.0f;
   float rope_scale_ = 1.0f;
-  uint32_t max_position_embeddings_ = 32768;
+  uint32_t max_position_embeddings_ = 131072; // 与Qwen2.5-VL配置保持一致
   
   std::vector<float> inv_freq_;
   std::vector<float> cos_cache_;

@@ -94,7 +94,7 @@ struct ModelConfig {
   uint32_t num_attention_heads = 28;
   uint32_t num_key_value_heads = 4;
   uint32_t intermediate_size = 18944;
-  uint32_t max_position_embeddings = 32768;
+  uint32_t max_position_embeddings = 131072; // 与Qwen2.5-VL配置保持一致
   float rope_theta = 1000000.0f;
   float layer_norm_eps = 1e-6f;
   float rms_norm_eps = 1e-6f;
@@ -216,6 +216,7 @@ struct AlgorithmContext {
   bool use_simd = true;
   bool use_blas = false;
   std::string device = "cpu";
+  MemoryPool* memory_pool = nullptr; // 内存池指针
 
   // 性能统计
   mutable double total_time = 0.0;

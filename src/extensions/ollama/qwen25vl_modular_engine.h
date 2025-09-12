@@ -18,11 +18,17 @@ namespace duorou {
 namespace extensions {
 namespace ollama {
 
-// Qwen特定的token ID定义
+// 前向声明
+class GGUFParser;
+
+// Qwen特定的token ID定义（动态从GGUF文件获取）
 struct QwenTokens {
-  static constexpr uint32_t ENDOFTEXT = 151643; // <|endoftext|>
-  static constexpr uint32_t IM_END = 151645;    // <|im_end|>
-  static constexpr uint32_t IM_START = 151644;  // <|im_start|>
+  uint32_t endoftext_id = 0;  // <|endoftext|> - 动态获取
+  uint32_t im_end_id = 0;     // <|im_end|> - 动态获取  
+  uint32_t im_start_id = 0;   // <|im_start|> - 动态获取
+  uint32_t bos_token_id = 0;  // BOS token - 动态获取
+  uint32_t eos_token_id = 0;  // EOS token - 动态获取
+  bool initialized = false;   // 是否已初始化
 };
 
 // ModelConfig在base_algorithm.h中定义
@@ -35,9 +41,9 @@ struct Qwen25VLConfig {
   uint32_t num_hidden_layers = 28;          // Transformer层数
   uint32_t num_attention_heads = 28;        // 注意力头数
   uint32_t num_key_value_heads = 4;         // KV头数（GQA）
-  uint32_t max_position_embeddings = 32768; // 最大位置编码
-  uint32_t max_window_layers = 21;          // 滑动窗口层数
-  uint32_t sliding_window = 131072;         // 滑动窗口大小
+  uint32_t max_position_embeddings = 131072; // 最大位置编码（与sliding_window保持一致）
+  uint32_t max_window_layers = 21;           // 滑动窗口层数
+  uint32_t sliding_window = 131072;          // 滑动窗口大小
   float rope_theta = 1000000.0f;            // RoPE基础频率
   float rms_norm_eps = 1e-6f;               // RMSNorm epsilon
   std::string activation = "silu";          // 激活函数类型
@@ -124,6 +130,9 @@ public:
   bool isInitialized() const { return initialized_; }
   const Qwen25VLConfig &getConfig() const { return config_; }
 
+  // 特殊token访问（用于测试和调试）
+  uint32_t getSpecialTokenId(const std::string &token_name) const;
+
   // 性能统计
   struct PerformanceStats {
     double total_inference_time = 0.0; // 总推理时间(ms)
@@ -136,12 +145,13 @@ public:
   void resetPerformanceStats();
 
 private:
-  // 配置和状态
+  // 核心组件
   Qwen25VLConfig config_;
   bool initialized_ = false;
   InferenceState state_;
   StreamingState streaming_state_;
   PerformanceStats perf_stats_;
+  QwenTokens special_tokens_;  // 特殊token ID
 
   // 算法组件
   std::unique_ptr<algorithms::MultiHeadAttention> attention_;
@@ -152,7 +162,7 @@ private:
   // 模型权重
   struct ModelWeights {
     algorithms::Tensor token_embeddings;    // 词嵌入
-    algorithms::Tensor position_embeddings; // 位置嵌入
+    // 注意：Qwen2.5-VL使用RoPE，不需要position_embeddings
     algorithms::Tensor norm_weight;         // 最终层归一化权重
     algorithms::Tensor lm_head_weight;      // 语言模型头权重
 
@@ -207,6 +217,15 @@ private:
   bool loadTransformerWeights(const std::string &model_path);
   bool loadVisionWeights(const std::string &model_path);
   algorithms::Tensor loadTensorFromFile(const std::string &file_path);
+  
+  // 权重加载相关
+  bool loadWeightsFromGGUF(const GGUFParser &parser);
+  bool loadLayerWeight(const GGUFParser &parser, const std::string &tensor_name,
+                       algorithms::Tensor &target_tensor);
+  void initializeRandomWeights();
+  
+  // 特殊token加载
+  bool loadSpecialTokens(const GGUFParser &parser);
   
   // 矩阵乘法函数
   algorithms::Tensor performMatMul(const algorithms::Tensor &a, const algorithms::Tensor &b);

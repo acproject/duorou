@@ -171,14 +171,12 @@ public:
 
     // 分割为多个头
     auto query_heads = splitToHeads(query_3d, num_heads_, head_dim_);
-    // 对于K和V，使用实际的维度而不是预期的维度
-    uint32_t actual_kv_dim = key_3d.shape[2] / num_kv_heads_;
-    auto key_heads = splitToHeads(key_3d, num_kv_heads_, actual_kv_dim);
-    auto value_heads = splitToHeads(value_3d, num_kv_heads_, actual_kv_dim);
+    // 对于K和V，使用正确的kv_head_dim_（在GQA中应该与head_dim_相同）
+    auto key_heads = splitToHeads(key_3d, num_kv_heads_, kv_head_dim_);
+    auto value_heads = splitToHeads(value_3d, num_kv_heads_, kv_head_dim_);
 
     // 对每个头执行注意力计算
-    std::vector<Tensor> head_outputs;
-    head_outputs.reserve(num_heads_);
+    std::vector<Tensor> head_outputs(num_heads_);
 
     std::cerr << "[DEBUG] MultiHeadAttention: Processing " << num_heads_ << " attention heads" << std::endl;
     
@@ -205,16 +203,10 @@ public:
       // 使用分组查询注意力：多个query头共享同一个key-value头
       uint32_t kv_head_idx = i / group_size_;
 
-      Tensor head_output =
-          attention_heads_[i]->compute(query_heads[i], key_heads[kv_head_idx],
-                                       value_heads[kv_head_idx], mask, scale);
+      // 直接赋值到预分配的位置，避免并发push_back问题
+      head_outputs[i] = attention_heads_[i]->compute(query_heads[i], key_heads[kv_head_idx],
+                                                     value_heads[kv_head_idx], mask, scale);
 
-#ifdef _OPENMP
-      #pragma omp critical
-#endif
-      {
-        head_outputs.push_back(std::move(head_output));
-      }
 #ifdef _OPENMP
       std::cerr << "[DEBUG] Thread " << thread_id << " completed attention head " << i << std::endl;
 #else
@@ -300,13 +292,9 @@ public:
     auto key_heads = splitToHeads(key_3d, num_kv_heads_, actual_kv_dim);
     auto value_heads = splitToHeads(value_3d, num_kv_heads_, actual_kv_dim);
 
-    // 分割缓存（现在KV缓存已经是3维格式）
-    // KV缓存使用正确的kv_head_dim_而不是actual_kv_dim
-    uint32_t cache_kv_dim = key_cache.shape[key_cache.shape.size() - 1] / num_kv_heads_;
-    auto key_cache_heads =
-        splitToHeads(key_cache, num_kv_heads_, cache_kv_dim);
-    auto value_cache_heads =
-        splitToHeads(value_cache, num_kv_heads_, cache_kv_dim);
+    // 分割4维KV缓存 [B, kv_heads, T, head_dim]
+    auto key_cache_heads = splitKVCacheToHeads(key_cache);
+    auto value_cache_heads = splitKVCacheToHeads(value_cache);
 
     // 对每个头执行注意力计算
     std::vector<Tensor> head_outputs;
@@ -364,6 +352,42 @@ private:
   std::vector<std::unique_ptr<FastAttention>> kv_attention_heads_;
   AlgorithmContext context_;
 
+  // 专门处理4维KV缓存的分割方法 [B, kv_heads, T, head_dim] -> vector<Tensor>
+  std::vector<Tensor> splitKVCacheToHeads(const Tensor &kv_cache) {
+    if (kv_cache.shape.size() != 4) {
+      throw std::invalid_argument("KV cache must be 4D tensor [B, kv_heads, T, head_dim]");
+    }
+    
+    uint32_t batch_size = kv_cache.shape[0];
+    uint32_t num_kv_heads = kv_cache.shape[1];
+    uint32_t seq_len = kv_cache.shape[2];
+    uint32_t head_dim = kv_cache.shape[3];
+    
+    std::vector<Tensor> heads;
+    heads.reserve(num_kv_heads);
+    
+    for (uint32_t h = 0; h < num_kv_heads; ++h) {
+      Tensor head_tensor({batch_size, seq_len, head_dim});
+      
+      // 复制对应头的数据
+      for (uint32_t b = 0; b < batch_size; ++b) {
+        for (uint32_t s = 0; s < seq_len; ++s) {
+          for (uint32_t d = 0; d < head_dim; ++d) {
+            uint32_t src_idx = b * (num_kv_heads * seq_len * head_dim) + 
+                              h * (seq_len * head_dim) + 
+                              s * head_dim + d;
+            uint32_t dst_idx = b * (seq_len * head_dim) + s * head_dim + d;
+            head_tensor.data[dst_idx] = kv_cache.data[src_idx];
+          }
+        }
+      }
+      
+      heads.push_back(std::move(head_tensor));
+    }
+    
+    return heads;
+  }
+
   std::vector<Tensor> splitToHeads(const Tensor &input, uint32_t num_heads,
                                    uint32_t head_dim) {
     if (input.data.empty() || input.shape.empty()) {
@@ -413,17 +437,21 @@ private:
     heads.reserve(num_heads);
 
     for (uint32_t i = 0; i < num_heads; ++i) {
-      Tensor head_tensor({batch_size, seq_len, head_dim});
+      // 使用内存池优化的张量构造
+      Tensor head_tensor({batch_size, seq_len, head_dim}, true); // 启用内存池
 
-      // 复制对应头的数据
+      // 优化的数据复制：减少嵌套循环开销
+      const size_t head_size = batch_size * seq_len * head_dim;
+      const size_t head_offset = i * head_dim;
+      
       for (uint32_t b = 0; b < batch_size; ++b) {
         for (uint32_t s = 0; s < seq_len; ++s) {
-          for (uint32_t d = 0; d < head_dim; ++d) {
-            uint32_t src_idx =
-                b * seq_len * total_dim + s * total_dim + i * head_dim + d;
-            uint32_t dst_idx = b * seq_len * head_dim + s * head_dim + d;
-            head_tensor.data[dst_idx] = input.data[src_idx];
-          }
+          const size_t src_base = b * seq_len * total_dim + s * total_dim + head_offset;
+          const size_t dst_base = b * seq_len * head_dim + s * head_dim;
+          
+          // 批量复制整个头的数据
+          std::memcpy(&head_tensor.data[dst_base], &input.data[src_base], 
+                     head_dim * sizeof(float));
         }
       }
 
@@ -442,19 +470,21 @@ private:
     uint32_t head_dim = head_outputs[0].shape[2];
     uint32_t total_dim = num_heads_ * head_dim;
 
-    Tensor result({batch_size, seq_len, total_dim});
+    // 使用内存池优化的张量构造
+    Tensor result({batch_size, seq_len, total_dim}, true); // 启用内存池
 
     for (uint32_t i = 0; i < num_heads_; ++i) {
       const Tensor &head_output = head_outputs[i];
+      const size_t head_offset = i * head_dim;
 
       for (uint32_t b = 0; b < batch_size; ++b) {
         for (uint32_t s = 0; s < seq_len; ++s) {
-          for (uint32_t d = 0; d < head_dim; ++d) {
-            uint32_t src_idx = b * seq_len * head_dim + s * head_dim + d;
-            uint32_t dst_idx =
-                b * seq_len * total_dim + s * total_dim + i * head_dim + d;
-            result.data[dst_idx] = head_output.data[src_idx];
-          }
+          const size_t src_base = b * seq_len * head_dim + s * head_dim;
+          const size_t dst_base = b * seq_len * total_dim + s * total_dim + head_offset;
+          
+          // 批量复制整个头的数据
+          std::memcpy(&result.data[dst_base], &head_output.data[src_base],
+                     head_dim * sizeof(float));
         }
       }
     }

@@ -160,38 +160,37 @@ public:
       throw std::runtime_error("Insufficient data size for cache update");
     }
     
-    // 确保缓存有足够的空间
-    uint32_t required_cache_size = (cache_position + 1) * head_dim;
-    if (key_cache.data.size() < required_cache_size) {
-      key_cache.data.resize(required_cache_size);
-    }
-    if (value_cache.data.size() < required_cache_size) {
-      value_cache.data.resize(required_cache_size);
+    // 假设缓存布局为[B, kv_heads, T, head_dim]，当前为单头处理
+    uint32_t batch_size = key_cache.shape[0];
+    uint32_t num_kv_heads = key_cache.shape[1];
+    uint32_t max_seq_len = key_cache.shape[2];
+    uint32_t cache_head_dim = key_cache.shape[3];
+    
+    // 验证维度匹配
+    if (head_dim != cache_head_dim) {
+      throw std::runtime_error("Head dimension mismatch: key=" + std::to_string(head_dim) + 
+                              ", cache=" + std::to_string(cache_head_dim));
     }
     
-    // 优化：检查是否已存在相同的key/value（避免重复计算）
-    if (cache_position > 0 && isCacheHit(key, value, key_cache, value_cache, cache_position, head_dim)) {
-      std::cerr << "[DEBUG] KV Cache hit detected at position " << cache_position 
-                << ", skipping redundant update" << std::endl;
-      return;
+    if (cache_position >= max_seq_len) {
+      throw std::runtime_error("Cache position " + std::to_string(cache_position) + 
+                              " exceeds max sequence length " + std::to_string(max_seq_len));
     }
+    
+    // 对于单头更新，假设head_idx=0（在多头情况下需要传入head_idx参数）
+    uint32_t head_idx = 0;
+    
+    // 计算在4D缓存中的偏移量：[batch_idx, head_idx, seq_idx, dim_idx]
+    uint32_t cache_offset = head_idx * max_seq_len * head_dim + cache_position * head_dim;
     
     // 复制新的key和value到缓存
     for (uint32_t i = 0; i < head_dim; ++i) {
-      key_cache.data[cache_position * head_dim + i] = key.data[i];
-      value_cache.data[cache_position * head_dim + i] = value.data[i];
-    }
-    
-    // 更新缓存的形状
-    if (key_cache.shape.size() >= 2) {
-      key_cache.shape[key_cache.shape.size() - 2] = cache_position + 1;
-    }
-    if (value_cache.shape.size() >= 2) {
-      value_cache.shape[value_cache.shape.size() - 2] = cache_position + 1;
+      key_cache.data[cache_offset + i] = key.data[i];
+      value_cache.data[cache_offset + i] = value.data[i];
     }
     
     std::cerr << "[DEBUG] KV Cache updated at position " << cache_position 
-              << ", cache size: " << (cache_position + 1) << std::endl;
+              << ", head " << head_idx << std::endl;
   }
 
 private:
