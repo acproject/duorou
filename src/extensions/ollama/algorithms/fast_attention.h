@@ -8,10 +8,10 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <stdint.h>
 #include <string>
 #include <thread>
 #include <vector>
-#include <stdint.h>
 
 namespace duorou {
 namespace extensions {
@@ -589,7 +589,8 @@ private:
       }
     }
 
-    // Incremental attention with cache completed successfully (debug output removed for performance)
+    // Incremental attention with cache completed successfully (debug output
+    // removed for performance)
   }
 
   void computeIncrementalAttention(const Tensor &query, const Tensor &key,

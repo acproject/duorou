@@ -290,6 +290,110 @@ struct ggml_tensor* GGMLAttention::computeAttentionOutput(struct ggml_tensor* sc
     return output;
 }
 
+// Free function: high-performance linear projection using GGML
+Tensor computeLinear(const Tensor& a, const Tensor& w) {
+    // Validate inputs
+    if (a.shape.size() < 2 || w.shape.size() != 2) {
+        throw std::invalid_argument("computeLinear: invalid input shapes");
+    }
+
+    // Derive M, K from a; K, N from w
+    uint32_t M = 0, K_a = 0;
+    if (a.shape.size() == 3) {
+        if (a.shape[0] != 1) {
+            throw std::invalid_argument("computeLinear: only batch=1 supported for 3D input");
+        }
+        M = a.shape[1];
+        K_a = a.shape[2];
+    } else {
+        M = a.shape[0];
+        K_a = a.shape[1];
+    }
+
+    uint32_t K_w = w.shape[0];
+    uint32_t N = w.shape[1];
+
+    if (K_a != K_w) {
+        std::cerr << "[ERROR] computeLinear: K mismatch a.K=" << K_a << " vs w.K=" << K_w << std::endl;
+        throw std::invalid_argument("computeLinear: inner dim mismatch");
+    }
+
+    // Create ggml context (short-lived)
+    size_t mem_size = 64 * 1024 * 1024; // 64MB
+    struct ggml_init_params params = {
+        /*.mem_size   =*/ mem_size,
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ false,
+    };
+    struct ggml_context* ctx = ggml_init(params);
+    if (!ctx) {
+        throw std::runtime_error("computeLinear: ggml_init failed");
+    }
+
+    // Build ggml tensors:
+    // A: [K, M]
+    struct ggml_tensor* A = nullptr;
+    if (a.shape.size() == 3) {
+        A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K_a, M);
+        // copy transpose from [M,K] row-major -> [K,M] column-major
+        float* dst = (float*)A->data;
+        const float* src = a.data.data();
+        for (uint32_t i = 0; i < M; ++i) {
+            for (uint32_t j = 0; j < K_a; ++j) {
+                dst[j * M + i] = src[i * K_a + j];
+            }
+        }
+    } else { // 2D
+        A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K_a, M);
+        float* dst = (float*)A->data;
+        const float* src = a.data.data();
+        for (uint32_t i = 0; i < M; ++i) {
+            for (uint32_t j = 0; j < K_a; ++j) {
+                dst[j * M + i] = src[i * K_a + j];
+            }
+        }
+    }
+    ggml_set_name(A, "A_KM");
+
+    // W: [K, N] -> ggml [K, N]
+    struct ggml_tensor* W = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K_w, N);
+    {
+        float* dst = (float*)W->data;
+        const float* src = w.data.data();
+        for (uint32_t k = 0; k < K_w; ++k) {
+            for (uint32_t n = 0; n < N; ++n) {
+                dst[k * N + n] = src[k * N + n];
+            }
+        }
+    }
+    ggml_set_name(W, "W_KN");
+
+    // C = A x W ; ggml_mul_mat expects A.ne[0] == W.ne[0] == K
+    struct ggml_tensor* C = ggml_mul_mat(ctx, A, W);
+    ggml_set_name(C, "C_MN");
+
+    // Graph and compute
+    struct ggml_cgraph* gf = ggml_new_graph(ctx);
+    ggml_build_forward_expand(gf, C);
+    ggml_graph_compute_with_ctx(ctx, gf, 4);
+
+    // Copy back to Tensor (row-major [M,N], or [1,M,N] if 3D input)
+    Tensor out(a.shape.size() == 3 ? std::vector<uint32_t>{1, M, N}
+                                   : std::vector<uint32_t>{M, N});
+    out.data.resize((size_t)M * N);
+
+    // ggml C is [M,N] with ne0=N, ne1=M; data layout column-major
+    const float* csrc = (const float*)C->data;
+    for (uint32_t i = 0; i < M; ++i) {
+        for (uint32_t j = 0; j < N; ++j) {
+            out.data[i * N + j] = csrc[j * M + i];
+        }
+    }
+
+    ggml_free(ctx);
+    return out;
+}
+
 } // namespace algorithms
 } // namespace ollama
 } // namespace extensions

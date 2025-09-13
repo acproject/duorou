@@ -8,11 +8,11 @@
 #include <iostream>
 #include <memory>
 #include <ostream>
+#include <stddef.h>
 #include <stdexcept>
+#include <stdint.h>
 #include <string>
 #include <vector>
-#include <stdint.h>
-#include <stddef.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif

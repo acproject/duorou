@@ -1,5 +1,6 @@
 #include "qwen25vl_modular_engine.h"
 #include "gguf_parser.h"
+#include "algorithms/ggml_attention.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -506,13 +507,13 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     if (state_.is_prefill) {
       // Prefill阶段：计算完整的Q/K/V投影
       std::cout << "[DEBUG] Prefill stage: computing full Q/K/V projections" << std::endl;
-      q_proj = performMatMul(rope_input, weights_.q_proj_weights[layer_idx]);
-      k_proj = performMatMul(rope_input, weights_.k_proj_weights[layer_idx]);
-      v_proj = performMatMul(rope_input, weights_.v_proj_weights[layer_idx]);
+      q_proj = algorithms::computeLinear(rope_input, weights_.q_proj_weights[layer_idx]);
+      k_proj = algorithms::computeLinear(rope_input, weights_.k_proj_weights[layer_idx]);
+      v_proj = algorithms::computeLinear(rope_input, weights_.v_proj_weights[layer_idx]);
     } else {
       // Decode阶段：只计算新token的Q投影
       std::cout << "[DEBUG] Decode stage: computing only Q projection for new token" << std::endl;
-      q_proj = performMatMul(rope_input, weights_.q_proj_weights[layer_idx]);
+      q_proj = algorithms::computeLinear(rope_input, weights_.q_proj_weights[layer_idx]);
       // K/V投影将在注意力计算中按需计算
     }
 
@@ -535,8 +536,8 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
       std::cerr << "[DEBUG] Prefill attention computed for layer " << layer_idx << std::endl;
     } else {
       // Decode阶段：只计算新token的K/V投影用于更新cache
-      algorithms::Tensor new_k_proj = performMatMul(rope_input, weights_.k_proj_weights[layer_idx]);
-      algorithms::Tensor new_v_proj = performMatMul(rope_input, weights_.v_proj_weights[layer_idx]);
+      algorithms::Tensor new_k_proj = algorithms::computeLinear(rope_input, weights_.k_proj_weights[layer_idx]);
+      algorithms::Tensor new_v_proj = algorithms::computeLinear(rope_input, weights_.v_proj_weights[layer_idx]);
       
       // 使用KV cache进行增量计算
       attention_output = attention_->computeWithCache(
@@ -549,7 +550,7 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
 
     // 输出投影
     attention_output =
-        performMatMul(attention_output, weights_.o_proj_weights[layer_idx]);
+        algorithms::computeLinear(attention_output, weights_.o_proj_weights[layer_idx]);
 
     // 2. Add & LayerNorm (Post-LN)
     algorithms::Tensor residual1 = input;
@@ -1591,162 +1592,7 @@ Qwen25VLModularEngine::loadTensorFromFile(const std::string &file_path) {
   return algorithms::Tensor({1});
 }
 
-// 矩阵乘法函数实现
-algorithms::Tensor
-Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
-                                     const algorithms::Tensor &b) {
-  // 简化调试信息以提高性能
-  static int call_count = 0;
-  if (++call_count % 100 == 1) { // 每100次调用只输出一次
-    std::cerr << "[DEBUG] performMatMul: A(" << a.shape[0];
-    for (size_t i = 1; i < a.shape.size(); ++i) {
-      std::cerr << "x" << a.shape[i];
-    }
-    std::cerr << ") * B(" << b.shape[0];
-    for (size_t i = 1; i < b.shape.size(); ++i) {
-      std::cerr << "x" << b.shape[i];
-    }
-    std::cerr << ")" << std::endl;
-  }
 
-  // 检查输入张量的维度
-  if (a.shape.empty() || b.shape.empty()) {
-    std::cerr << "[ERROR] Input tensors cannot be empty" << std::endl;
-    throw std::invalid_argument("Input tensors cannot be empty");
-  }
-
-  // 检查数据完整性
-  if (a.data.empty() || b.data.empty()) {
-    std::cerr << "[ERROR] Input tensor data is empty" << std::endl;
-    throw std::invalid_argument("Input tensor data is empty");
-  }
-
-  if (a.data.size() != a.size || b.data.size() != b.size) {
-    std::cerr << "[ERROR] Tensor data size mismatch with declared size"
-              << std::endl;
-    std::cerr << "[ERROR] A: data.size()=" << a.data.size()
-              << ", size=" << a.size << std::endl;
-    std::cerr << "[ERROR] B: data.size()=" << b.data.size()
-              << ", size=" << b.size << std::endl;
-    throw std::invalid_argument("Tensor data size mismatch");
-  }
-
-  // 支持2D和3D张量的矩阵乘法
-  if (a.shape.size() < 2 || b.shape.size() < 2) {
-    std::cerr << "[ERROR] Input tensors must have at least 2 dimensions"
-              << std::endl;
-    throw std::invalid_argument(
-        "Input tensors must have at least 2 dimensions");
-  }
-
-  // 获取矩阵维度
-  uint32_t batch_size = 1;
-  uint32_t a_rows, a_cols, b_rows, b_cols;
-
-  if (a.shape.size() == 3) {
-    batch_size = a.shape[0];
-    a_rows = a.shape[1];
-    a_cols = a.shape[2];
-  } else {
-    a_rows = a.shape[0];
-    a_cols = a.shape[1];
-  }
-
-  if (b.shape.size() == 3) {
-    if (batch_size != b.shape[0] && batch_size != 1 && b.shape[0] != 1) {
-      throw std::invalid_argument("Batch sizes must be compatible");
-    }
-    if (batch_size == 1)
-      batch_size = b.shape[0];
-    b_rows = b.shape[1];
-    b_cols = b.shape[2];
-  } else {
-    b_rows = b.shape[0];
-    b_cols = b.shape[1];
-  }
-
-  // 检查矩阵乘法的维度兼容性（简化输出）
-  if (call_count % 100 == 1) {
-    std::cerr << "[DEBUG] Matrix dims: A(" << a_rows << "x" << a_cols
-              << "), B(" << b_rows << "x" << b_cols << ")" << std::endl;
-  }
-
-  if (a_cols != b_rows) {
-    std::cerr << "[ERROR] Matrix dimensions incompatible: A_cols(" << a_cols
-              << ") != B_rows(" << b_rows << ")" << std::endl;
-    throw std::invalid_argument(
-        "Matrix dimensions are not compatible for multiplication");
-  }
-
-  // 创建输出张量 - 始终保持3维以兼容注意力机制
-  std::vector<uint32_t> output_shape;
-  if (a.shape.size() == 3 || b.shape.size() == 3) {
-    // 如果输入是3维，输出也保持3维
-    output_shape = {batch_size, a_rows, b_cols};
-  } else {
-    // 如果输入都是2维，输出为2维
-    output_shape = {a_rows, b_cols};
-  }
-
-  algorithms::Tensor result(output_shape);
-
-  // 使用BLAS优化的矩阵乘法（减少调试输出）
-
-  for (uint32_t batch = 0; batch < batch_size; ++batch) {
-    // 批处理计算（移除调试输出以提高性能）
-
-    // 计算当前批次的数据指针
-    const float *a_ptr;
-    const float *b_ptr;
-    float *c_ptr;
-
-    if (a.shape.size() == 3) {
-      a_ptr = a.data.data() + batch * a_rows * a_cols;
-    } else {
-      a_ptr = a.data.data();
-    }
-
-    if (b.shape.size() == 3) {
-      size_t b_batch = (b.shape[0] == 1) ? 0 : batch;
-      b_ptr = b.data.data() + b_batch * b_rows * b_cols;
-    } else {
-      b_ptr = b.data.data();
-    }
-
-    if (output_shape.size() == 3) {
-      c_ptr = result.data.data() + batch * a_rows * b_cols;
-    } else {
-      c_ptr = result.data.data();
-    }
-
-#ifdef __APPLE__
-    // 使用Apple Accelerate框架的BLAS
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, a_rows, b_cols,
-                a_cols, 1.0f, a_ptr, a_cols, b_ptr, b_cols, 0.0f, c_ptr,
-                b_cols);
-#elif defined(USE_OPENBLAS)
-    // 使用OpenBLAS
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, a_rows, b_cols,
-                a_cols, 1.0f, a_ptr, a_cols, b_ptr, b_cols, 0.0f, c_ptr,
-                b_cols);
-#else
-    // 回退到原始三重循环实现
-    for (uint32_t i = 0; i < a_rows; ++i) {
-      for (uint32_t j = 0; j < b_cols; ++j) {
-        float sum = 0.0f;
-        for (uint32_t k = 0; k < a_cols; ++k) {
-          sum += a_ptr[i * a_cols + k] * b_ptr[k * b_cols + j];
-        }
-        c_ptr[i * b_cols + j] = sum;
-      }
-    }
-#endif
-  }
-
-  // 矩阵乘法完成
-
-  return result;
-}
 
 // 加载特殊token ID
 bool Qwen25VLModularEngine::loadSpecialTokens(const GGUFParser &parser) {

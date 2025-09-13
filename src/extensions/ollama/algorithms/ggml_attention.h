@@ -78,6 +78,13 @@ private:
                                               struct ggml_tensor* value);
 };
 
+// New: High-performance linear projection via GGML
+// Compute C = A x W where:
+// - If A is 3D [1, M, K], it is treated as [M, K]; result returns as [1, M, N]
+// - If A is 2D [M, K], result returns as [M, N]
+// - W must be 2D [K, N]
+Tensor computeLinear(const Tensor& a, const Tensor& w);
+
 } // namespace algorithms
 } // namespace ollama
 } // namespace extensions
