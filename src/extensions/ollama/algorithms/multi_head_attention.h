@@ -5,14 +5,14 @@
 #include "fast_attention.h"
 #include <algorithm>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <stdint.h>
+#include <stddef.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -254,24 +254,7 @@ public:
                           uint32_t head_idx, const Tensor *mask = nullptr,
                           float scale = 1.0f) override {
     auto start_time = std::chrono::high_resolution_clock::now();
-    // 添加调试信息
-    std::cerr << "[DEBUG] MultiHeadAttention::computeWithCache called"
-              << std::endl;
-    std::cerr << "[DEBUG] Key cache shape: [";
-    for (size_t i = 0; i < key_cache.shape.size(); ++i) {
-      std::cerr << key_cache.shape[i];
-      if (i < key_cache.shape.size() - 1)
-        std::cerr << ", ";
-    }
-    std::cerr << "]" << std::endl;
-
-    std::cerr << "[DEBUG] Value cache shape: [";
-    for (size_t i = 0; i < value_cache.shape.size(); ++i) {
-      std::cerr << value_cache.shape[i];
-      if (i < value_cache.shape.size() - 1)
-        std::cerr << ", ";
-    }
-    std::cerr << "]" << std::endl;
+    // Debug output removed for performance optimization
 
     // 验证输入
     if (!validateInput(query) || !validateInput(key) || !validateInput(value)) {
@@ -337,7 +320,7 @@ public:
 
     // 对每个头执行注意力计算
     std::vector<Tensor> head_outputs;
-    head_outputs.reserve(num_heads_);
+    head_outputs.resize(num_heads_); // 预分配空间避免并行访问冲突
 
     // 使用OpenMP并行化多头注意力计算（带缓存）
 #ifdef _OPENMP
@@ -349,7 +332,7 @@ public:
           std::min(num_threads, static_cast<int>(context_.num_threads));
     }
     omp_set_num_threads(num_threads);
-// 已在前面定义了head_outputs，这里删除重复定义
+
 #pragma omp parallel for schedule(dynamic)
     for (uint32_t i = 0; i < num_heads_; ++i) {
       uint32_t kv_head_idx = i / group_size_;
@@ -358,23 +341,16 @@ public:
           key_cache_heads[kv_head_idx], value_cache_heads[kv_head_idx],
           cache_position, kv_head_idx, mask, scale);
     }
-#endif
+#else
+    // 串行版本（当没有OpenMP时）
     for (uint32_t i = 0; i < num_heads_; ++i) {
-      // 使用分组查询注意力
       uint32_t kv_head_idx = i / group_size_;
-
-      Tensor head_output = attention_heads_[i]->computeWithCache(
+      head_outputs[i] = attention_heads_[i]->computeWithCache(
           query_heads[i], key_heads[kv_head_idx], value_heads[kv_head_idx],
           key_cache_heads[kv_head_idx], value_cache_heads[kv_head_idx],
           cache_position, kv_head_idx, mask, scale);
-
-#ifdef _OPENMP
-#pragma omp critical
-#endif
-      {
-        head_outputs.push_back(std::move(head_output));
-      }
     }
+#endif
 
     // 连接所有头的输出
     Tensor result = concatenateHeads(head_outputs, batch_size, seq_len_q);

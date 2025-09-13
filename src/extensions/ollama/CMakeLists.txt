@@ -12,6 +12,7 @@ set(OLLAMA_EXTENSION_SOURCES
     text_processor.cpp
     sentencepiece_processor.cpp
     algorithms/bpe_processor.cpp
+    algorithms/ggml_attention.cpp
 )
 
 # 收集头文件
@@ -23,6 +24,7 @@ set(OLLAMA_EXTENSION_HEADERS
     text_processor.h
     sentencepiece_processor.h
     algorithms/bpe_processor.h
+    algorithms/ggml_attention.h
 )
 
 # 创建静态库
@@ -67,6 +69,12 @@ elseif(MSVC)
         /wd4100  # 未引用的形参
     )
 endif()
+
+# 链接库
+target_link_libraries(${OLLAMA_EXTENSION_NAME} PRIVATE
+    ggml-base
+    ggml-cpu
+)
 
 # 平台特定链接库
 if(APPLE)

@@ -6,13 +6,17 @@
 #include "multi_head_attention.h"
 #include "feed_forward.h"
 #include "rope_processor.h"
+#include "ggml_attention.h"
 #include <unordered_map>
 #include <functional>
 #include <vector>
 #include <memory>
 #include <string>
 
-namespace duorou::extensions::ollama::algorithms {
+namespace duorou {
+namespace extensions {
+namespace ollama {
+namespace algorithms {
 
 // 注意力算法工厂
 class AttentionAlgorithmFactory : public AlgorithmFactory<IAttentionAlgorithm> {
@@ -48,6 +52,10 @@ private:
     
     creators_["multi_head_attention"] = []() {
       return std::make_unique<MultiHeadAttention>();
+    };
+    
+    creators_["ggml_attention"] = []() {
+      return std::make_unique<GGMLAttention>();
     };
     
     // 可以添加更多注意力算法
@@ -296,6 +304,9 @@ private:
   std::unique_ptr<IPositionalEncodingAlgorithm> positional_encoding_;
 };
 
-} // namespace duorou::extensions::ollama::algorithms
+} // namespace algorithms
+} // namespace ollama
+} // namespace extensions
+} // namespace duorou
 
 #endif // ALGORITHM_FACTORY_H

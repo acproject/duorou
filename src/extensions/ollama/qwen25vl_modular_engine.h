@@ -1,18 +1,29 @@
 #ifndef QWEN25VL_MODULAR_ENGINE_H
 #define QWEN25VL_MODULAR_ENGINE_H
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <fstream>
+#include <functional>
+#include <future>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
 #include "algorithms/algorithm_factory.h"
 #include "algorithms/base_algorithm.h"
 #include "algorithms/feed_forward.h"
 #include "algorithms/matrix_operations.h"
-#include "algorithms/multi_head_attention.h"
 #include "algorithms/rope_processor.h"
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace duorou {
 namespace extensions {
@@ -60,6 +71,24 @@ struct Qwen25VLConfig {
   uint32_t num_channels = 3;                // 图像通道数
 };
 
+// 多线程任务类型
+struct LayerTask {
+  algorithms::Tensor input;
+  uint32_t layer_idx;
+  algorithms::Tensor attention_mask;
+  std::promise<algorithms::Tensor> result;
+};
+
+// 线程池状态
+struct ThreadPoolState {
+  std::vector<std::thread> workers;
+  std::queue<std::function<void()>> tasks;
+  std::mutex queue_mutex;
+  std::condition_variable condition;
+  std::atomic<bool> stop{false};
+  uint32_t num_threads = 4;
+};
+
 // 推理状态
 struct InferenceState {
   std::vector<algorithms::Tensor> key_cache;   // K缓存
@@ -67,6 +96,7 @@ struct InferenceState {
   uint32_t current_length = 0;                 // 当前序列长度
   uint32_t cache_position = 0;                 // 缓存位置
   bool is_prefill = true;                      // 是否为预填充阶段
+  bool use_parallel = false;                   // 是否使用并行计算
 };
 
 // 流式生成回调函数类型
@@ -153,9 +183,10 @@ private:
   StreamingState streaming_state_;
   PerformanceStats perf_stats_;
   QwenTokens special_tokens_; // 特殊token ID
+  ThreadPoolState thread_pool_; // 线程池状态
 
   // 算法组件
-  std::unique_ptr<algorithms::MultiHeadAttention> attention_;
+  std::unique_ptr<algorithms::IAttentionAlgorithm> attention_;
   std::unique_ptr<algorithms::FeedForward> feed_forward_;
   std::unique_ptr<algorithms::RoPEProcessor> rope_processor_;
   std::unique_ptr<algorithms::MatrixOperations> matrix_ops_;
@@ -228,9 +259,19 @@ private:
   // 特殊token加载
   bool loadSpecialTokens(const GGUFParser &parser);
 
-  // 矩阵乘法函数
-  algorithms::Tensor performMatMul(const algorithms::Tensor &a,
-                                   const algorithms::Tensor &b);
+  // GGML矩阵乘法辅助函数
+  algorithms::Tensor performGGMLMatMul(const algorithms::Tensor &a, const algorithms::Tensor &b);
+
+  // 多线程相关方法
+  void initializeThreadPool(uint32_t num_threads = 4);
+  void shutdownThreadPool();
+  void enqueueTask(std::function<void()> task);
+  
+  // 并行Transformer层计算（批处理模式）
+  std::vector<algorithms::Tensor> forwardTransformerLayersParallel(
+      const std::vector<algorithms::Tensor> &inputs,
+      const std::vector<uint32_t> &layer_indices,
+      const algorithms::Tensor *attention_mask = nullptr);
 };
 
 } // namespace ollama

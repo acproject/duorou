@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <stdint.h>
 
 namespace duorou {
 namespace extensions {
@@ -251,8 +252,7 @@ public:
       throw std::runtime_error("Unsuppored cache dimension");
     }
 
-    std::cerr << "[DEBUG] KV Cache updated at position " << cache_position
-              << std::endl;
+    // KV Cache updated successfully (debug output removed for performance)
   }
 
 private:
@@ -589,9 +589,7 @@ private:
       }
     }
 
-    std::cerr << "[DEBUG] Incremental attention with cache completed, "
-              << "effective_seq_len=" << effective_seq_len
-              << ", actual_seq_len=" << actual_seq_len << std::endl;
+    // Incremental attention with cache completed successfully (debug output removed for performance)
   }
 
   void computeIncrementalAttention(const Tensor &query, const Tensor &key,
