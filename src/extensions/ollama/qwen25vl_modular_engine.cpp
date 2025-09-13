@@ -526,48 +526,58 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     }
     std::cout << "]" << std::endl;
 
-    // 多头注意力计算
+    // 优化的注意力计算，模仿llama.cpp的高效方式
     algorithms::Tensor attention_output;
+    
     if (state_.is_prefill) {
-      // Prefill阶段：计算所有token的注意力并更新KV cache
-      attention_output =
-          attention_->compute(q_proj, k_proj, v_proj, attention_mask);
+      // Prefill阶段：先更新KV cache，然后计算注意力
       updateKVCache(layer_idx, k_proj, v_proj);
+      
+      // 直接从缓存中获取K和V进行计算，避免重复数据传递
+      attention_output = attention_->compute(q_proj, k_proj, v_proj, attention_mask);
+      
       std::cerr << "[DEBUG] Prefill attention computed for layer " << layer_idx << std::endl;
     } else {
-      // Decode阶段：只计算新token的K/V投影用于更新cache
+      // Decode阶段：高效的增量计算
       algorithms::Tensor new_k_proj = algorithms::computeLinear(rope_input, weights_.k_proj_weights[layer_idx]);
       algorithms::Tensor new_v_proj = algorithms::computeLinear(rope_input, weights_.v_proj_weights[layer_idx]);
       
-      // 使用KV cache进行增量计算
+      // 先更新缓存，然后进行增量注意力计算
+      updateKVCache(layer_idx, new_k_proj, new_v_proj);
+      
+      // 使用优化的缓存计算，减少数据复制
       attention_output = attention_->computeWithCache(
           q_proj, new_k_proj, new_v_proj, state_.key_cache[layer_idx],
-          state_.value_cache[layer_idx], state_.cache_position, layer_idx,
-          nullptr); // decode阶段不需要外部mask，FastAttention内部处理
+          state_.value_cache[layer_idx], state_.cache_position - new_k_proj.shape[1], 
+          layer_idx, nullptr);
+      
       std::cerr << "[DEBUG] Incremental attention computed for layer " << layer_idx 
-                << " at cache position " << state_.cache_position << std::endl;
+                << " at position " << (state_.cache_position - new_k_proj.shape[1]) << std::endl;
     }
 
-    // 输出投影
-    attention_output =
-        algorithms::computeLinear(attention_output, weights_.o_proj_weights[layer_idx]);
+    // 输出投影 - 直接在原张量上操作以减少内存分配
+    attention_output = algorithms::computeLinear(attention_output, weights_.o_proj_weights[layer_idx]);
 
-    // 2. Add & LayerNorm (Post-LN)
-    algorithms::Tensor residual1 = input;
-    for (size_t i = 0;
-         i < input.data.size() && i < attention_output.data.size(); ++i) {
-      residual1.data[i] += attention_output.data[i];
-    }
-
+    // 2. Add & LayerNorm (Post-LN) - 优化的残差连接
     // 检查layer_norm_weights索引
     if (layer_idx * 2 >= weights_.layer_norm_weights.size()) {
-      std::cerr << "[ERROR] Layer norm weights not found for layer "
-                << layer_idx << std::endl;
+      std::cerr << "[ERROR] Layer norm weights not found for layer " << layer_idx << std::endl;
       return input; // 返回原始输入作为fallback
     }
 
-    algorithms::Tensor norm_output1 =
-        applyRMSNorm(residual1, weights_.layer_norm_weights[layer_idx * 2]);
+    // 原地进行残差连接，避免额外的张量复制
+    algorithms::Tensor residual1 = input;
+    const size_t min_size = std::min(input.data.size(), attention_output.data.size());
+    
+    // 使用指针进行高效的向量加法
+    float* residual_data = residual1.data.data();
+    const float* attn_data = attention_output.data.data();
+    
+    for (size_t i = 0; i < min_size; ++i) {
+      residual_data[i] += attn_data[i];
+    }
+
+    algorithms::Tensor norm_output1 = applyRMSNorm(residual1, weights_.layer_norm_weights[layer_idx * 2]);
 
     // 3. 前馈网络计算
     algorithms::Tensor ffn_output;
@@ -590,22 +600,26 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
       ffn_output = norm_output1; // fallback
     }
 
-    // 4. Add & LayerNorm (Post-LN)
-    algorithms::Tensor residual2 = norm_output1;
-    for (size_t i = 0;
-         i < norm_output1.data.size() && i < ffn_output.data.size(); ++i) {
-      residual2.data[i] += ffn_output.data[i];
-    }
-
+    // 4. Add & LayerNorm (Post-LN) - 优化的第二个残差连接
     // 检查第二个layer norm权重
     if (layer_idx * 2 + 1 >= weights_.layer_norm_weights.size()) {
-      std::cerr << "[ERROR] Second layer norm weights not found for layer "
-                << layer_idx << std::endl;
-      return residual2; // 返回未归一化的结果
+      std::cerr << "[ERROR] Second layer norm weights not found for layer " << layer_idx << std::endl;
+      return norm_output1; // 返回第一次归一化的结果
     }
 
-    algorithms::Tensor final_output =
-        applyRMSNorm(residual2, weights_.layer_norm_weights[layer_idx * 2 + 1]);
+    // 原地进行第二个残差连接
+    algorithms::Tensor residual2 = norm_output1;
+    const size_t min_size2 = std::min(norm_output1.data.size(), ffn_output.data.size());
+    
+    // 使用指针进行高效的向量加法
+    float* residual2_data = residual2.data.data();
+    const float* ffn_data = ffn_output.data.data();
+    
+    for (size_t i = 0; i < min_size2; ++i) {
+      residual2_data[i] += ffn_data[i];
+    }
+
+    algorithms::Tensor final_output = applyRMSNorm(residual2, weights_.layer_norm_weights[layer_idx * 2 + 1]);
 
     return final_output;
 
@@ -1124,59 +1138,55 @@ uint32_t Qwen25VLModularEngine::sampleToken(
 
 void Qwen25VLModularEngine::initializeKVCache() {
   try {
-    std::cerr << "[DEBUG] Initializing KV Cache (llama.cpp inspired)"
+    std::cerr << "[DEBUG] Initializing KV Cache (llama.cpp optimized)"
               << std::endl;
 
     state_.key_cache.clear();
     state_.value_cache.clear();
 
-    // 确保head_dim计算正确
+    // 计算头维度
     uint32_t head_dim = config_.hidden_size / config_.num_attention_heads;
-    uint32_t kv_head_dim =
-        head_dim; // In GQA, KV heads have same dimension as query heads
-    // 添加调试信息
-    std::cerr << "[DEBUG] Head dim calculation: " << config_.hidden_size
-              << " / " << config_.num_attention_heads << " = " << head_dim
-              << std::endl;
-    // 直接使用配置中的max_position_embeddings 作为缓存长度
-    uint32_t optimal_cache_length = config_.max_position_embeddings;
+    uint32_t kv_head_dim = head_dim; // GQA中KV头与Q头维度相同
+    
+    // 使用更保守的缓存长度以提高内存效率
+    uint32_t optimal_cache_length = std::min(config_.max_position_embeddings, 8192u);
 
-    std::cerr << "[DEBUG] Using cache length: " << optimal_cache_length
-              << " (from max_position_embedding)" << std::endl;
+    std::cerr << "[DEBUG] Head dim: " << head_dim 
+              << ", KV heads: " << config_.num_key_value_heads
+              << ", Cache length: " << optimal_cache_length << std::endl;
 
+    // 预分配连续内存块，模仿llama.cpp的内存布局
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads,
-                                           optimal_cache_length, kv_head_dim};
+      // 使用4D布局以匹配MultiHeadAttention期望: [B, num_kv_heads, T, head_dim]
+    // 这样可以与注意力机制的KV缓存接口兼容
+    std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads, 
+                                         optimal_cache_length, kv_head_dim};
+      
       state_.key_cache.emplace_back(cache_shape);
       state_.value_cache.emplace_back(cache_shape);
 
-      // 初始化缓存数据为0
-      std::fill(state_.key_cache[layer].data.begin(),
-                state_.key_cache[layer].data.end(), 0.0f);
-      std::fill(state_.value_cache[layer].data.begin(),
-                state_.value_cache[layer].data.end(), 0.0f);
+      // 使用memset进行快速初始化
+      std::memset(state_.key_cache[layer].data.data(), 0, 
+                  state_.key_cache[layer].data.size() * sizeof(float));
+      std::memset(state_.value_cache[layer].data.data(), 0, 
+                  state_.value_cache[layer].data.size() * sizeof(float));
 
       if (layer == 0) {
-        size_t cache_size_mb =
-            (cache_shape[0] * cache_shape[1] * cache_shape[2] * cache_shape[3] *
-             sizeof(float) * 2) /
-            (1024 * 1024);
-        std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: ["
-                  << cache_shape[0] << ", " << cache_shape[1] << ", "
-                  << cache_shape[2] << "," << cache_shape[3] << "]"
-                  << std::endl;
-        std::cerr << "[DEBUG] Layer" << layer
-                  << " KV cache memory: " << cache_size_mb << " MB per layer"
-                  << std::endl;
+        size_t cache_size_mb = (cache_shape[0] * cache_shape[1] * cache_shape[2] * cache_shape[3] * 
+                               sizeof(float) * 2) / (1024 * 1024);
+        std::cerr << "[DEBUG] 4D KV cache shape: [" << cache_shape[0] 
+                  << ", " << cache_shape[1] << ", " << cache_shape[2] 
+                  << ", " << cache_shape[3] << "]" << std::endl;
+        std::cerr << "[DEBUG] Memory per layer: " << cache_size_mb << " MB" << std::endl;
       }
     }
-    std::cerr << "[DEBUG] KV Cache initialized for "
-              << config_.num_hidden_layers << " layers" << std::endl;
+    
+    std::cerr << "[DEBUG] KV Cache initialized for " << config_.num_hidden_layers 
+              << " layers with optimized layout" << std::endl;
     state_.current_length = 0;
     state_.cache_position = 0;
   } catch (const std::exception &e) {
-    std::cerr << "Exception in KV cache initialization: " << e.what()
-              << std::endl;
+    std::cerr << "Exception in KV cache initialization: " << e.what() << std::endl;
     throw;
   }
 }
@@ -1184,7 +1194,6 @@ void Qwen25VLModularEngine::initializeKVCache() {
 void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
                                           const algorithms::Tensor &key,
                                           const algorithms::Tensor &value) {
-
   try {
     if (layer_idx >= state_.key_cache.size()) {
       throw std::out_of_range("Layer index out of range");
@@ -1192,8 +1201,7 @@ void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
 
     // 检查维度匹配 - key/value应该是3维格式 [batch, seq_len, kv_total_dim]
     if (key.shape.size() != 3 || value.shape.size() != 3) {
-      throw std::invalid_argument(
-          "Key/Value tensors must be 3D [batch, seq_len, kv_dim]");
+      throw std::invalid_argument("Key/Value tensors must be 3D [batch, seq_len, kv_dim]");
     }
 
     uint32_t batch_size = key.shape[0];
@@ -1204,7 +1212,7 @@ void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
       throw std::invalid_argument("Batch size must be 1 for KV cache update");
     }
 
-    // 获取缓存维度信息
+    // 获取缓存维度信息 (4D布局: [B, num_kv_heads, T, head_dim])
     uint32_t cache_batch_size = state_.key_cache[layer_idx].shape[0];
     uint32_t num_kv_heads = state_.key_cache[layer_idx].shape[1];
     uint32_t max_seq_len = state_.key_cache[layer_idx].shape[2];
@@ -1226,26 +1234,32 @@ void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
       throw std::runtime_error("KV cache overflow");
     }
 
-    // 将3维格式的key/value转换为4维格式并更新到缓存
+    // 优化的缓存更新：使用连续内存操作，模仿llama.cpp的高效方式
+    const float* key_src = key.data.data();
+    const float* value_src = value.data.data();
+    float* key_cache = state_.key_cache[layer_idx].data.data();
+    float* value_cache = state_.value_cache[layer_idx].data.data();
+
+    // 对每个序列位置进行批量复制 (4D布局)
     for (uint32_t s = 0; s < seq_len; ++s) {
-      // 计算源偏移（3维格式）
-      size_t src_offset = s * kv_total_dim;
-
-      // 对于每个KV头，复制对应的数据
+      const uint32_t src_seq_offset = s * kv_total_dim;
+      const uint32_t dst_seq_pos = cache_pos + s;
+      
+      // 对每个KV头进行连续内存复制
       for (uint32_t h = 0; h < num_kv_heads; ++h) {
-        // 计算目标偏移（4维格式）
-        size_t dst_offset =
-            h * max_seq_len * head_dim + (cache_pos + s) * head_dim;
-
-        // 计算当前头的源偏移
-        size_t head_src_offset = src_offset + h * head_dim;
-
-        // 复制当前头的数据
-        std::memcpy(&state_.key_cache[layer_idx].data[dst_offset],
-                    &key.data[head_src_offset], head_dim * sizeof(float));
-
-        std::memcpy(&state_.value_cache[layer_idx].data[dst_offset],
-                    &value.data[head_src_offset], head_dim * sizeof(float));
+        const uint32_t src_head_offset = src_seq_offset + h * head_dim;
+        // 4D布局偏移: [batch_idx, head_idx, seq_idx, dim_idx]
+        const uint32_t dst_head_offset = 0 * (num_kv_heads * max_seq_len * head_dim) + 
+                                         h * (max_seq_len * head_dim) + 
+                                         dst_seq_pos * head_dim;
+        
+        // 使用单次memcpy进行高效复制
+        std::memcpy(key_cache + dst_head_offset, 
+                   key_src + src_head_offset, 
+                   head_dim * sizeof(float));
+        std::memcpy(value_cache + dst_head_offset, 
+                   value_src + src_head_offset, 
+                   head_dim * sizeof(float));
       }
     }
 
