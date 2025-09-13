@@ -206,7 +206,7 @@ private:
   // 缓存管理
   void initializeKVCache();
   void updateKVCache(uint32_t layer_idx, const algorithms::Tensor &key,
-                     const algorithms::Tensor &value, uint32_t head_idx);
+                     const algorithms::Tensor &value);
 
   // 工具方法
   algorithms::Tensor createAttentionMask(uint32_t seq_length,

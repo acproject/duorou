@@ -158,6 +158,11 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
   std::vector<uint32_t> generated_tokens = input_ids;
   state_.current_length = input_ids.size();
   state_.is_prefill = true;
+  state_.cache_position = 0; // 重置cache位置
+  
+  // 初始化KV cache
+  initializeKVCache();
+  std::cerr << "[DEBUG] KV cache initialized" << std::endl;
 
   try {
     // 修正：max_length应该是总长度限制，而不是新生成token的数量
@@ -172,28 +177,44 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
       std::vector<uint32_t> current_input;
       if (state_.is_prefill) {
         current_input = generated_tokens;
+        state_.cache_position = current_input.size() - 1; // prefill阶段cache_position为序列长度-1
         state_.is_prefill = false;
         std::cerr << "[DEBUG] Prefill mode with " << current_input.size()
-                  << " tokens" << std::endl;
+                  << " tokens, cache_position set to " << state_.cache_position << std::endl;
       } else {
+        // 优化：decode 阶段只处理最后一个 token，利用 KV cache
         current_input = {generated_tokens.back()};
-        std::cerr << "[DEBUG] Decode mode with 1 token" << std::endl;
+        std::cerr
+            << "[DEBUG] Decode mode with 1 token (optimized with KV cache), cache_position: "
+            << state_.cache_position << std::endl;
       }
 
-      // 应用词嵌入
+      // 应用词嵌入（优化：decode 阶段只对新 token 计算嵌入）
       std::cerr << "[DEBUG] Applying embedding..." << std::endl;
       algorithms::Tensor embeddings = applyEmbedding(current_input);
       std::cerr << "[DEBUG] Embedding applied successfully" << std::endl;
 
-      // 通过Transformer层
+      // 通过Transformer层（优化：decode 阶段利用 KV cache 避免重复计算）
       algorithms::Tensor hidden_states = embeddings;
-      algorithms::Tensor attention_mask =
-          createAttentionMask(current_input.size());
-      std::cerr << "[DEBUG] Created attention mask" << std::endl;
+      
+      // 修复：decode阶段的attention_mask应该基于当前总序列长度，而不是当前输入长度
+      algorithms::Tensor attention_mask;
+      if (state_.is_prefill) {
+        attention_mask = createAttentionMask(current_input.size());
+        std::cerr << "[DEBUG] Created prefill attention mask for " << current_input.size() << " tokens" << std::endl;
+      } else {
+        // decode阶段：mask应该覆盖到当前cache位置+1的长度
+        attention_mask = createAttentionMask(state_.cache_position + 1);
+        std::cerr << "[DEBUG] Created decode attention mask for " << (state_.cache_position + 1) << " tokens" << std::endl;
+      }
 
       for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
         std::cerr << "[DEBUG] Processing transformer layer " << layer << "/"
-                  << config_.num_hidden_layers << std::endl;
+                  << config_.num_hidden_layers;
+        if (!state_.is_prefill) {
+          std::cerr << " (with KV cache)";
+        }
+        std::cerr << std::endl;
         hidden_states =
             forwardTransformerLayer(hidden_states, layer, &attention_mask);
         std::cerr << "[DEBUG] Transformer layer " << layer << " completed"
@@ -480,12 +501,20 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     std::cout << "]" << std::endl;
 
     // Q/K/V投影计算
-    algorithms::Tensor q_proj =
-        performMatMul(rope_input, weights_.q_proj_weights[layer_idx]);
-    algorithms::Tensor k_proj =
-        performMatMul(rope_input, weights_.k_proj_weights[layer_idx]);
-    algorithms::Tensor v_proj =
-        performMatMul(rope_input, weights_.v_proj_weights[layer_idx]);
+    algorithms::Tensor q_proj, k_proj, v_proj;
+    
+    if (state_.is_prefill) {
+      // Prefill阶段：计算完整的Q/K/V投影
+      std::cout << "[DEBUG] Prefill stage: computing full Q/K/V projections" << std::endl;
+      q_proj = performMatMul(rope_input, weights_.q_proj_weights[layer_idx]);
+      k_proj = performMatMul(rope_input, weights_.k_proj_weights[layer_idx]);
+      v_proj = performMatMul(rope_input, weights_.v_proj_weights[layer_idx]);
+    } else {
+      // Decode阶段：只计算新token的Q投影
+      std::cout << "[DEBUG] Decode stage: computing only Q projection for new token" << std::endl;
+      q_proj = performMatMul(rope_input, weights_.q_proj_weights[layer_idx]);
+      // K/V投影将在注意力计算中按需计算
+    }
 
     // 调试：打印投影后张量维度信息
     std::cout << "[DEBUG] Q projection shape: [";
@@ -499,14 +528,23 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     // 多头注意力计算
     algorithms::Tensor attention_output;
     if (state_.is_prefill) {
+      // Prefill阶段：计算所有token的注意力并更新KV cache
       attention_output =
           attention_->compute(q_proj, k_proj, v_proj, attention_mask);
-      updateKVCache(layer_idx, k_proj, v_proj, layer_idx);
+      updateKVCache(layer_idx, k_proj, v_proj);
+      std::cerr << "[DEBUG] Prefill attention computed for layer " << layer_idx << std::endl;
     } else {
+      // Decode阶段：只计算新token的K/V投影用于更新cache
+      algorithms::Tensor new_k_proj = performMatMul(rope_input, weights_.k_proj_weights[layer_idx]);
+      algorithms::Tensor new_v_proj = performMatMul(rope_input, weights_.v_proj_weights[layer_idx]);
+      
+      // 使用KV cache进行增量计算
       attention_output = attention_->computeWithCache(
-          q_proj, k_proj, v_proj, state_.key_cache[layer_idx],
+          q_proj, new_k_proj, new_v_proj, state_.key_cache[layer_idx],
           state_.value_cache[layer_idx], state_.cache_position, layer_idx,
-          attention_mask);
+          nullptr); // decode阶段不需要外部mask，FastAttention内部处理
+      std::cerr << "[DEBUG] Incremental attention computed for layer " << layer_idx 
+                << " at cache position " << state_.cache_position << std::endl;
     }
 
     // 输出投影
@@ -1144,8 +1182,7 @@ void Qwen25VLModularEngine::initializeKVCache() {
 
 void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,
                                           const algorithms::Tensor &key,
-                                          const algorithms::Tensor &value,
-                                          uint32_t head_idx) {
+                                          const algorithms::Tensor &value) {
 
   try {
     if (layer_idx >= state_.key_cache.size()) {
@@ -1558,25 +1595,19 @@ Qwen25VLModularEngine::loadTensorFromFile(const std::string &file_path) {
 algorithms::Tensor
 Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
                                      const algorithms::Tensor &b) {
-  // 添加详细的调试信息
-  std::cerr << "[DEBUG] performMatMul called" << std::endl;
-  std::cerr << "[DEBUG] Tensor A: shape=[";
-  for (size_t i = 0; i < a.shape.size(); ++i) {
-    std::cerr << a.shape[i];
-    if (i < a.shape.size() - 1)
-      std::cerr << ", ";
+  // 简化调试信息以提高性能
+  static int call_count = 0;
+  if (++call_count % 100 == 1) { // 每100次调用只输出一次
+    std::cerr << "[DEBUG] performMatMul: A(" << a.shape[0];
+    for (size_t i = 1; i < a.shape.size(); ++i) {
+      std::cerr << "x" << a.shape[i];
+    }
+    std::cerr << ") * B(" << b.shape[0];
+    for (size_t i = 1; i < b.shape.size(); ++i) {
+      std::cerr << "x" << b.shape[i];
+    }
+    std::cerr << ")" << std::endl;
   }
-  std::cerr << "], size=" << a.size << ", data_size=" << a.data.size()
-            << std::endl;
-
-  std::cerr << "[DEBUG] Tensor B: shape=[";
-  for (size_t i = 0; i < b.shape.size(); ++i) {
-    std::cerr << b.shape[i];
-    if (i < b.shape.size() - 1)
-      std::cerr << ", ";
-  }
-  std::cerr << "], size=" << b.size << ", data_size=" << b.data.size()
-            << std::endl;
 
   // 检查输入张量的维度
   if (a.shape.empty() || b.shape.empty()) {
@@ -1634,10 +1665,11 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
     b_cols = b.shape[1];
   }
 
-  // 检查矩阵乘法的维度兼容性
-  std::cerr << "[DEBUG] Matrix dimensions: A(" << a_rows << "x" << a_cols
-            << "), B(" << b_rows << "x" << b_cols
-            << "), batch_size=" << batch_size << std::endl;
+  // 检查矩阵乘法的维度兼容性（简化输出）
+  if (call_count % 100 == 1) {
+    std::cerr << "[DEBUG] Matrix dims: A(" << a_rows << "x" << a_cols
+              << "), B(" << b_rows << "x" << b_cols << ")" << std::endl;
+  }
 
   if (a_cols != b_rows) {
     std::cerr << "[ERROR] Matrix dimensions incompatible: A_cols(" << a_cols
@@ -1656,25 +1688,12 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
     output_shape = {a_rows, b_cols};
   }
 
-  std::cerr << "[DEBUG] Output shape: [";
-  for (size_t i = 0; i < output_shape.size(); ++i) {
-    std::cerr << output_shape[i];
-    if (i < output_shape.size() - 1)
-      std::cerr << ", ";
-  }
-  std::cerr << "]" << std::endl;
-
   algorithms::Tensor result(output_shape);
-  std::cerr << "[DEBUG] Result tensor created: size=" << result.size
-            << ", data_size=" << result.data.size() << std::endl;
 
-  // 使用BLAS优化的矩阵乘法
-  std::cerr << "[DEBUG] Starting optimized BLAS matrix multiplication"
-            << std::endl;
+  // 使用BLAS优化的矩阵乘法（减少调试输出）
 
   for (uint32_t batch = 0; batch < batch_size; ++batch) {
-    if (batch == 0)
-      std::cerr << "[DEBUG] Processing batch " << batch << std::endl;
+    // 批处理计算（移除调试输出以提高性能）
 
     // 计算当前批次的数据指针
     const float *a_ptr;
@@ -1724,8 +1743,7 @@ Qwen25VLModularEngine::performMatMul(const algorithms::Tensor &a,
 #endif
   }
 
-  std::cerr << "[DEBUG] Optimized matrix multiplication completed successfully"
-            << std::endl;
+  // 矩阵乘法完成
 
   return result;
 }

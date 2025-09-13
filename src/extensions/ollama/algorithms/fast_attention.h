@@ -5,7 +5,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
+#include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -148,11 +149,26 @@ public:
     }
 
     // 更新KV缓存
-    updateKVCache(key, value, key_cache, value_cache, cache_position,
-                  head_idx); // 传入0作为head_idx,表示当前处理第一个注意力头
+    updateKVCache(key, value, key_cache, value_cache, cache_position);
 
-    // 使用缓存计算注意力
-    Tensor output = compute(query, key_cache, value_cache, mask, scale);
+    // 优化：使用增量计算而不是重新计算整个序列
+    Tensor output;
+    uint32_t seq_len_q = query.shape[query.shape.size() - 2];
+    uint32_t head_dim = query.shape[query.shape.size() - 1];
+
+    // 设置输出张量形状
+    output.shape = query.shape;
+    output.data.resize(seq_len_q * head_dim);
+
+    if (seq_len_q == 1 && cache_position > 0) {
+      // Decode 阶段：只计算新 token 与所有缓存 token 的注意力
+      computeIncrementalAttentionWithCache(query, key_cache, value_cache,
+                                           output, cache_position + 1, scale,
+                                           mask, head_dim);
+    } else {
+      // Prefill 阶段：使用标准注意力计算
+      output = compute(query, key_cache, value_cache, mask, scale);
+    }
 
     // 更新统计信息
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -166,8 +182,7 @@ public:
 
   // 公有方法：更新KV缓存（带重复检测优化）
   void updateKVCache(const Tensor &key, const Tensor &value, Tensor &key_cache,
-                     Tensor &value_cache, uint32_t cache_position,
-                     uint32_t head_idx) {
+                     Tensor &value_cache, uint32_t cache_position) {
     // 动态获取head_dim
     uint32_t head_dim = key.shape.back();
 
@@ -200,7 +215,7 @@ public:
 
       // 计算在4D缓存中的偏移量：[batch_idx, head_idx, seq_idx, dim_idx]
       uint32_t cache_offset =
-          head_idx * max_seq_len * head_dim + cache_position * head_dim;
+          max_seq_len * head_dim + cache_position * head_dim;
 
       // 复制新的key和value到缓存
       for (uint32_t i = 0; i < head_dim; ++i) {
@@ -237,7 +252,7 @@ public:
     }
 
     std::cerr << "[DEBUG] KV Cache updated at position " << cache_position
-              << ", head " << head_idx << std::endl;
+              << std::endl;
   }
 
 private:
@@ -488,6 +503,95 @@ private:
         }
       }
     }
+  }
+
+  // 新增：使用 KV cache 的增量注意力计算
+  void computeIncrementalAttentionWithCache(
+      const Tensor &query, const Tensor &key_cache, const Tensor &value_cache,
+      Tensor &output, uint32_t effective_seq_len, float scale,
+      const Tensor *mask, uint32_t head_dim) {
+    // 边界检查
+    if (query.shape.empty() || key_cache.shape.empty() ||
+        value_cache.shape.empty() || output.shape.empty()) {
+      throw std::invalid_argument(
+          "Invalid tensor shapes in computeIncrementalAttentionWithCache");
+    }
+
+    // Query 只有一个 token，但要与缓存中的所有 token 计算注意力
+    uint32_t cache_seq_len = key_cache.shape[key_cache.shape.size() - 2];
+    uint32_t actual_seq_len = std::min(effective_seq_len, cache_seq_len);
+
+    // 检查数据大小
+    if (query.data.size() < head_dim ||
+        key_cache.data.size() < actual_seq_len * head_dim ||
+        value_cache.data.size() < actual_seq_len * head_dim ||
+        output.data.size() < head_dim) {
+      throw std::runtime_error("Tensor data size insufficient for incremental "
+                               "attention with cache computation");
+    }
+
+    auto &scores_buffer = getTempScoresBuffer(actual_seq_len);
+    std::vector<float> &scores = scores_buffer;
+
+    // 计算注意力分数：新 token 与所有缓存 token
+    const float *q_data = query.data.data();
+    for (uint32_t j = 0; j < actual_seq_len; ++j) {
+      const float *k_row = &key_cache.data[j * head_dim];
+
+      float score = 0.0f;
+      uint32_t d = 0;
+
+      // 4路展开优化
+      for (; d + 3 < head_dim; d += 4) {
+        score += q_data[d] * k_row[d] + q_data[d + 1] * k_row[d + 1] +
+                 q_data[d + 2] * k_row[d + 2] + q_data[d + 3] * k_row[d + 3];
+      }
+
+      // 处理剩余元素
+      for (; d < head_dim; ++d) {
+        score += q_data[d] * k_row[d];
+      }
+
+      scores[j] = score * scale;
+    }
+
+    // 应用 mask（如果提供）
+    if (mask && mask->data.size() >= actual_seq_len) {
+      for (uint32_t j = 0; j < actual_seq_len; ++j) {
+        if (mask->data[j] == 0.0f) {
+          scores[j] = -std::numeric_limits<float>::infinity();
+        }
+      }
+    }
+
+    // Softmax
+    applySoftmax(scores, 1, actual_seq_len);
+
+    // 计算输出：加权求和缓存中的 value
+    std::fill(output.data.begin(), output.data.begin() + head_dim, 0.0f);
+
+    for (uint32_t j = 0; j < actual_seq_len; ++j) {
+      const float attention_weight = scores[j];
+      const float *value_row = &value_cache.data[j * head_dim];
+
+      // 4路展开优化
+      uint32_t d = 0;
+      for (; d + 3 < head_dim; d += 4) {
+        output.data[d] += attention_weight * value_row[d];
+        output.data[d + 1] += attention_weight * value_row[d + 1];
+        output.data[d + 2] += attention_weight * value_row[d + 2];
+        output.data[d + 3] += attention_weight * value_row[d + 3];
+      }
+
+      // 处理剩余元素
+      for (; d < head_dim; ++d) {
+        output.data[d] += attention_weight * value_row[d];
+      }
+    }
+
+    std::cerr << "[DEBUG] Incremental attention with cache completed, "
+              << "effective_seq_len=" << effective_seq_len
+              << ", actual_seq_len=" << actual_seq_len << std::endl;
   }
 
   void computeIncrementalAttention(const Tensor &query, const Tensor &key,

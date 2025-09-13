@@ -28,7 +28,8 @@ ChatView::ChatView()
       enhanced_video_window_(std::make_unique<EnhancedVideoCaptureWindow>()),
       video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
-      session_manager_(nullptr), model_manager_(nullptr), cached_video_frame_(nullptr),
+      session_manager_(nullptr), model_manager_(nullptr),
+      cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
   // 初始化增强视频窗口
@@ -268,7 +269,7 @@ void ChatView::send_message(const std::string &message) {
 
   // 添加用户消息到聊天显示
   add_message(message, true);
-  
+
   // 保存用户消息到当前会话
   if (session_manager_) {
     session_manager_->add_message_to_current_session(message, true);
@@ -276,7 +277,7 @@ void ChatView::send_message(const std::string &message) {
 
   // 显示AI正在思考的指示器
   add_message("AI正在思考中...", false);
-  
+
   // 禁用发送按钮，防止重复发送
   if (send_button_) {
     gtk_widget_set_sensitive(send_button_, FALSE);
@@ -288,47 +289,50 @@ void ChatView::send_message(const std::string &message) {
   // 在后台线程中调用AI模型处理消息
   std::thread([this, message]() {
     std::string ai_response = generate_ai_response(message);
-    
+
     // 创建数据结构来传递给主线程
     struct CallbackData {
-      ChatView* chat_view;
-      std::string* response;
+      ChatView *chat_view;
+      std::string *response;
     };
-    
-    CallbackData* data = new CallbackData{this, new std::string(ai_response)};
-    
+
+    CallbackData *data = new CallbackData{this, new std::string(ai_response)};
+
     // 使用 g_idle_add 在主线程中更新UI
-    g_idle_add([](gpointer user_data) -> gboolean {
-      CallbackData* data = static_cast<CallbackData*>(user_data);
-      ChatView* chat_view = data->chat_view;
-      std::string* response = data->response;
-      
-      if (chat_view && response) {
-        // 移除"AI正在思考中..."消息
-        chat_view->remove_last_message();
-        
-        // 添加AI回复
-        chat_view->add_message(*response, false);
-        
-        // 保存AI回复到当前会话
-        if (chat_view->session_manager_) {
-          chat_view->session_manager_->add_message_to_current_session(*response, false);
-        }
-        
-        // 重新启用发送按钮
-        if (chat_view->send_button_) {
-          gtk_widget_set_sensitive(chat_view->send_button_, TRUE);
-        }
-        if (chat_view->input_entry_) {
-          gtk_widget_set_sensitive(chat_view->input_entry_, TRUE);
-        }
-      }
-      
-      // 清理内存
-      delete response;
-      delete data;
-      return G_SOURCE_REMOVE;
-    }, data);
+    g_idle_add(
+        [](gpointer user_data) -> gboolean {
+          CallbackData *data = static_cast<CallbackData *>(user_data);
+          ChatView *chat_view = data->chat_view;
+          std::string *response = data->response;
+
+          if (chat_view && response) {
+            // 移除"AI正在思考中..."消息
+            chat_view->remove_last_message();
+
+            // 添加AI回复
+            chat_view->add_message(*response, false);
+
+            // 保存AI回复到当前会话
+            if (chat_view->session_manager_) {
+              chat_view->session_manager_->add_message_to_current_session(
+                  *response, false);
+            }
+
+            // 重新启用发送按钮
+            if (chat_view->send_button_) {
+              gtk_widget_set_sensitive(chat_view->send_button_, TRUE);
+            }
+            if (chat_view->input_entry_) {
+              gtk_widget_set_sensitive(chat_view->input_entry_, TRUE);
+            }
+          }
+
+          // 清理内存
+          delete response;
+          delete data;
+          return G_SOURCE_REMOVE;
+        },
+        data);
   }).detach();
 }
 
@@ -689,18 +693,16 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
     if (has_image) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message +=
-          "图片: " + std::string(g_path_get_basename(
-                            chat_view->selected_image_path_.c_str()));
+      full_message += "图片: " + std::string(g_path_get_basename(
+                                     chat_view->selected_image_path_.c_str()));
     }
 
     // 添加文档信息
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message +=
-          "文档: " + std::string(g_path_get_basename(
-                            chat_view->selected_file_path_.c_str()));
+      full_message += "文档: " + std::string(g_path_get_basename(
+                                     chat_view->selected_file_path_.c_str()));
     }
 
     // 发送消息
@@ -751,18 +753,16 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
     if (has_image) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message +=
-          "图片: " + std::string(g_path_get_basename(
-                            chat_view->selected_image_path_.c_str()));
+      full_message += "图片: " + std::string(g_path_get_basename(
+                                     chat_view->selected_image_path_.c_str()));
     }
 
     // 添加文档信息
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message +=
-          "文档: " + std::string(g_path_get_basename(
-                            chat_view->selected_file_path_.c_str()));
+      full_message += "文档: " + std::string(g_path_get_basename(
+                                     chat_view->selected_file_path_.c_str()));
     }
 
     // 发送消息
@@ -1880,17 +1880,18 @@ void ChatView::update_model_selector() {
 
   // 获取可用模型列表
   auto available_models = model_manager_->getAllModels();
-  
+
   if (available_models.empty()) {
     // 如果没有可用模型，显示提示信息
     const char *no_models[] = {"No models available", NULL};
     GtkStringList *string_list = gtk_string_list_new(no_models);
-    gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_), G_LIST_MODEL(string_list));
+    gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_),
+                            G_LIST_MODEL(string_list));
     return;
   }
 
   // 创建模型名称数组
-  std::vector<const char*> model_names;
+  std::vector<const char *> model_names;
   for (const auto &model : available_models) {
     model_names.push_back(model.name.c_str());
   }
@@ -1898,19 +1899,22 @@ void ChatView::update_model_selector() {
 
   // 更新下拉菜单
   GtkStringList *string_list = gtk_string_list_new(model_names.data());
-  gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_), G_LIST_MODEL(string_list));
-  
+  gtk_drop_down_set_model(GTK_DROP_DOWN(model_selector_),
+                          G_LIST_MODEL(string_list));
+
   // 默认选择第一个模型
   if (!available_models.empty()) {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(model_selector_), 0);
   }
-  
-  std::cout << "Updated model selector with " << available_models.size() << " models" << std::endl;
+
+  std::cout << "Updated model selector with " << available_models.size()
+            << " models" << std::endl;
 }
 
 std::string ChatView::generate_ai_response(const std::string &message) {
-  std::cout << "[DEBUG] ChatView::generate_ai_response() called with message: " << message.substr(0, 50) << "..." << std::endl;
-  
+  std::cout << "[DEBUG] ChatView::generate_ai_response() called with message: "
+            << message.substr(0, 50) << "..." << std::endl;
+
   if (!model_manager_) {
     std::cout << "[DEBUG] ChatView: Model manager not available" << std::endl;
     return "Error: Model manager not available.";
@@ -1925,73 +1929,92 @@ std::string ChatView::generate_ai_response(const std::string &message) {
   std::cout << "[DEBUG] ChatView: Model selector is available" << std::endl;
 
   // 获取选中的模型索引
-  guint selected_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));
-  std::cout << "[DEBUG] ChatView: Selected model index: " << selected_index << std::endl;
-  
+  guint selected_index =
+      gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));
+  std::cout << "[DEBUG] ChatView: Selected model index: " << selected_index
+            << std::endl;
+
   // 获取可用模型列表
   auto available_models = model_manager_->getAllModels();
-  std::cout << "[DEBUG] ChatView: Available models count: " << available_models.size() << std::endl;
-  
+  std::cout << "[DEBUG] ChatView: Available models count: "
+            << available_models.size() << std::endl;
+
   if (available_models.empty()) {
     std::cout << "[DEBUG] ChatView: No models available" << std::endl;
     return "Error: No models available for text generation.";
   }
-  
+
   if (selected_index >= available_models.size()) {
-    std::cout << "[DEBUG] ChatView: Invalid model selection - index " << selected_index << " >= " << available_models.size() << std::endl;
+    std::cout << "[DEBUG] ChatView: Invalid model selection - index "
+              << selected_index << " >= " << available_models.size()
+              << std::endl;
     return "Error: Invalid model selection.";
   }
 
   // 获取选中的模型
-  const auto& selected_model = available_models[selected_index];
+  const auto &selected_model = available_models[selected_index];
   std::string model_id = selected_model.name;
   std::cout << "[DEBUG] ChatView: Selected model ID: " << model_id << std::endl;
 
   try {
     // 首先尝试加载模型
-    std::cout << "[DEBUG] ChatView: Attempting to load model: " << model_id << std::endl;
+    std::cout << "[DEBUG] ChatView: Attempting to load model: " << model_id
+              << std::endl;
     bool model_loaded = model_manager_->loadModel(model_id);
     if (!model_loaded) {
-      std::cout << "[DEBUG] ChatView: Failed to load model: " << model_id << std::endl;
+      std::cout << "[DEBUG] ChatView: Failed to load model: " << model_id
+                << std::endl;
       return "Error: Failed to load model: " + model_id;
     }
-    std::cout << "[DEBUG] ChatView: Model loaded successfully: " << model_id << std::endl;
-    
+    std::cout << "[DEBUG] ChatView: Model loaded successfully: " << model_id
+              << std::endl;
+
     // 获取文本生成器
-     std::cout << "[DEBUG] ChatView: Getting text generator for model: " << model_id << std::endl;
-     core::TextGenerator* text_generator = model_manager_->getTextGenerator(model_id);
-     if (!text_generator) {
-       std::cout << "[DEBUG] ChatView: Failed to get text generator for model: " << model_id << std::endl;
-       return "Error: Failed to get text generator for model: " + model_id;
-     }
-     
-     // 检查文本生成器是否可用
-     if (!text_generator->canGenerate()) {
-       std::cout << "[DEBUG] ChatView: Text generator is not ready for generation" << std::endl;
-       return "Error: Text generator is not ready for generation";
-     }
-     
-     // 设置生成参数
-     core::GenerationParams params;
-     params.max_tokens = 512;  // 最大生成512个token
-     params.temperature = 0.7f;  // 适中的随机性
-     params.top_p = 0.9f;
-     params.top_k = 40;
-     params.repeat_penalty = 1.1f;
-     
-     // 生成回复
-     std::cout << "[DEBUG] ChatView: Starting text generation..." << std::endl;
-     core::GenerationResult result = text_generator->generate(message, params);
-     
-     if (result.finished && !result.text.empty()) {
-       std::cout << "[DEBUG] ChatView: Text generation completed successfully" << std::endl;
-       return result.text;
-     } else {
-       std::cout << "[DEBUG] ChatView: Text generation failed or returned empty result" << std::endl;
-       return "Error: Text generation failed or returned empty result. Stop reason: " + result.stop_reason;
-     }
+    std::cout << "[DEBUG] ChatView: Getting text generator for model: "
+              << model_id << std::endl;
+    core::TextGenerator *text_generator =
+        model_manager_->getTextGenerator(model_id);
+    if (!text_generator) {
+      std::cout << "[DEBUG] ChatView: Failed to get text generator for model: "
+                << model_id << std::endl;
+      return "Error: Failed to get text generator for model: " + model_id;
+    }
+
+    // 检查文本生成器是否可用
+    if (!text_generator->canGenerate()) {
+      std::cout
+          << "[DEBUG] ChatView: Text generator is not ready for generation"
+          << std::endl;
+      return "Error: Text generator is not ready for generation";
+    }
+
+    // 设置生成参数
+    core::GenerationParams params;
+    params.max_tokens = 512;   // 最大生成512个token
+    params.temperature = 0.7f; // 适中的随机性
+    params.top_p = 0.9f;
+    params.top_k = 40;
+    params.repeat_penalty = 1.1f;
+
+    // 生成回复
+    std::cout << "[DEBUG] ChatView: Starting text generation..." << std::endl;
+    core::GenerationResult result = text_generator->generate(message, params);
+
+    if (result.finished && !result.text.empty()) {
+      std::cout << "[DEBUG] ChatView: Text generation completed successfully"
+                << std::endl;
+      return result.text;
+    } else {
+      std::cout
+          << "[DEBUG] ChatView: Text generation failed or returned empty result"
+          << std::endl;
+      return "Error: Text generation failed or returned empty result. Stop "
+             "reason: " +
+             result.stop_reason;
+    }
   } catch (const std::exception &e) {
-    std::cout << "[DEBUG] ChatView: Exception caught: " << e.what() << std::endl;
+    std::cout << "[DEBUG] ChatView: Exception caught: " << e.what()
+              << std::endl;
     return "Error generating response: " + std::string(e.what());
   }
 }
