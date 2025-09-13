@@ -305,7 +305,8 @@ private:
     }
 
     return false;
-  } // 简化的注意力计算，用于小序列长度
+  }
+  // 简化的注意力计算，用于小序列长度
   Tensor computeSimpleAttention(const Tensor &query, const Tensor &key,
                                 const Tensor &value) {
     const uint32_t seq_len_q = query.shape[query.shape.size() - 2];

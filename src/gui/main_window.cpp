@@ -355,7 +355,7 @@ void MainWindow::update_chat_history_list() {
                                 GTK_EVENT_CONTROLLER(right_click_gesture));
 
       // 创建删除按钮
-      GtkWidget *delete_button = gtk_button_new_with_label("🗑️");
+      GtkWidget *delete_button = gtk_button_new_with_label("Delete");
       gtk_widget_add_css_class(delete_button, "delete-button");
       gtk_widget_set_size_request(delete_button, 30, -1);
       gtk_widget_set_tooltip_text(delete_button, "Delete this chat");
@@ -413,7 +413,7 @@ void MainWindow::create_sidebar() {
   gtk_widget_set_margin_bottom(sidebar_, 10);
 
   // 创建"New Chat"按钮
-  new_chat_button_ = gtk_button_new_with_label("✏️ New Chat");
+  new_chat_button_ = gtk_button_new_with_label("New Chat");
   gtk_widget_set_size_request(new_chat_button_, -1, 45);
   gtk_widget_add_css_class(new_chat_button_, "new-chat-button");
   gtk_widget_set_margin_bottom(new_chat_button_, 15);
@@ -446,8 +446,8 @@ void MainWindow::create_sidebar() {
   gtk_box_append(GTK_BOX(sidebar_), separator);
 
   // 创建底部功能按钮
-  image_button_ = gtk_button_new_with_label("🎨 Image Generation");
-  settings_button_ = gtk_button_new_with_label("⚙️ Settings");
+  image_button_ = gtk_button_new_with_label("Image Generation");
+  settings_button_ = gtk_button_new_with_label("Settings");
 
   gtk_widget_set_size_request(image_button_, -1, 40);
   gtk_widget_set_size_request(settings_button_, -1, 40);
@@ -580,7 +580,7 @@ void MainWindow::on_chat_history_item_right_clicked(GtkGestureClick *gesture,
     gtk_box_append(GTK_BOX(menu_box), rename_item);
 
     // 创建删除菜单项
-    GtkWidget *delete_item = gtk_button_new_with_label("🗑️ Delete Chat");
+    GtkWidget *delete_item = gtk_button_new_with_label("Delete Chat");
     gtk_widget_add_css_class(delete_item, "context-menu-item");
     gtk_widget_set_size_request(delete_item, 150, 35);
 
@@ -793,19 +793,19 @@ void MainWindow::set_tray_status(const std::string &status) {
 #ifdef __APPLE__
   if (macos_tray_ && macos_tray_->isAvailable()) {
     if (status == "idle") {
-      macos_tray_->setIcon("🌸"); // 花朵表示空闲
+      macos_tray_->setSystemIcon(); // 空闲
       macos_tray_->setTooltip("Duorou - Ready");
     } else if (status == "processing") {
-      macos_tray_->setIcon("⚡"); // 闪电表示处理中
+      macos_tray_->setSystemIcon(); // 处理中
       macos_tray_->setTooltip("Duorou - Processing...");
     } else if (status == "error") {
-      macos_tray_->setIcon("❌"); // 红叉表示错误
+      macos_tray_->setSystemIcon(); // 红叉表示错误
       macos_tray_->setTooltip("Duorou - Error occurred");
     } else if (status == "success") {
-      macos_tray_->setIcon("✅"); // 绿勾表示成功
+      macos_tray_->setSystemIcon(); // 绿勾表示成功
       macos_tray_->setTooltip("Duorou - Task completed");
     } else {
-      macos_tray_->setIcon("🌸"); // 默认图标
+      macos_tray_->setSystemIcon(); // 默认
       macos_tray_->setTooltip("Duorou - AI Desktop Assistant");
     }
   }

@@ -134,12 +134,12 @@ void ImageView::create_prompt_area() {
     gtk_widget_set_margin_top(button_box, 5);
     
     // 创建生成按钮
-    generate_button_ = gtk_button_new_with_label("🎨 Generate Image");
+    generate_button_ = gtk_button_new_with_label("Generate Image");
     gtk_widget_set_size_request(generate_button_, 150, 40);
     gtk_widget_add_css_class(generate_button_, "generate-button");
     
     // 创建清空按钮
-    GtkWidget* clear_button = gtk_button_new_with_label("🗑️ Clear");
+    GtkWidget* clear_button = gtk_button_new_with_label("Clear");
     gtk_widget_set_size_request(clear_button, 100, 40);
     
     // 组装组件

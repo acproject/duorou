@@ -501,6 +501,7 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     if (state_.is_prefill) {
       attention_output =
           attention_->compute(q_proj, k_proj, v_proj, attention_mask);
+      updateKVCache(layer_idx, k_proj, v_proj, layer_idx);
     } else {
       attention_output = attention_->computeWithCache(
           q_proj, k_proj, v_proj, state_.key_cache[layer_idx],
@@ -1139,104 +1140,6 @@ void Qwen25VLModularEngine::initializeKVCache() {
               << std::endl;
     throw;
   }
-  //   // Calculate optimal cache size based on available memory (like llama.cpp
-  //   // n_ctx calculation)
-  //   const size_t available_memory_gb = 8; // Conservative estimate
-  //   const size_t bytes_per_element = sizeof(float);
-  //   const size_t elements_per_layer = config_.num_key_value_heads *
-  //   kv_head_dim;
-
-  //   // 修复：正确计算每层可用的序列长度
-  //   const size_t total_memory_bytes = available_memory_gb * 1024 * 1024 *
-  //   1024; const size_t memory_for_kv =
-  //       total_memory_bytes / 4; // Use 25% of memory for KV cache
-  //   const size_t memory_per_layer = memory_for_kv /
-  //   config_.num_hidden_layers; const size_t memory_per_kv_pair =
-  //   memory_per_layer / 2; // K and V caches const size_t max_seq_length =
-  //       memory_per_kv_pair / (elements_per_layer * bytes_per_element);
-
-  //   // 直接使用计算出的序列长度，添加合理的上限
-  //   uint32_t memory_based_length = static_cast<uint32_t>(max_seq_length);
-
-  //   // 限制缓存长度在合理范围内：最小512，最大4096（对于大多数应用足够）
-  //   uint32_t optimal_cache_length = std::min({
-  //       memory_based_length, config_.max_position_embeddings,
-  //       4096u // 硬编码最大值，防止内存溢出
-  //   });
-
-  //   // Ensure minimum cache size for functionality (like llama.cpp padding
-  //   // strategy)
-  //   optimal_cache_length = std::max(optimal_cache_length, 512u);
-
-  //   std::cerr << "[DEBUG] KV Cache memory calculation (llama.cpp style):"
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   Available memory: " << available_memory_gb << "
-  //   GB"
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   Memory for KV cache: "
-  //             << (memory_for_kv / (1024 * 1024)) << " MB" << std::endl;
-  //   std::cerr << "[DEBUG]   Elements per layer: " << elements_per_layer
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   Max sequence length: " << max_seq_length
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   Original max_position_embeddings: "
-  //             << config_.max_position_embeddings << std::endl;
-  //   std::cerr << "[DEBUG]   Optimal cache length: " << optimal_cache_length
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   head_dim: " << head_dim << std::endl;
-  //   std::cerr << "[DEBUG]   kv_head_dim: " << kv_head_dim << std::endl;
-  //   std::cerr << "[DEBUG]   num_hidden_layers: " << config_.num_hidden_layers
-  //             << std::endl;
-  //   std::cerr << "[DEBUG]   num_key_value_heads: "
-  //             << config_.num_key_value_heads << std::endl;
-
-  //   for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-  //     // 修复：使用正确的4维格式初始化KV缓存 [batch_size, num_kv_heads,
-  //     // seq_length, head_dim]
-  //     这与FastAttention::computeWithCache期望的格式匹配 std::vector<uint32_t>
-  //     cache_shape = {1, config_.num_key_value_heads,
-  //                                          optimal_cache_length,
-  //                                          kv_head_dim};
-
-  //     state_.key_cache.emplace_back(cache_shape);
-  //     state_.value_cache.emplace_back(cache_shape);
-
-  //     if (layer == 0) {
-  //       size_t cache_size_mb =
-  //           (cache_shape[0] * cache_shape[1] * cache_shape[2] *
-  //           cache_shape[3] *
-  //            bytes_per_element * 2) /
-  //           (1024 * 1024);
-  //       std::cerr << "[DEBUG] Layer " << layer << " KV cache shape: ["
-  //                 << cache_shape[0] << ", " << cache_shape[1] << ", "
-  //                 << cache_shape[2] << ", " << cache_shape[3] << "]"
-  //                 << std::endl;
-  //       std::cerr << "[DEBUG] Layer " << layer
-  //                 << " KV cache memory: " << cache_size_mb << " MB per layer"
-  //                 << std::endl;
-  //       std::cerr << "[DEBUG] Total estimated KV cache memory: "
-  //                 << (cache_size_mb * config_.num_hidden_layers) << " MB"
-  //                 << std::endl;
-  //       std::cerr << "[DEBUG] Layer " << layer
-  //                 << " KV cache size: " << state_.key_cache[layer].size
-  //                 << std::endl;
-  //       std::cerr << "[DEBUG] Layer " << layer << " KV cache data size: "
-  //                 << state_.key_cache[layer].data.size() << std::endl;
-  //     }
-  //   }
-
-  //   std::cerr << "[DEBUG] KV Cache initialized for "
-  //             << config_.num_hidden_layers
-  //             << " layers with optimized memory usage" << std::endl;
-
-  //   state_.current_length = 0;
-  //   state_.cache_position = 0;
-
-  // } catch (const std::exception &e) {
-  //   std::cerr << "Exception in KV cache initialization: " << e.what()
-  //             << std::endl;
-  //   throw;
-  // }
 }
 
 void Qwen25VLModularEngine::updateKVCache(uint32_t layer_idx,

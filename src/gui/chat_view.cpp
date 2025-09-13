@@ -508,13 +508,13 @@ void ChatView::create_input_area() {
   gtk_widget_set_focusable(input_entry_, TRUE);
 
   // 创建上传图片按钮
-  upload_image_button_ = gtk_button_new_with_label("🖼️");
+  upload_image_button_ = gtk_button_new_with_label("图");
   gtk_widget_add_css_class(upload_image_button_, "upload-button");
   gtk_widget_set_size_request(upload_image_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_image_button_, "Upload Image");
 
   // 创建上传文件按钮
-  upload_file_button_ = gtk_button_new_with_label("📎");
+  upload_file_button_ = gtk_button_new_with_label("文");
   gtk_widget_add_css_class(upload_file_button_, "upload-button");
   gtk_widget_set_size_request(upload_file_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_file_button_,
@@ -533,10 +533,10 @@ void ChatView::create_input_area() {
     std::cout << "警告: 无法加载录制按钮图标，使用文本替代" << std::endl;
     // 如果图标加载失败，创建文本标签作为替代
     if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("⏹");
+      video_off_image_ = gtk_label_new("停");
     }
     if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("⏺");
+      video_off_image_ = gtk_label_new("录");
     }
   }
 
@@ -690,7 +690,7 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📷 图片: " + std::string(g_path_get_basename(
+          "图片: " + std::string(g_path_get_basename(
                             chat_view->selected_image_path_.c_str()));
     }
 
@@ -699,7 +699,7 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📎 文档: " + std::string(g_path_get_basename(
+          "文档: " + std::string(g_path_get_basename(
                             chat_view->selected_file_path_.c_str()));
     }
 
@@ -752,7 +752,7 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📷 图片: " + std::string(g_path_get_basename(
+          "图片: " + std::string(g_path_get_basename(
                             chat_view->selected_image_path_.c_str()));
     }
 
@@ -761,7 +761,7 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📎 文档: " + std::string(g_path_get_basename(
+          "文档: " + std::string(g_path_get_basename(
                             chat_view->selected_file_path_.c_str()));
     }
 
@@ -1593,7 +1593,7 @@ void ChatView::stop_recording() {
       video_off_image_ = gtk_picture_new_for_filename(
           (icon_path_base + "video-off.png").c_str());
       if (!video_off_image_) {
-        video_off_image_ = gtk_label_new("⏹");
+        video_off_image_ = gtk_label_new("停");
       }
       gtk_widget_set_size_request(video_off_image_, 24, 24);
       gtk_widget_set_visible(video_off_image_, TRUE);

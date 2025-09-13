@@ -263,8 +263,8 @@ void duorou::MacOSTray::show() {
             [statusItem_ retain];
             statusItem_.menu = menu_;
             statusItem_.button.toolTip = @"Duorou";
-            // Set flower emoji as icon
-            setIcon("🌸");
+            // 使用系统图标，避免emoji引发Pango字体问题
+            setSystemIcon();
         }
     }
 }

@@ -349,9 +349,9 @@ public:
           std::min(num_threads, static_cast<int>(context_.num_threads));
     }
     omp_set_num_threads(num_threads);
-    std::vector<Tensor> head_outputs(num_heads_)
+// 已在前面定义了head_outputs，这里删除重复定义
 #pragma omp parallel for schedule(dynamic)
-        for (uint32_t i = 0; i < num_heads_; ++i) {
+    for (uint32_t i = 0; i < num_heads_; ++i) {
       uint32_t kv_head_idx = i / group_size_;
       head_outputs[i] = attention_heads_[i]->computeWithCache(
           query_heads[i], key_heads[kv_head_idx], value_heads[kv_head_idx],

@@ -98,13 +98,13 @@ void VideoSourceDialog::create_content() {
     gtk_box_append(GTK_BOX(content_box_), button_box_);
 
     // 创建桌面录制按钮
-    desktop_button_ = gtk_button_new_with_label("🖥️ 录制桌面");
+    desktop_button_ = gtk_button_new_with_label("录制桌面");
     gtk_widget_set_size_request(desktop_button_, 120, 50);
     gtk_widget_add_css_class(desktop_button_, "suggested-action");
     gtk_box_append(GTK_BOX(button_box_), desktop_button_);
 
     // 创建摄像头按钮
-    camera_button_ = gtk_button_new_with_label("📹 启动摄像头");
+    camera_button_ = gtk_button_new_with_label("启动摄像头");
     gtk_widget_set_size_request(camera_button_, 120, 50);
     gtk_widget_add_css_class(camera_button_, "suggested-action");
     gtk_box_append(GTK_BOX(button_box_), camera_button_);

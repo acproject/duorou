@@ -153,14 +153,15 @@ if(APPLE)
     
     if(OpenMP_INCLUDE_DIR AND OpenMP_LIBRARY)
         set(OpenMP_CXX_FOUND TRUE)
-        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp")
-        set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp")
+        # 修复 macOS 下 OpenMP 编译选项
+        separate_arguments(OpenMP_CXX_FLAGS NATIVE_COMMAND "-Xpreprocessor -fopenmp")
+        separate_arguments(OpenMP_C_FLAGS NATIVE_COMMAND "-Xpreprocessor -fopenmp")
         set(OpenMP_CXX_LIBRARIES "${OpenMP_LIBRARY}")
         set(OpenMP_CXX_LIB_NAMES "omp")
         set(OpenMP_C_LIB_NAMES "omp")
         add_library(OpenMP::OpenMP_CXX INTERFACE IMPORTED)
         set_target_properties(OpenMP::OpenMP_CXX PROPERTIES
-            INTERFACE_COMPILE_OPTIONS "${OpenMP_CXX_FLAGS}"
+            INTERFACE_COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CXX>:-Xpreprocessor;-fopenmp>"
             INTERFACE_INCLUDE_DIRECTORIES "${OpenMP_INCLUDE_DIR}"
             INTERFACE_LINK_LIBRARIES "${OpenMP_LIBRARY}"
         )

@@ -256,7 +256,7 @@ void EnhancedVideoCaptureWindow::create_source_list() {
     gtk_widget_add_css_class(mode_label_, "mode-label");
 
     // 创建刷新按钮
-    refresh_button_ = gtk_button_new_with_label("🔄 刷新列表");
+    refresh_button_ = gtk_button_new_with_label("刷新列表");
     gtk_widget_set_halign(refresh_button_, GTK_ALIGN_END);
     g_signal_connect(refresh_button_, "clicked", G_CALLBACK(on_refresh_button_clicked), this);
 
@@ -315,7 +315,7 @@ void EnhancedVideoCaptureWindow::update_source_list() {
             gtk_widget_set_margin_bottom(hbox, 5);
 
             // 图标
-            const char* icon = window_info.is_desktop ? "🖥️" : "🪟";
+            const char* icon = window_info.is_desktop ? "DESKTOP" : "WIN";
             GtkWidget* icon_label = gtk_label_new(icon);
             gtk_widget_set_size_request(icon_label, 30, -1);
 
