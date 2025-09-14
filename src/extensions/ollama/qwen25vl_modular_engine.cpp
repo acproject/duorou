@@ -1,5 +1,7 @@
 #include "qwen25vl_modular_engine.h"
+#include "algorithms/algorithm_factory.h"
 #include "algorithms/ggml_attention.h"
+#include "algorithms/ggml_feed_forward.h"
 #include "gguf_parser.h"
 #include <algorithm>
 #include <chrono>
@@ -74,15 +76,17 @@ bool Qwen25VLModularEngine::initialize(const Qwen25VLConfig &config) {
               << std::endl;
 
     // 初始化算法组件
-    attention_ = std::make_unique<algorithms::MultiHeadAttention>();
+    attention_ = std::make_unique<algorithms::GGMLAttention>();
     if (!attention_->initialize(model_config, context)) {
-      std::cerr << "Failed to initialize MultiHeadAttention" << std::endl;
+      std::cerr << "Failed to initialize GGMLAttention" << std::endl;
       return false;
     }
 
-    feed_forward_ = std::make_unique<algorithms::FeedForward>();
-    if (!feed_forward_->initialize(model_config, context)) {
-      std::cerr << "Failed to initialize FeedForward" << std::endl;
+    // 使用基于ggml的前馈网络实现
+    // 使用GGML原生实现替代工厂模式
+    feed_forward_ = std::make_unique<algorithms::GGMLFeedForward>();
+    if (!feed_forward_ || !feed_forward_->initialize(model_config, context)) {
+      std::cerr << "Failed to initialize GGML FeedForward" << std::endl;
       return false;
     }
 
@@ -167,16 +171,20 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
 
   try {
     // 修正：max_length应该是总长度限制，而不是新生成token的数量
-    uint32_t max_new_tokens =
-        max_length > input_ids.size() ? max_length - input_ids.size() : 100;
+    // 临时修改：将生成步骤数设置为1次
+    uint32_t max_new_tokens = 2;
+    std::cerr << "[DEBUG] Temporarily set max_new_tokens to 1 for testing"
+              << std::endl;
 
-    // 添加硬性最大长度限制，防止无限循环
-    const uint32_t HARD_MAX_TOKENS = 1024;
-    if (max_new_tokens > HARD_MAX_TOKENS) {
-      max_new_tokens = HARD_MAX_TOKENS;
-      std::cerr << "[WARNING] Limiting max_new_tokens to " << HARD_MAX_TOKENS
-                << " to prevent infinite loops" << std::endl;
-    }
+    // 原始逻辑（已注释）：
+    // uint32_t max_new_tokens =
+    //     max_length > input_ids.size() ? max_length - input_ids.size() : 100;
+    // const uint32_t HARD_MAX_TOKENS = 1024;
+    // if (max_new_tokens > HARD_MAX_TOKENS) {
+    //   max_new_tokens = HARD_MAX_TOKENS;
+    //   std::cerr << "[WARNING] Limiting max_new_tokens to " << HARD_MAX_TOKENS
+    //             << " to prevent infinite loops" << std::endl;
+    // }
 
     for (uint32_t step = 0; step < max_new_tokens; ++step) {
       std::cerr << "[DEBUG] Generation step " << step << "/" << max_new_tokens
@@ -233,6 +241,13 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
             forwardTransformerLayer(hidden_states, layer, &attention_mask);
         std::cerr << "[DEBUG] Transformer layer " << layer << " completed"
                   << std::endl;
+
+        // 在第28层完成后停止Attention计算
+        if (layer >= 27) { // layer从0开始，所以第28层是索引27
+          std::cerr << "[DEBUG] Attention computation stopped after layer "
+                    << layer + 1 << std::endl;
+          break;
+        }
       }
 
       // 生成logits
@@ -248,32 +263,30 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
                                         generated_tokens, repetition_penalty);
       std::cerr << "[DEBUG] Sampled token: " << next_token << std::endl;
 
-      // 详细检查token值
-      std::cerr << "[DEBUG] Token check - sampled: " << next_token
-                << ", EOS candidates: 151645, 151643, 151644" << std::endl;
       generated_tokens.push_back(next_token);
 
       // 更新状态
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件 - 使用动态获取的EOS tokens
-      std::cerr << "[DEBUG] Special tokens - eos_token_id: "
-                << special_tokens_.eos_token_id
-                << ", endoftext_id: " << special_tokens_.endoftext_id
-                << ", im_end_id: " << special_tokens_.im_end_id
-                << ", initialized: "
-                << (special_tokens_.initialized ? "TRUE" : "FALSE")
-                << std::endl;
+      // 检查结束条件 - 使用动态获取的EOS tokens和硬编码的Qwen特殊tokens
+      bool is_eos = false;
 
-      bool is_eos = (next_token == special_tokens_.eos_token_id ||
-                     next_token == special_tokens_.endoftext_id ||
-                     next_token == special_tokens_.im_end_id);
-      std::cerr << "[DEBUG] EOS check result: " << (is_eos ? "TRUE" : "FALSE")
-                << std::endl;
+      // 检查动态加载的特殊tokens
+      if (special_tokens_.initialized) {
+        is_eos = (next_token == special_tokens_.eos_token_id ||
+                  next_token == special_tokens_.endoftext_id ||
+                  next_token == special_tokens_.im_end_id);
+      }
+
+      // 检查Qwen2.5-VL的已知特殊tokens（作为备用）
+      if (!is_eos) {
+        is_eos = (next_token == 151645 || // <|endoftext|>
+                  next_token == 151643 || // <|im_end|>
+                  next_token == 151644);  // 其他EOS token
+      }
+
       if (is_eos) {
-        std::cerr << "[DEBUG] EOS token encountered (" << next_token
-                  << "), stopping generation" << std::endl;
         break;
       }
     }
@@ -299,6 +312,48 @@ Qwen25VLModularEngine::generateText(const std::vector<uint32_t> &input_ids,
   }
 }
 
+GenerationResult Qwen25VLModularEngine::generateTextWithResult(
+    const std::vector<uint32_t> &input_ids, uint32_t max_length,
+    float temperature, uint32_t top_k, float top_p) {
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+  GenerationResult result;
+
+  try {
+    // 调用原有的生成函数
+    std::vector<uint32_t> tokens =
+        generateText(input_ids, max_length, temperature, top_k, top_p);
+
+    // 填充结果结构体
+    result.tokens = tokens;
+    result.last_token_id = tokens.empty() ? 0 : tokens.back();
+    result.finished = true;
+    result.total_tokens = static_cast<uint32_t>(tokens.size());
+    result.stop_reason = "max_length";
+
+    // 检查是否因为特殊token而停止
+    if (!tokens.empty()) {
+      uint32_t last_token = tokens.back();
+      if (last_token == special_tokens_.eos_token_id) {
+        result.stop_reason = "eos_token";
+      } else if (last_token == special_tokens_.endoftext_id) {
+        result.stop_reason = "endoftext_token";
+      }
+    }
+
+  } catch (const std::exception &e) {
+    result.finished = false;
+    result.stop_reason = "error: " + std::string(e.what());
+  }
+
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      end_time - start_time);
+  result.generation_time_ms = duration.count() / 1000.0;
+
+  return result;
+}
+
 std::vector<uint32_t> Qwen25VLModularEngine::generateMultimodal(
     const std::vector<uint32_t> &input_ids,
     const algorithms::Tensor &image_features, uint32_t max_length,
@@ -322,6 +377,49 @@ std::vector<uint32_t> Qwen25VLModularEngine::generateMultimodal(
               << std::endl;
     return {};
   }
+}
+
+GenerationResult Qwen25VLModularEngine::generateMultimodalWithResult(
+    const std::vector<uint32_t> &input_ids,
+    const algorithms::Tensor &image_features, uint32_t max_length,
+    float temperature, uint32_t top_k, float top_p) {
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+  GenerationResult result;
+
+  try {
+    // 调用原有的多模态生成函数
+    std::vector<uint32_t> tokens = generateMultimodal(
+        input_ids, image_features, max_length, temperature, top_k, top_p);
+
+    // 填充结果结构体
+    result.tokens = tokens;
+    result.last_token_id = tokens.empty() ? 0 : tokens.back();
+    result.finished = true;
+    result.total_tokens = static_cast<uint32_t>(tokens.size());
+    result.stop_reason = "max_length";
+
+    // 检查是否因为特殊token而停止
+    if (!tokens.empty()) {
+      uint32_t last_token = tokens.back();
+      if (last_token == special_tokens_.eos_token_id) {
+        result.stop_reason = "eos_token";
+      } else if (last_token == special_tokens_.endoftext_id) {
+        result.stop_reason = "endoftext_token";
+      }
+    }
+
+  } catch (const std::exception &e) {
+    result.finished = false;
+    result.stop_reason = "error: " + std::string(e.what());
+  }
+
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      end_time - start_time);
+  result.generation_time_ms = duration.count() / 1000.0;
+
+  return result;
 }
 
 void Qwen25VLModularEngine::generateTextStreaming(
@@ -356,8 +454,14 @@ void Qwen25VLModularEngine::generateTextStreaming(
   state_.is_prefill = true;
 
   try {
-    uint32_t max_new_tokens =
-        max_length > input_ids.size() ? max_length - input_ids.size() : 100;
+    // 临时修改：将生成步骤数设置为1次
+    uint32_t max_new_tokens = 1;
+    std::cerr << "[DEBUG] Temporarily set max_new_tokens to 1 for streaming"
+              << std::endl;
+
+    // 原始逻辑（已注释）：
+    // uint32_t max_new_tokens =
+    //     max_length > input_ids.size() ? max_length - input_ids.size() : 100;
 
     for (uint32_t step = 0;
          step < max_new_tokens && !streaming_state_.should_stop; ++step) {
@@ -387,6 +491,14 @@ void Qwen25VLModularEngine::generateTextStreaming(
       for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
         hidden_states =
             forwardTransformerLayer(hidden_states, layer, &attention_mask);
+
+        // 在第28层完成后停止Attention计算
+        if (layer >= 27) { // layer从0开始，所以第28层是索引27
+          std::cerr
+              << "[DEBUG] Streaming: Attention computation stopped after layer "
+              << layer + 1 << std::endl;
+          break;
+        }
       }
 
       // 生成logits
@@ -406,10 +518,22 @@ void Qwen25VLModularEngine::generateTextStreaming(
       state_.current_length++;
       state_.cache_position++;
 
-      // 检查结束条件 - 使用动态获取的EOS tokens
-      bool is_eos = (next_token == special_tokens_.eos_token_id ||
-                     next_token == special_tokens_.endoftext_id ||
-                     next_token == special_tokens_.im_end_id);
+      // 检查结束条件 - 使用动态获取的EOS tokens和硬编码的Qwen特殊tokens
+      bool is_eos = false;
+
+      // 检查动态加载的特殊tokens
+      if (special_tokens_.initialized) {
+        is_eos = (next_token == special_tokens_.eos_token_id ||
+                  next_token == special_tokens_.endoftext_id ||
+                  next_token == special_tokens_.im_end_id);
+      }
+
+      // 检查Qwen2.5-VL的已知特殊tokens（作为备用）
+      if (!is_eos) {
+        is_eos = (next_token == 151645 || // <|endoftext|>
+                  next_token == 151643 || // <|im_end|>
+                  next_token == 151644);  // 其他EOS token
+      }
       bool is_final = is_eos || (step == max_new_tokens - 1) ||
                       streaming_state_.should_stop;
 
@@ -417,8 +541,6 @@ void Qwen25VLModularEngine::generateTextStreaming(
       callback(next_token, is_final);
 
       if (is_eos) {
-        std::cerr << "[DEBUG] EOS token encountered in streaming, stopping"
-                  << std::endl;
         break;
       }
     }
@@ -426,8 +548,13 @@ void Qwen25VLModularEngine::generateTextStreaming(
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time);
-    std::cerr << "[DEBUG] Streaming generation completed in "
-              << duration.count() << "ms" << std::endl;
+    // 性能统计更新
+    perf_stats_.total_inference_time += duration.count();
+    perf_stats_.total_tokens += generated_tokens.size();
+    if (perf_stats_.total_inference_time > 0) {
+      perf_stats_.tokens_per_second = (perf_stats_.total_tokens * 1000.0) /
+                                      perf_stats_.total_inference_time;
+    }
 
   } catch (const std::exception &e) {
     std::cerr << "Exception during streaming generation: " << e.what()
@@ -501,10 +628,6 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     // 4. Add & LayerNorm
 
     // 1. 自注意力计算
-    // 应用RoPE位置编码到输入
-    algorithms::Tensor rope_input =
-        rope_processor_->apply(input, state_.cache_position);
-
     // 调试：打印张量维度信息
     std::cout << "[DEBUG] Input tensor shape: [";
     for (size_t i = 0; i < input.shape.size(); ++i) {
@@ -514,34 +637,26 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
     }
     std::cout << "]" << std::endl;
 
-    std::cout << "[DEBUG] RoPE output tensor shape: [";
-    for (size_t i = 0; i < rope_input.shape.size(); ++i) {
-      std::cout << rope_input.shape[i];
-      if (i < rope_input.shape.size() - 1)
-        std::cout << ", ";
-    }
-    std::cout << "]" << std::endl;
-
-    // Q/K/V投影计算
+    // Q/K/V投影计算（不应用RoPE）
     algorithms::Tensor q_proj, k_proj, v_proj;
 
     if (state_.is_prefill) {
       // Prefill阶段：计算完整的Q/K/V投影
       std::cout << "[DEBUG] Prefill stage: computing full Q/K/V projections"
                 << std::endl;
-      q_proj = algorithms::computeLinear(rope_input,
-                                         weights_.q_proj_weights[layer_idx]);
-      k_proj = algorithms::computeLinear(rope_input,
-                                         weights_.k_proj_weights[layer_idx]);
-      v_proj = algorithms::computeLinear(rope_input,
-                                         weights_.v_proj_weights[layer_idx]);
+      q_proj =
+          algorithms::computeLinear(input, weights_.q_proj_weights[layer_idx]);
+      k_proj =
+          algorithms::computeLinear(input, weights_.k_proj_weights[layer_idx]);
+      v_proj =
+          algorithms::computeLinear(input, weights_.v_proj_weights[layer_idx]);
     } else {
       // Decode阶段：只计算新token的Q投影
       std::cout
           << "[DEBUG] Decode stage: computing only Q projection for new token"
           << std::endl;
-      q_proj = algorithms::computeLinear(rope_input,
-                                         weights_.q_proj_weights[layer_idx]);
+      q_proj =
+          algorithms::computeLinear(input, weights_.q_proj_weights[layer_idx]);
       // K/V投影将在注意力计算中按需计算
     }
 
@@ -569,10 +684,10 @@ algorithms::Tensor Qwen25VLModularEngine::forwardTransformerLayer(
                 << std::endl;
     } else {
       // Decode阶段：高效的增量计算
-      algorithms::Tensor new_k_proj = algorithms::computeLinear(
-          rope_input, weights_.k_proj_weights[layer_idx]);
-      algorithms::Tensor new_v_proj = algorithms::computeLinear(
-          rope_input, weights_.v_proj_weights[layer_idx]);
+      algorithms::Tensor new_k_proj =
+          algorithms::computeLinear(input, weights_.k_proj_weights[layer_idx]);
+      algorithms::Tensor new_v_proj =
+          algorithms::computeLinear(input, weights_.v_proj_weights[layer_idx]);
 
       // 先更新缓存，然后进行增量注意力计算
       updateKVCache(layer_idx, new_k_proj, new_v_proj);
@@ -765,7 +880,7 @@ Qwen25VLModularEngine::applyEmbedding(const std::vector<uint32_t> &input_ids) {
     std::cerr << "]" << std::endl;
 
     uint32_t seq_len = input_ids.size();
-    // 修复：添加batch维度以匹配MultiHeadAttention的期望输入格式 [batch_size,
+    // 修复：添加batch维度以匹配GGMLAttention的期望输入格式 [batch_size,
     // seq_len, hidden_size]
     std::vector<uint32_t> shape = {1, seq_len, config_.hidden_size};
 
@@ -1198,7 +1313,7 @@ void Qwen25VLModularEngine::initializeKVCache() {
 
     // 预分配连续内存块，模仿llama.cpp的内存布局
     for (uint32_t layer = 0; layer < config_.num_hidden_layers; ++layer) {
-      // 使用4D布局以匹配MultiHeadAttention期望: [B, num_kv_heads, T, head_dim]
+      // 使用4D布局以匹配GGMLAttention期望: [B, num_kv_heads, T, head_dim]
       // 这样可以与注意力机制的KV缓存接口兼容
       std::vector<uint32_t> cache_shape = {1, config_.num_key_value_heads,
                                            optimal_cache_length, kv_head_dim};
@@ -1399,18 +1514,21 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
     weights_.o_proj_weights.resize(config_.num_hidden_layers);
 
     for (uint32_t i = 0; i < config_.num_hidden_layers; ++i) {
-      // Q投影权重：[hidden_size, hidden_size] - 修复：确保输出维度正确
+      // Q投影权重：[hidden_size, hidden_size] - 标准形状
       weights_.q_proj_weights[i] =
           algorithms::Tensor({config_.hidden_size, config_.hidden_size});
-      // K投影权重：[hidden_size, num_kv_heads * head_dim]
+
+      // K投影权重：[hidden_size, kv_dim] - 修复形状定义
       uint32_t kv_dim = config_.num_key_value_heads *
                         (config_.hidden_size / config_.num_attention_heads);
       weights_.k_proj_weights[i] =
           algorithms::Tensor({config_.hidden_size, kv_dim});
-      // V投影权重：[hidden_size, num_kv_heads * head_dim]
+
+      // V投影权重：[hidden_size, kv_dim] - 修复形状定义
       weights_.v_proj_weights[i] =
           algorithms::Tensor({config_.hidden_size, kv_dim});
-      // O投影权重：[hidden_size, hidden_size]
+
+      // O投影权重：[hidden_size, hidden_size] - 标准形状
       weights_.o_proj_weights[i] =
           algorithms::Tensor({config_.hidden_size, config_.hidden_size});
     }

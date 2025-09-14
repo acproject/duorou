@@ -13,6 +13,7 @@ set(OLLAMA_EXTENSION_SOURCES
     sentencepiece_processor.cpp
     algorithms/bpe_processor.cpp
     algorithms/ggml_attention.cpp
+    algorithms/ggml_feed_forward.cpp
 )
 
 # 收集头文件
@@ -25,6 +26,7 @@ set(OLLAMA_EXTENSION_HEADERS
     sentencepiece_processor.h
     algorithms/bpe_processor.h
     algorithms/ggml_attention.h
+    algorithms/ggml_feed_forward.h
 )
 
 # 创建静态库

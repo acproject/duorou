@@ -4,7 +4,7 @@
 #include "base_algorithm.h"
 #include "../../../../third_party/llama.cpp/ggml/include/ggml.h"
 #include "../../../../third_party/llama.cpp/ggml/include/ggml-backend.h"
-#include <stdint.h>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <string>
@@ -68,7 +68,7 @@ private:
     struct ggml_tensor* tensorToGGML(const Tensor& tensor, const std::string& name = "", bool reshape_for_matmul = false);
     Tensor ggmlToTensor(const struct ggml_tensor* ggml_tensor);
     
-    // Attention computation helpers
+    // Helper methods for attention computation (legacy methods, kept for compatibility)
     struct ggml_tensor* computeAttentionScores(struct ggml_tensor* query, 
                                               struct ggml_tensor* key,
                                               float scale);
@@ -76,6 +76,12 @@ private:
                                           struct ggml_tensor* mask);
     struct ggml_tensor* computeAttentionOutput(struct ggml_tensor* scores,
                                               struct ggml_tensor* value);
+    
+    // Note: Now using ggml_flash_attn_ext() for optimized attention computation
+    // which is processed through standard ggml_compute_forward() pipeline
+    
+    // Cache management helpers
+    void updateCache(Tensor& cache, const Tensor& new_data, uint32_t position);
 };
 
 // New: High-performance linear projection via GGML

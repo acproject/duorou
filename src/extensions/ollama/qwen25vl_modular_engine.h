@@ -21,7 +21,6 @@
 
 #include "algorithms/algorithm_factory.h"
 #include "algorithms/base_algorithm.h"
-#include "algorithms/feed_forward.h"
 #include "algorithms/matrix_operations.h"
 #include "algorithms/rope_processor.h"
 
@@ -99,6 +98,16 @@ struct InferenceState {
   bool use_parallel = false;                   // 是否使用并行计算
 };
 
+// 生成结果结构体
+struct GenerationResult {
+  std::vector<uint32_t> tokens;    // 生成的所有token
+  uint32_t last_token_id = 0;      // 最后生成的token ID
+  bool finished = false;           // 是否完成生成
+  std::string stop_reason = "";    // 停止原因
+  uint32_t total_tokens = 0;       // 总token数
+  double generation_time_ms = 0.0; // 生成时间(毫秒)
+};
+
 // 流式生成回调函数类型
 // 参数：新生成的token ID，是否为最后一个token
 using StreamingCallback = std::function<void(uint32_t token_id, bool is_final)>;
@@ -129,12 +138,24 @@ public:
                                      float temperature = 1.0f,
                                      uint32_t top_k = 50, float top_p = 0.9f);
 
+  // 文本生成（返回详细结果）
+  GenerationResult
+  generateTextWithResult(const std::vector<uint32_t> &input_ids,
+                         uint32_t max_length = 512, float temperature = 1.0f,
+                         uint32_t top_k = 50, float top_p = 0.9f);
+
   // 多模态推理（文本+图像）
   std::vector<uint32_t>
   generateMultimodal(const std::vector<uint32_t> &input_ids,
                      const algorithms::Tensor &image_features,
                      uint32_t max_length = 512, float temperature = 1.0f,
                      uint32_t top_k = 50, float top_p = 0.9f);
+
+  // 多模态推理（返回详细结果）
+  GenerationResult generateMultimodalWithResult(
+      const std::vector<uint32_t> &input_ids,
+      const algorithms::Tensor &image_features, uint32_t max_length = 512,
+      float temperature = 1.0f, uint32_t top_k = 50, float top_p = 0.9f);
 
   // 流式文本生成
   void generateTextStreaming(const std::vector<uint32_t> &input_ids,
@@ -182,12 +203,12 @@ private:
   InferenceState state_;
   StreamingState streaming_state_;
   PerformanceStats perf_stats_;
-  QwenTokens special_tokens_; // 特殊token ID
+  QwenTokens special_tokens_;   // 特殊token ID
   ThreadPoolState thread_pool_; // 线程池状态
 
   // 算法组件
   std::unique_ptr<algorithms::IAttentionAlgorithm> attention_;
-  std::unique_ptr<algorithms::FeedForward> feed_forward_;
+  std::unique_ptr<algorithms::IFeedForwardAlgorithm> feed_forward_;
   std::unique_ptr<algorithms::RoPEProcessor> rope_processor_;
   std::unique_ptr<algorithms::MatrixOperations> matrix_ops_;
 
@@ -260,13 +281,14 @@ private:
   bool loadSpecialTokens(const GGUFParser &parser);
 
   // GGML矩阵乘法辅助函数
-  algorithms::Tensor performGGMLMatMul(const algorithms::Tensor &a, const algorithms::Tensor &b);
+  algorithms::Tensor performGGMLMatMul(const algorithms::Tensor &a,
+                                       const algorithms::Tensor &b);
 
   // 多线程相关方法
   void initializeThreadPool(uint32_t num_threads = 4);
   void shutdownThreadPool();
   void enqueueTask(std::function<void()> task);
-  
+
   // 并行Transformer层计算（批处理模式）
   std::vector<algorithms::Tensor> forwardTransformerLayersParallel(
       const std::vector<algorithms::Tensor> &inputs,
