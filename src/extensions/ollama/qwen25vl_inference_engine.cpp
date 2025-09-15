@@ -22,7 +22,7 @@ Qwen25VLInferenceEngine::Qwen25VLInferenceEngine()
       model_loaded_(false), verbose_(false), max_sequence_length_(2048),
       num_threads_(1), parallel_processing_enabled_(false),
       quantization_enabled_(false), quantization_type_("none"),
-      total_inference_time_(0.0), total_tokens_generated_(0) {
+      total_inference_time_(0.0), total_tokens_generated_(0), vocab_(nullptr) {
   log("INFO", "Qwen25VLInferenceEngine initialized with default settings");
 }
 
@@ -35,7 +35,7 @@ Qwen25VLInferenceEngine::Qwen25VLInferenceEngine(bool verbose)
       model_loaded_(false), verbose_(verbose), max_sequence_length_(2048),
       num_threads_(1), parallel_processing_enabled_(false),
       quantization_enabled_(false), quantization_type_("none"),
-      total_inference_time_(0.0), total_tokens_generated_(0) {
+      total_inference_time_(0.0), total_tokens_generated_(0), vocab_(nullptr) {
   log("INFO", "Qwen25VLInferenceEngine initialized with verbose=" +
                   std::to_string(verbose));
 }
@@ -105,8 +105,9 @@ bool Qwen25VLInferenceEngine::unloadModel() {
   output_projection_.data.clear();
 
   // 清空词汇表
-  vocab_.clear();
-  reverse_vocab_.clear();
+  vocab_.reset();
+  legacy_vocab_.clear();
+  legacy_reverse_vocab_.clear();
 
   model_loaded_ = false;
   log("INFO", "Model unloaded successfully");
@@ -219,8 +220,37 @@ Qwen25VLInferenceEngine::tokenize(const std::string &text) {
   std::cout << "[DEBUG] Tokenizing text: \"" << text << "\"" << std::endl;
   log("INFO", "Tokenizing text: " + text);
 
-  // 改进的占位符实现 - 为中文文本提供合理的token
   std::vector<int32_t> tokens;
+  
+  // 如果vocab_已初始化，使用llama.cpp的分词功能
+  if (vocab_) {
+    try {
+      // 使用llama.cpp的分词功能
+      std::vector<int32_t> llama_tokens = vocab_->tokenize(text, false, true);
+      
+      // 转换为int32_t并添加BOS token
+      tokens.reserve(llama_tokens.size() + 1);
+      tokens.push_back(bos_token_id_); // BOS token
+      
+      for (const auto& token : llama_tokens) {
+        tokens.push_back(token); // llama_token is already int32_t
+      }
+      
+      std::cout << "[DEBUG] Used llama.cpp tokenizer, got " << tokens.size() << " tokens: ";
+      for (size_t i = 0; i < tokens.size() && i < 10; ++i) {
+        std::cout << tokens[i] << " ";
+      }
+      if (tokens.size() > 10) std::cout << "...";
+      std::cout << std::endl;
+      
+      return tokens;
+    } catch (const std::exception& e) {
+      std::cout << "[DEBUG] llama.cpp tokenizer failed: " << e.what() 
+                << ", falling back to legacy tokenizer" << std::endl;
+    }
+  }
+
+  // Fallback: 使用legacy分词实现
   tokens.push_back(bos_token_id_); // BOS token
 
   // 为常见的中文词汇提供固定的token ID
@@ -256,7 +286,7 @@ Qwen25VLInferenceEngine::tokenize(const std::string &text) {
     }
   }
 
-  std::cout << "[DEBUG] Tokenized into " << tokens.size() << " tokens: ";
+  std::cout << "[DEBUG] Used legacy tokenizer, got " << tokens.size() << " tokens: ";
   for (size_t i = 0; i < tokens.size() && i < 10; ++i) {
     std::cout << tokens[i] << " ";
   }
@@ -485,16 +515,16 @@ int32_t Qwen25VLInferenceEngine::getVocabSize() const {
 }
 
 std::string Qwen25VLInferenceEngine::getTokenString(int32_t token_id) const {
-  auto it = reverse_vocab_.find(token_id);
-  if (it != reverse_vocab_.end()) {
+  auto it = legacy_reverse_vocab_.find(token_id);
+  if (it != legacy_reverse_vocab_.end()) {
     return it->second;
   }
   return "<unk>";
 }
 
 int32_t Qwen25VLInferenceEngine::getTokenId(const std::string &token) const {
-  auto it = vocab_.find(token);
-  if (it != vocab_.end()) {
+  auto it = legacy_vocab_.find(token);
+  if (it != legacy_vocab_.end()) {
     return it->second;
   }
   return unk_token_id_;
@@ -547,6 +577,9 @@ bool Qwen25VLInferenceEngine::loadWeights(const std::string &model_path) {
 bool Qwen25VLInferenceEngine::loadVocabulary() {
   log("INFO", "Loading vocabulary");
 
+  // 初始化llama_vocab
+  vocab_ = std::make_unique<llama_vocab>();
+  
   // 尝试从GGUF文件加载词汇表
   if (gguf_parser_) {
     const auto *tokens_kv = gguf_parser_->getMetadata("tokenizer.ggml.tokens");
@@ -569,8 +602,8 @@ bool Qwen25VLInferenceEngine::loadVocabulary() {
       }
 
       // 清空现有词汇表
-      vocab_.clear();
-      reverse_vocab_.clear();
+      legacy_vocab_.clear();
+      legacy_reverse_vocab_.clear();
 
       try {
         // 尝试解析为字符串数组
@@ -578,24 +611,27 @@ bool Qwen25VLInferenceEngine::loadVocabulary() {
         std::cout << "[DEBUG] Successfully parsed " << token_strings.size()
                   << " tokens from GGUF" << std::endl;
 
-        // 构建词汇表映射
+        // 构建legacy词汇表映射（保持兼容性）
         for (size_t i = 0; i < token_strings.size(); ++i) {
           const std::string &token = token_strings[i];
-          vocab_[token] = static_cast<int>(i);
-          reverse_vocab_[static_cast<int>(i)] = token;
+          legacy_vocab_[token] = static_cast<int>(i);
+          legacy_reverse_vocab_[static_cast<int>(i)] = token;
         }
 
+        // TODO: 这里应该从GGUF文件中加载完整的分词器配置到vocab_
+        // 目前先使用legacy映射作为fallback
+        
         // 验证一些关键token
-        if (reverse_vocab_.find(151935) != reverse_vocab_.end()) {
-          std::cout << "[DEBUG] Token 151935: " << reverse_vocab_[151935]
+        if (legacy_reverse_vocab_.find(151935) != legacy_reverse_vocab_.end()) {
+          std::cout << "[DEBUG] Token 151935: " << legacy_reverse_vocab_[151935]
                     << std::endl;
         }
-        if (reverse_vocab_.find(125544) != reverse_vocab_.end()) {
-          std::cout << "[DEBUG] Token 125544: " << reverse_vocab_[125544]
+        if (legacy_reverse_vocab_.find(125544) != legacy_reverse_vocab_.end()) {
+          std::cout << "[DEBUG] Token 125544: " << legacy_reverse_vocab_[125544]
                     << std::endl;
         }
-        if (reverse_vocab_.find(44821) != reverse_vocab_.end()) {
-          std::cout << "[DEBUG] Token 44821: " << reverse_vocab_[44821]
+        if (legacy_reverse_vocab_.find(44821) != legacy_reverse_vocab_.end()) {
+          std::cout << "[DEBUG] Token 44821: " << legacy_reverse_vocab_[44821]
                     << std::endl;
         }
 
@@ -614,25 +650,25 @@ bool Qwen25VLInferenceEngine::loadVocabulary() {
             << config_.vocab_size << " tokens" << std::endl;
   for (int i = 0; i < config_.vocab_size; ++i) {
     std::string token = "token_" + std::to_string(i);
-    vocab_[token] = i;
-    reverse_vocab_[i] = token;
+    legacy_vocab_[token] = i;
+    legacy_reverse_vocab_[i] = token;
   }
 
   // 添加一些常见的特殊token
-  reverse_vocab_[151935] = "<|im_end|>";
-  reverse_vocab_[151643] = "<|endoftext|>";
-  reverse_vocab_[151645] = "<|im_start|>";
+  legacy_reverse_vocab_[151935] = "<|im_end|>";
+  legacy_reverse_vocab_[151643] = "<|endoftext|>";
+  legacy_reverse_vocab_[151645] = "<|im_start|>";
 
   // 添加中文词汇映射
-  reverse_vocab_[125544] = "你";
-  reverse_vocab_[44821] = "好";
+  legacy_reverse_vocab_[125544] = "你";
+  legacy_reverse_vocab_[44821] = "好";
 
-  // 更新vocab_映射
-  vocab_["<|im_end|>"] = 151935;
-  vocab_["<|endoftext|>"] = 151643;
-  vocab_["<|im_start|>"] = 151645;
-  vocab_["你"] = 125544;
-  vocab_["好"] = 44821;
+  // 更新legacy_vocab_映射
+  legacy_vocab_["<|im_end|>"] = 151935;
+  legacy_vocab_["<|endoftext|>"] = 151643;
+  legacy_vocab_["<|im_start|>"] = 151645;
+  legacy_vocab_["你"] = 125544;
+  legacy_vocab_["好"] = 44821;
 
   return true;
 }

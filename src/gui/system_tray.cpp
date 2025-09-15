@@ -612,9 +612,9 @@ private:
                  }
                  
                  // Add check mark if checked
-                 if (item.checked) {
-                     label = "✓ " + label;
-                 }
+                if (item.checked) {
+                    label = "[✓] " + label;
+                }
                  
                  // Add shortcut if present
                  if (!item.shortcut.empty()) {

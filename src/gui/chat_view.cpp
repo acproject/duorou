@@ -508,13 +508,13 @@ void ChatView::create_input_area() {
   gtk_widget_set_focusable(input_entry_, TRUE);
 
   // 创建上传图片按钮
-  upload_image_button_ = gtk_button_new_with_label("🖼️");
+  upload_image_button_ = gtk_button_new_with_label("Image");
   gtk_widget_add_css_class(upload_image_button_, "upload-button");
   gtk_widget_set_size_request(upload_image_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_image_button_, "Upload Image");
 
   // 创建上传文件按钮
-  upload_file_button_ = gtk_button_new_with_label("📎");
+  upload_file_button_ = gtk_button_new_with_label("File");
   gtk_widget_add_css_class(upload_file_button_, "upload-button");
   gtk_widget_set_size_request(upload_file_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_file_button_,
@@ -690,7 +690,7 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📷 图片: " + std::string(g_path_get_basename(
+          "Image: " + std::string(g_path_get_basename(
                             chat_view->selected_image_path_.c_str()));
     }
 
@@ -699,7 +699,7 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📎 文档: " + std::string(g_path_get_basename(
+          "File: " + std::string(g_path_get_basename(
                             chat_view->selected_file_path_.c_str()));
     }
 
@@ -752,7 +752,7 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📷 图片: " + std::string(g_path_get_basename(
+          "Image: " + std::string(g_path_get_basename(
                             chat_view->selected_image_path_.c_str()));
     }
 
@@ -761,7 +761,7 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       if (!full_message.empty())
         full_message += "\n";
       full_message +=
-          "📎 文档: " + std::string(g_path_get_basename(
+          "File: " + std::string(g_path_get_basename(
                             chat_view->selected_file_path_.c_str()));
     }
 

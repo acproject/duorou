@@ -11,6 +11,13 @@ set(OLLAMA_EXTENSION_SOURCES
     ollama_path_resolver.cpp
 )
 
+# llama.cpp源文件
+set(LLAMA_CPP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/llama-vocab.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/unicode.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/unicode-data.cpp
+)
+
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
     gguf_parser.h
@@ -23,6 +30,7 @@ set(OLLAMA_EXTENSION_HEADERS
 add_library(${OLLAMA_EXTENSION_NAME} STATIC
     ${OLLAMA_EXTENSION_SOURCES}
     ${OLLAMA_EXTENSION_HEADERS}
+    ${LLAMA_CPP_SOURCES}
 )
 
 # 设置目标属性
@@ -38,6 +46,9 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
 target_include_directories(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/ggml/include
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )

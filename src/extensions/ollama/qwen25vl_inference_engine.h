@@ -2,6 +2,8 @@
 #define QWEN25VL_INFERENCE_ENGINE_H
 
 #include "gguf_parser.h"
+#include "../../../third_party/llama.cpp/include/llama.h"
+#include "../../../third_party/llama.cpp/src/llama-vocab.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -291,9 +293,11 @@ private:
   // 视觉编码器
   std::unique_ptr<VisionEncoder> vision_encoder_;
 
-  // 词汇表
-  std::unordered_map<std::string, int32_t> vocab_;
-  std::unordered_map<int32_t, std::string> reverse_vocab_;
+  // Vocabulary and tokenization (using llama.cpp)
+  std::unique_ptr<llama_vocab> vocab_;
+  // Keep legacy vocab maps for compatibility if needed
+  std::unordered_map<std::string, int32_t> legacy_vocab_;
+  std::unordered_map<int32_t, std::string> legacy_reverse_vocab_;
 
   // 特殊token
   int32_t bos_token_id_;
