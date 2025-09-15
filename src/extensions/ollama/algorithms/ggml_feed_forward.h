@@ -58,6 +58,7 @@ protected:
     
     // GGML辅助方法
     struct ggml_tensor *tensorToGGML(struct ggml_context *ctx, const Tensor &tensor);
+    struct ggml_tensor *weightToGGML(struct ggml_context *ctx, const Tensor &weight, bool transpose = false);
     Tensor ggmlToTensor(struct ggml_tensor *ggml_tensor);
     
     // 激活函数

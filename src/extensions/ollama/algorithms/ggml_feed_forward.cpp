@@ -118,6 +118,60 @@ struct ggml_tensor *GGMLFeedForward::tensorToGGML(struct ggml_context *ctx, cons
     return result;
 }
 
+// 新增专门用于权重矩阵的转换函数
+struct ggml_tensor *GGMLFeedForward::weightToGGML(struct ggml_context *ctx, const Tensor &weight, bool transpose) {
+    if (weight.shape.empty() || weight.shape.size() != 2) {
+        log("ERROR", "Weight tensor must be 2D");
+        return nullptr;
+    }
+    
+    // 检查内存使用情况
+    size_t tensor_size = weight.data.size() * sizeof(float);
+    size_t available_mem = ggml_get_mem_size(ctx) - ggml_used_mem(ctx);
+    
+    if (tensor_size > available_mem) {
+        log("ERROR", "Insufficient memory for weight tensor creation");
+        return nullptr;
+    }
+    
+    // 根据GGML矩阵乘法规则设置维度
+    // 对于权重矩阵，我们需要确保第一个维度匹配输入的第一个维度
+    int64_t rows = weight.shape[0];
+    int64_t cols = weight.shape[1];
+    
+    if (transpose) {
+        // 转置权重矩阵：[rows, cols] -> [cols, rows]
+        std::swap(rows, cols);
+    }
+    
+    struct ggml_tensor *result = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, rows, cols);
+    
+    if (!result) {
+        log("ERROR", "Failed to create GGML weight tensor - out of memory");
+        return nullptr;
+    }
+    
+    // 复制数据，如果需要转置则进行转置
+    if (!weight.data.empty()) {
+        float *dst = (float *)result->data;
+        const float *src = weight.data.data();
+        
+        if (transpose) {
+            // 转置复制：src[i*cols + j] -> dst[j*rows + i]
+            for (int64_t i = 0; i < weight.shape[0]; ++i) {
+                for (int64_t j = 0; j < weight.shape[1]; ++j) {
+                    dst[j * weight.shape[0] + i] = src[i * weight.shape[1] + j];
+                }
+            }
+        } else {
+            // 直接复制
+            std::memcpy(dst, src, weight.data.size() * sizeof(float));
+        }
+    }
+    
+    return result;
+}
+
 Tensor GGMLFeedForward::ggmlToTensor(struct ggml_tensor *ggml_tensor) {
     if (!ggml_tensor) {
         return Tensor();
@@ -167,14 +221,114 @@ Tensor GGMLFeedForward::compute(const Tensor &input, const Tensor &gate_weights,
         return Tensor();
     }
     
+    // 添加详细的维度调试信息
+    std::cerr << "[DEBUG] FFN compute - Input shape: [";
+    for (size_t i = 0; i < input.shape.size(); ++i) {
+        std::cerr << input.shape[i];
+        if (i < input.shape.size() - 1) std::cerr << ", ";
+    }
+    std::cerr << "]" << std::endl;
+    
+    std::cerr << "[DEBUG] FFN compute - Gate weights shape: [";
+    for (size_t i = 0; i < gate_weights.shape.size(); ++i) {
+        std::cerr << gate_weights.shape[i];
+        if (i < gate_weights.shape.size() - 1) std::cerr << ", ";
+    }
+    std::cerr << "]" << std::endl;
+    
+    std::cerr << "[DEBUG] FFN compute - Up weights shape: [";
+    for (size_t i = 0; i < up_weights.shape.size(); ++i) {
+        std::cerr << up_weights.shape[i];
+        if (i < up_weights.shape.size() - 1) std::cerr << ", ";
+    }
+    std::cerr << "]" << std::endl;
+    
+    std::cerr << "[DEBUG] FFN compute - Down weights shape: [";
+    for (size_t i = 0; i < down_weights.shape.size(); ++i) {
+        std::cerr << down_weights.shape[i];
+        if (i < down_weights.shape.size() - 1) std::cerr << ", ";
+    }
+    std::cerr << "]" << std::endl;
+    
+    // 验证维度兼容性
+    if (input.shape.size() < 2 || gate_weights.shape.size() != 2 || 
+        up_weights.shape.size() != 2 || down_weights.shape.size() != 2) {
+        log("ERROR", "Invalid tensor dimensions for FFN computation");
+        return Tensor();
+    }
+    
+    // 获取维度
+    uint32_t seq_len = input.shape.size() == 3 ? input.shape[1] : input.shape[0];
+    uint32_t hidden_size = input.shape.size() == 3 ? input.shape[2] : input.shape[1];
+    uint32_t intermediate_size = gate_weights.shape[1];
+    
+    std::cerr << "[DEBUG] FFN dimensions - seq_len: " << seq_len 
+              << ", hidden_size: " << hidden_size 
+              << ", intermediate_size: " << intermediate_size << std::endl;
+    
+    // 验证维度匹配
+    if (gate_weights.shape[0] != hidden_size || up_weights.shape[0] != hidden_size) {
+        std::cerr << "[ERROR] FFN weight dimension mismatch!" << std::endl;
+        std::cerr << "[ERROR] Expected gate/up weights first dim: " << hidden_size 
+                  << ", got gate: " << gate_weights.shape[0] 
+                  << ", up: " << up_weights.shape[0] << std::endl;
+        return Tensor();
+    }
+    
+    if (down_weights.shape[0] != intermediate_size || down_weights.shape[1] != hidden_size) {
+        std::cerr << "[ERROR] FFN down weight dimension mismatch!" << std::endl;
+        std::cerr << "[ERROR] Expected down weights shape: [" << intermediate_size 
+                  << ", " << hidden_size << "], got: [" 
+                  << down_weights.shape[0] << ", " << down_weights.shape[1] << "]" << std::endl;
+        return Tensor();
+    }
+    
     // 转换张量到GGML格式
     struct ggml_tensor *ggml_input = tensorToGGML(ctx_, input);
-    struct ggml_tensor *ggml_gate_weights = tensorToGGML(ctx_, gate_weights);
-    struct ggml_tensor *ggml_up_weights = tensorToGGML(ctx_, up_weights);
-    struct ggml_tensor *ggml_down_weights = tensorToGGML(ctx_, down_weights);
+    
+    // 对于权重矩阵，我们需要确保维度顺序符合GGML矩阵乘法规则
+    // GGML矩阵乘法 ggml_mul_mat(W, A) 要求 W->ne[0] == A->ne[0]
+    // 输入张量的第一个维度是hidden_size，所以权重矩阵的第一个维度也应该是hidden_size
+    // 但我们的权重是[hidden_size, intermediate_size]，需要转置为[hidden_size, intermediate_size]
+    bool need_transpose = (gate_weights.shape[0] != hidden_size);
+    
+    struct ggml_tensor *ggml_gate_weights = weightToGGML(ctx_, gate_weights, need_transpose);
+    struct ggml_tensor *ggml_up_weights = weightToGGML(ctx_, up_weights, need_transpose);
+    
+    // down权重需要特殊处理：从[intermediate_size, hidden_size]转换为适合的维度
+    bool down_need_transpose = (down_weights.shape[0] != intermediate_size);
+    struct ggml_tensor *ggml_down_weights = weightToGGML(ctx_, down_weights, down_need_transpose);
     
     if (!ggml_input || !ggml_gate_weights || !ggml_up_weights || !ggml_down_weights) {
         log("ERROR", "Failed to convert tensors to GGML format");
+        return Tensor();
+    }
+    
+    // 添加GGML张量维度调试信息
+    std::cerr << "[DEBUG] GGML tensors created:" << std::endl;
+    std::cerr << "[DEBUG] Input: ne=[" << ggml_input->ne[0] << "," << ggml_input->ne[1] 
+              << "," << ggml_input->ne[2] << "," << ggml_input->ne[3] << "]" << std::endl;
+    std::cerr << "[DEBUG] Gate weights: ne=[" << ggml_gate_weights->ne[0] << "," << ggml_gate_weights->ne[1] 
+              << "," << ggml_gate_weights->ne[2] << "," << ggml_gate_weights->ne[3] << "]" << std::endl;
+    std::cerr << "[DEBUG] Up weights: ne=[" << ggml_up_weights->ne[0] << "," << ggml_up_weights->ne[1] 
+              << "," << ggml_up_weights->ne[2] << "," << ggml_up_weights->ne[3] << "]" << std::endl;
+    std::cerr << "[DEBUG] Down weights: ne=[" << ggml_down_weights->ne[0] << "," << ggml_down_weights->ne[1] 
+              << "," << ggml_down_weights->ne[2] << "," << ggml_down_weights->ne[3] << "]" << std::endl;
+    
+    // 验证GGML矩阵乘法兼容性
+    bool gate_can_mul = (ggml_gate_weights->ne[0] == ggml_input->ne[0]) && 
+                        (ggml_input->ne[2] % ggml_gate_weights->ne[2] == 0) && 
+                        (ggml_input->ne[3] % ggml_gate_weights->ne[3] == 0);
+    bool up_can_mul = (ggml_up_weights->ne[0] == ggml_input->ne[0]) && 
+                      (ggml_input->ne[2] % ggml_up_weights->ne[2] == 0) && 
+                      (ggml_input->ne[3] % ggml_up_weights->ne[3] == 0);
+    
+    std::cerr << "[DEBUG] Matrix multiplication compatibility:" << std::endl;
+    std::cerr << "[DEBUG] Gate projection can_mul_mat: " << gate_can_mul << std::endl;
+    std::cerr << "[DEBUG] Up projection can_mul_mat: " << up_can_mul << std::endl;
+    
+    if (!gate_can_mul || !up_can_mul) {
+        log("ERROR", "FFN weight matrices are not compatible with input for matrix multiplication");
         return Tensor();
     }
     
@@ -187,6 +341,19 @@ Tensor GGMLFeedForward::compute(const Tensor &input, const Tensor &gate_weights,
     
     // 元素级乘法
     struct ggml_tensor *intermediate = ggml_mul(ctx_, activated, up_proj);
+    
+    // 验证down投影的兼容性
+    bool down_can_mul = (ggml_down_weights->ne[0] == intermediate->ne[0]) && 
+                        (intermediate->ne[2] % ggml_down_weights->ne[2] == 0) && 
+                        (intermediate->ne[3] % ggml_down_weights->ne[3] == 0);
+    std::cerr << "[DEBUG] Down projection can_mul_mat: " << down_can_mul << std::endl;
+    
+    if (!down_can_mul) {
+        std::cerr << "[DEBUG] Intermediate tensor: ne=[" << intermediate->ne[0] << "," << intermediate->ne[1] 
+                  << "," << intermediate->ne[2] << "," << intermediate->ne[3] << "]" << std::endl;
+        log("ERROR", "Down weight matrix is not compatible with intermediate tensor for matrix multiplication");
+        return Tensor();
+    }
     
     // 最终投影
     struct ggml_tensor *output = ggml_mul_mat(ctx_, ggml_down_weights, intermediate);

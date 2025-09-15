@@ -1596,6 +1596,59 @@ bool Qwen25VLModularEngine::loadTransformerWeights(
 
 bool Qwen25VLModularEngine::loadWeightsFromGGUF(const GGUFParser &parser) {
   try {
+    std::cerr << "[INFO] Loading weights from GGUF..." << std::endl;
+
+    // 添加FFN权重维度调试信息
+    std::cerr << "[DEBUG] Checking FFN weight dimensions in GGUF file..." << std::endl;
+    for (uint32_t i = 0; i < std::min(config_.num_hidden_layers, 3u); ++i) {
+      std::string layer_prefix = "blk." + std::to_string(i) + ".";
+      
+      // 检查gate权重
+      const GGUFTensorInfo *gate_info = parser.getTensorInfo(layer_prefix + "ffn_gate.weight");
+      if (gate_info) {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_gate.weight dimensions: [";
+        for (size_t j = 0; j < gate_info->dimensions.size(); ++j) {
+          std::cerr << gate_info->dimensions[j];
+          if (j < gate_info->dimensions.size() - 1) std::cerr << ", ";
+        }
+        std::cerr << "]" << std::endl;
+      } else {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_gate.weight not found" << std::endl;
+      }
+      
+      // 检查up权重
+      const GGUFTensorInfo *up_info = parser.getTensorInfo(layer_prefix + "ffn_up.weight");
+      if (up_info) {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_up.weight dimensions: [";
+        for (size_t j = 0; j < up_info->dimensions.size(); ++j) {
+          std::cerr << up_info->dimensions[j];
+          if (j < up_info->dimensions.size() - 1) std::cerr << ", ";
+        }
+        std::cerr << "]" << std::endl;
+      } else {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_up.weight not found" << std::endl;
+      }
+      
+      // 检查down权重
+      const GGUFTensorInfo *down_info = parser.getTensorInfo(layer_prefix + "ffn_down.weight");
+      if (down_info) {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_down.weight dimensions: [";
+        for (size_t j = 0; j < down_info->dimensions.size(); ++j) {
+          std::cerr << down_info->dimensions[j];
+          if (j < down_info->dimensions.size() - 1) std::cerr << ", ";
+        }
+        std::cerr << "]" << std::endl;
+      } else {
+        std::cerr << "[DEBUG] Layer " << i << " ffn_down.weight not found" << std::endl;
+      }
+    }
+    
+    // 打印当前代码中设置的FFN权重维度
+    std::cerr << "[DEBUG] Code expects FFN weight dimensions:" << std::endl;
+    std::cerr << "[DEBUG] Gate/Up weights: [" << config_.hidden_size << ", " << config_.intermediate_size << "]" << std::endl;
+    std::cerr << "[DEBUG] Down weights: [" << config_.intermediate_size << ", " << config_.hidden_size << "]" << std::endl;
+    std::cerr << "[DEBUG] hidden_size=" << config_.hidden_size << ", intermediate_size=" << config_.intermediate_size << std::endl;
+
     // 加载特殊token ID
     if (!loadSpecialTokens(parser)) {
       std::cerr << "Warning: Failed to load special tokens, using defaults"
