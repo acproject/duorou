@@ -618,6 +618,11 @@ Tensor computeLinear(const Tensor &a, const Tensor &w) {
 
   // A_g: [K, M] in ggml dims (represents conventional [M, K])
   struct ggml_tensor *A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K_a, M);
+  
+  // Explicitly ensure higher dimensions are set to 1 (defensive programming)
+  A->ne[2] = 1;
+  A->ne[3] = 1;
+  
   {
     float *dst = (float *)A->data;
     const float *src = a.data.data();
@@ -632,6 +637,11 @@ Tensor computeLinear(const Tensor &a, const Tensor &w) {
 
   // W_g: [K, N] in ggml dims (represents conventional [K, N])
   struct ggml_tensor *W = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K_w, N);
+  
+  // Explicitly ensure higher dimensions are set to 1 (defensive programming)
+  W->ne[2] = 1;
+  W->ne[3] = 1;
+  
   {
     float *dst = (float *)W->data;
     const float *src = w.data.data();
@@ -667,8 +677,30 @@ Tensor computeLinear(const Tensor &a, const Tensor &w) {
   std::cout << "[DEBUG] A.ne[2]=" << A->ne[2] << ", A.ne[3]=" << A->ne[3] << std::endl;
   std::cout << "[DEBUG] can_mul_mat result: " << can_mul << std::endl;
 
+  // Additional debug: Print all tensor dimensions and verify tensor validity
+  std::cout << "[DEBUG] Before ggml_mul_mat call:" << std::endl;
+  std::cout << "[DEBUG] W tensor: ne=[" << W->ne[0] << "," << W->ne[1] << "," << W->ne[2] << "," << W->ne[3] << "]" << std::endl;
+  std::cout << "[DEBUG] A tensor: ne=[" << A->ne[0] << "," << A->ne[1] << "," << A->ne[2] << "," << A->ne[3] << "]" << std::endl;
+  std::cout << "[DEBUG] W tensor data ptr: " << W->data << ", type: " << W->type << std::endl;
+  std::cout << "[DEBUG] A tensor data ptr: " << A->data << ", type: " << A->type << std::endl;
+  
+  // Verify ggml_can_mul_mat conditions one more time right before the call
+  bool final_check = (W->ne[0] == A->ne[0]) && (A->ne[2] % W->ne[2] == 0) && (A->ne[3] % W->ne[3] == 0);
+  std::cout << "[DEBUG] Final ggml_can_mul_mat check result: " << final_check << std::endl;
+  
+  if (!final_check) {
+    std::cout << "[ERROR] ggml_can_mul_mat check failed right before call!" << std::endl;
+    std::cout << "[ERROR] Condition 1 (W->ne[0] == A->ne[0]): " << (W->ne[0] == A->ne[0]) << " (" << W->ne[0] << " == " << A->ne[0] << ")" << std::endl;
+    std::cout << "[ERROR] Condition 2 (A->ne[2] % W->ne[2] == 0): " << (A->ne[2] % W->ne[2] == 0) << " (" << A->ne[2] << " % " << W->ne[2] << " == " << (A->ne[2] % W->ne[2]) << ")" << std::endl;
+    std::cout << "[ERROR] Condition 3 (A->ne[3] % W->ne[3] == 0): " << (A->ne[3] % W->ne[3] == 0) << " (" << A->ne[3] << " % " << W->ne[3] << " == " << (A->ne[3] % W->ne[3]) << ")" << std::endl;
+    ggml_free(ctx);
+    throw std::runtime_error("ggml_can_mul_mat check failed");
+  }
+
   // C = W_g x A_g ; ggml_mul_mat(W, A) -> C.ne[0]=W.ne[1](N), C.ne[1]=A.ne[1](M)
+  std::cout << "[DEBUG] Calling ggml_mul_mat(ctx, W, A)..." << std::endl;
   struct ggml_tensor *C = ggml_mul_mat(ctx, W, A);
+  std::cout << "[DEBUG] ggml_mul_mat call completed successfully" << std::endl;
   ggml_set_name(C, "C_MN");
 
   // Graph and compute

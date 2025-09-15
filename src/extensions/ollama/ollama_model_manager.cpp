@@ -1,4 +1,5 @@
 #include "ollama_model_manager.h"
+#include "../../../third_party/llama.cpp/include/llama.h"
 #include "text_processor.h"
 #include <algorithm>
 #include <chrono>
@@ -486,16 +487,17 @@ bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
     const auto &architecture = parser.getArchitecture();
     model_info.architecture = architecture.name;
     model_info.context_length = architecture.context_length;
-    
+
     // 使用从GGUF文件中解析的vocab_size，如果没有则使用默认值
     if (architecture.vocab_size > 0) {
       model_info.vocab_size = architecture.vocab_size;
-      log("INFO", "Using vocab_size from GGUF: " + std::to_string(architecture.vocab_size));
+      log("INFO", "Using vocab_size from GGUF: " +
+                      std::to_string(architecture.vocab_size));
     } else {
       model_info.vocab_size = 151643; // Qwen2.5VL默认值
       log("WARNING", "Using default vocab_size: 151643");
     }
-    
+
     model_info.has_vision = architecture.has_vision;
 
     // 从GGUF文件中加载词汇表数据
@@ -928,6 +930,73 @@ void GlobalModelManager::shutdown() {
     instance_.reset();
     initialized_ = false;
   }
+}
+
+// 集成函数：使用预配置的llama_model_params加载模型
+struct llama_model *
+llama_model_load_with_params(const char* model_path, struct llama_model_params params) {
+  // 确保llama后端已初始化
+  static bool backend_initialized = false;
+  if (!backend_initialized) {
+    llama_backend_init();
+    backend_initialized = true;
+  }
+
+  // 验证模型路径
+  if (!model_path) {
+    std::cerr << "Model path not provided" << std::endl;
+    return nullptr;
+  }
+
+  // 加载模型
+  struct llama_model *model = llama_model_load_from_file(model_path, params);
+  if (!model) {
+    std::cerr << "Failed to load model from: " << model_path << std::endl;
+    return nullptr;
+  }
+
+  // 验证模型信息
+  const struct llama_vocab *vocab = llama_model_get_vocab(model);
+  int32_t vocab_size = llama_vocab_n_tokens(vocab);
+  int32_t ctx_length = llama_model_n_ctx_train(model);
+  int32_t embd_size = llama_model_n_embd(model);
+
+  std::cout << "Model loaded successfully:" << std::endl;
+  std::cout << "  Vocabulary size: " << vocab_size << std::endl;
+  std::cout << "  Context length: " << ctx_length << std::endl;
+  std::cout << "  Embedding size: " << embd_size << std::endl;
+
+  return model;
+}
+
+// 创建上下文的辅助方法
+struct llama_context *llama_context_create_with_model_info(struct llama_model *model,
+                                                      uint32_t context_length) {
+  if (!model) {
+    std::cerr << "Model cannot be null" << std::endl;
+    return nullptr;
+  }
+
+  struct llama_context_params ctx_params = llama_context_default_params();
+
+  // 设置上下文参数
+  ctx_params.n_ctx =
+      context_length > 0 ? context_length : llama_model_n_ctx_train(model);
+  ctx_params.n_batch = 512;
+  ctx_params.n_ubatch = 512;
+  ctx_params.n_seq_max = 1;
+  ctx_params.n_threads = -1; // 使用所有可用线程
+  ctx_params.n_threads_batch = -1;
+  ctx_params.embeddings = false;
+  ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+  // 创建上下文
+  struct llama_context *ctx = llama_init_from_model(model, ctx_params);
+  if (!ctx) {
+    std::cerr << "Failed to create llama context" << std::endl;
+    return nullptr;
+  }
+
+  return ctx;
 }
 
 } // namespace ollama

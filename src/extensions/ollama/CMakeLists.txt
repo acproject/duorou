@@ -74,6 +74,7 @@ endif()
 
 # 链接库
 target_link_libraries(${OLLAMA_EXTENSION_NAME} PRIVATE
+    llama
     ggml-base
     ggml-cpu
 )

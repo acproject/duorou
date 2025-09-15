@@ -10,6 +10,10 @@
 #include "ollama_path_resolver.h"
 #include "text_processor.h"
 
+// Forward declarations for llama.cpp types
+struct llama_model;
+struct llama_model_params;
+
 namespace duorou {
 namespace extensions {
 namespace ollama {
@@ -147,6 +151,9 @@ private:
 
 // 工厂函数
 std::unique_ptr<OllamaModelManager> createOllamaModelManager(bool verbose = false);
+
+// 集成函数：使用预配置的llama_model_params和文件路径加载模型
+struct llama_model* llama_model_load_with_params(const char* model_path, struct llama_model_params params);
 
 // 全局模型管理器（单例模式）
 class GlobalModelManager {
