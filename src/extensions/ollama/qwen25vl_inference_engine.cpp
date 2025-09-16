@@ -151,6 +151,8 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
   // 前向传播
   std::cout << "[DEBUG] Starting forward pass loop" << std::endl;
   std::vector<int32_t> generated_tokens;
+  int consecutive_zeros = 0; // 连续采样到0的次数
+  
   for (int i = 0; i < max_tokens; ++i) {
     std::cout << "[DEBUG] Forward pass iteration: " << i << std::endl;
     log("DEBUG", "Forward pass iteration: " + std::to_string(i));
@@ -165,12 +167,42 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
 
     // 检查多种可能的EOS token
     if (next_token == eos_token_id_ || next_token == 151935 ||
-        next_token == 151643) {
+        next_token == 151643 || next_token == 151645) {
       std::cout << "[DEBUG] EOS token encountered: " << next_token
                 << " (configured eos_token_id_: " << eos_token_id_ << ")"
                 << std::endl;
       log("DEBUG", "EOS token encountered, stopping generation");
       break;
+    }
+
+    // 检查连续采样到token 0的情况
+    if (next_token == 0) {
+      consecutive_zeros++;
+      std::cout << "[DEBUG] Consecutive zeros: " << consecutive_zeros << std::endl;
+      if (consecutive_zeros >= 3) {
+        std::cout << "[DEBUG] Too many consecutive zeros, treating as EOS and stopping" << std::endl;
+        log("WARNING", "Too many consecutive zeros, stopping generation");
+        break;
+      }
+    } else {
+      consecutive_zeros = 0; // 重置计数器
+    }
+
+    // 检查是否生成了有意义的内容
+    if (generated_tokens.size() >= 5) {
+      // 检查最近5个token是否都相同（可能陷入循环）
+      bool all_same = true;
+      for (int j = 1; j < 5; ++j) {
+        if (generated_tokens[generated_tokens.size() - j] != generated_tokens[generated_tokens.size() - 1]) {
+          all_same = false;
+          break;
+        }
+      }
+      if (all_same) {
+        std::cout << "[DEBUG] Detected repetitive pattern, stopping generation" << std::endl;
+        log("WARNING", "Detected repetitive pattern, stopping generation");
+        break;
+      }
     }
 
     generated_tokens.push_back(next_token);
@@ -179,6 +211,13 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
     // 添加安全检查，避免无限循环
     if (input_tokens.size() > 1000) {
       log("WARNING", "Input tokens exceeded 1000, stopping generation");
+      break;
+    }
+    
+    // 如果生成了足够的内容，考虑提前停止
+    if (generated_tokens.size() >= max_tokens * 0.8 && next_token == 0) {
+      std::cout << "[DEBUG] Generated sufficient content and hit token 0, stopping" << std::endl;
+      log("INFO", "Generated sufficient content, stopping generation");
       break;
     }
   }
@@ -1694,6 +1733,45 @@ Tensor Qwen25VLInferenceEngine::processVisionInput(
 
 // 采样方法
 int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
+  std::cout << "[DEBUG] Entering sampleToken with " << logits.data.size() << " logits" << std::endl;
+  
+  // 检查logits是否有效
+  if (logits.data.empty()) {
+    log("ERROR", "Empty logits tensor");
+    return 1; // 返回token 1而不是0
+  }
+
+  // 检查logits数值分布
+  float max_logit = logits.data[0];
+  float min_logit = logits.data[0];
+  float sum_logits = 0.0f;
+  bool all_same = true;
+  
+  for (size_t i = 0; i < logits.data.size(); ++i) {
+    if (logits.data[i] > max_logit) max_logit = logits.data[i];
+    if (logits.data[i] < min_logit) min_logit = logits.data[i];
+    sum_logits += logits.data[i];
+    if (i > 0 && logits.data[i] != logits.data[0]) all_same = false;
+  }
+  
+  std::cout << "[DEBUG] Logits stats - min: " << min_logit << ", max: " << max_logit 
+            << ", range: " << (max_logit - min_logit) << ", all_same: " << all_same << std::endl;
+  
+  // 如果所有logits都相同或范围太小，使用后备采样
+  if (all_same || (max_logit - min_logit) < 1e-6) {
+    std::cout << "[DEBUG] Logits are uniform, using fallback random sampling" << std::endl;
+    log("WARNING", "Logits are uniform, using fallback sampling");
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    // 避免选择token 0，从1开始选择
+    std::uniform_int_distribution<int32_t> dis(1, std::min(static_cast<int32_t>(logits.data.size()) - 1, 1000));
+    int32_t fallback_token = dis(gen);
+    
+    std::cout << "[DEBUG] Fallback selected token: " << fallback_token << std::endl;
+    return fallback_token;
+  }
+
   // 动态计算采样所需的内存大小
   size_t vocab_size = logits.data.size();
   size_t total_mem_size = 0;
@@ -1726,7 +1804,7 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
   struct ggml_context *ctx = ggml_init(params);
   if (!ctx) {
     log("ERROR", "Failed to initialize ggml context for sampling");
-    // 回退到贪心采样
+    // 回退到改进的贪心采样
     int32_t best_token = 0;
     float best_score = logits.data[0];
     for (size_t i = 1; i < logits.data.size(); ++i) {
@@ -1735,6 +1813,21 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
         best_token = static_cast<int32_t>(i);
       }
     }
+    
+    // 如果最佳token是0且不是压倒性优势，选择第二好的
+    if (best_token == 0 && best_score - min_logit < (max_logit - min_logit) * 0.8) {
+      float second_best = min_logit;
+      int32_t second_token = 1;
+      for (size_t i = 1; i < logits.data.size(); ++i) {
+        if (logits.data[i] > second_best && logits.data[i] < best_score) {
+          second_best = logits.data[i];
+          second_token = static_cast<int32_t>(i);
+        }
+      }
+      std::cout << "[DEBUG] Avoiding token 0, using second best: " << second_token << std::endl;
+      return second_token;
+    }
+    
     return best_token;
   }
 
@@ -1769,11 +1862,40 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
     float cumulative_prob = 0.0f;
     float *probs_data = (float *)probs->data;
 
+    // 检查概率分布
+    std::cout << "[DEBUG] First few probabilities: ";
+    for (size_t i = 0; i < std::min(size_t(5), logits.data.size()); ++i) {
+      std::cout << "p[" << i << "]=" << probs_data[i] << " ";
+    }
+    std::cout << std::endl;
+
     for (size_t i = 0; i < logits.data.size(); ++i) {
       cumulative_prob += probs_data[i];
       if (random_val <= cumulative_prob) {
         result_token = static_cast<int32_t>(i);
         break;
+      }
+    }
+
+    // 如果选中了token 0且其概率不是压倒性的，重新采样
+    if (result_token == 0 && probs_data[0] < 0.8f) {
+      std::cout << "[DEBUG] Token 0 selected but probability is low (" << probs_data[0] 
+                << "), resampling..." << std::endl;
+      
+      // 找到概率第二高的token
+      float second_best_prob = 0.0f;
+      int32_t second_best_token = 1;
+      for (size_t i = 1; i < logits.data.size(); ++i) {
+        if (probs_data[i] > second_best_prob) {
+          second_best_prob = probs_data[i];
+          second_best_token = static_cast<int32_t>(i);
+        }
+      }
+      
+      if (second_best_prob > 0.1f) {
+        result_token = second_best_token;
+        std::cout << "[DEBUG] Using second best token: " << result_token 
+                  << " with probability: " << second_best_prob << std::endl;
       }
     }
 
@@ -1790,11 +1912,26 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
         result_token = static_cast<int32_t>(i);
       }
     }
+    
+    // 如果最佳token是0且不是压倒性优势，选择第二好的
+    if (result_token == 0 && best_score - min_logit < (max_logit - min_logit) * 0.8) {
+      float second_best = min_logit;
+      int32_t second_token = 1;
+      for (size_t i = 1; i < logits.data.size(); ++i) {
+        if (logits_data[i] > second_best && logits_data[i] < best_score) {
+          second_best = logits_data[i];
+          second_token = static_cast<int32_t>(i);
+        }
+      }
+      std::cout << "[DEBUG] Greedy: avoiding token 0, using second best: " << second_token << std::endl;
+      result_token = second_token;
+    }
   }
 
   // 清理ggml上下文
   ggml_free(ctx);
 
+  std::cout << "[DEBUG] Final selected token: " << result_token << std::endl;
   return result_token;
 }
 
