@@ -6,33 +6,31 @@ set(OLLAMA_EXTENSION_NAME "duorou_ollama_extension")
 # 收集源文件
 set(OLLAMA_EXTENSION_SOURCES
     gguf_parser.cpp
-    qwen25vl_modular_engine.cpp
+    qwen25vl_inference_engine.cpp
     ollama_model_manager.cpp
     ollama_path_resolver.cpp
-    text_processor.cpp
-    sentencepiece_processor.cpp
-    algorithms/bpe_processor.cpp
-    algorithms/ggml_attention.cpp
-    algorithms/ggml_feed_forward.cpp
+)
+
+# llama.cpp源文件
+set(LLAMA_CPP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/llama-vocab.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/unicode.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src/unicode-data.cpp
 )
 
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
     gguf_parser.h
-    qwen25vl_modular_engine.h
+    qwen25vl_inference_engine.h
     ollama_model_manager.h
     ollama_path_resolver.h
-    text_processor.h
-    sentencepiece_processor.h
-    algorithms/bpe_processor.h
-    algorithms/ggml_attention.h
-    algorithms/ggml_feed_forward.h
 )
 
 # 创建静态库
 add_library(${OLLAMA_EXTENSION_NAME} STATIC
     ${OLLAMA_EXTENSION_SOURCES}
     ${OLLAMA_EXTENSION_HEADERS}
+    ${LLAMA_CPP_SOURCES}
 )
 
 # 设置目标属性
@@ -48,7 +46,9 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
 target_include_directories(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/ggml/include
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
@@ -69,20 +69,6 @@ elseif(MSVC)
     target_compile_options(${OLLAMA_EXTENSION_NAME} PRIVATE
         /W4
         /wd4100  # 未引用的形参
-    )
-endif()
-
-# 链接库
-target_link_libraries(${OLLAMA_EXTENSION_NAME} PRIVATE
-    llama
-    ggml-base
-    ggml-cpu
-)
-
-# 平台特定链接库
-if(APPLE)
-    target_link_libraries(${OLLAMA_EXTENSION_NAME} PRIVATE
-        "-framework Accelerate"
     )
 endif()
 

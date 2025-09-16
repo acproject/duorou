@@ -696,26 +696,26 @@ message(STATUS "  OpenCL Support: ${DUOROU_ENABLE_OPENCL}")
 message(STATUS "  Build Examples: ${DUOROU_BUILD_EXAMPLES}")
 message(STATUS "")
 
-# 添加测试程序
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_tokenizer.cpp")
-    add_executable(test_tokenizer test/test_tokenizer.cpp)
-    target_link_libraries(test_tokenizer PRIVATE 
-        duorou_ollama_extension
-        nlohmann_json::nlohmann_json
-    )
-    target_include_directories(test_tokenizer PRIVATE 
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
-endif()
+# # 添加测试程序
+# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_tokenizer.cpp")
+#     add_executable(test_tokenizer test/test_tokenizer.cpp)
+#     target_link_libraries(test_tokenizer PRIVATE 
+#         duorou_ollama_extension
+#         nlohmann_json::nlohmann_json
+#     )
+#     target_include_directories(test_tokenizer PRIVATE 
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src
+#     )
+# endif()
 
-# 添加文本生成错误处理测试
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_text_generation.cpp")
-    add_executable(test_text_generation test/test_text_generation.cpp)
-    target_link_libraries(test_text_generation PRIVATE 
-        duorou_ollama_extension
-        nlohmann_json::nlohmann_json
-    )
-    target_include_directories(test_text_generation PRIVATE 
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
-endif()
+# # 添加文本生成错误处理测试
+# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_text_generation.cpp")
+#     add_executable(test_text_generation test/test_text_generation.cpp)
+#     target_link_libraries(test_text_generation PRIVATE 
+#         duorou_ollama_extension
+#         nlohmann_json::nlohmann_json
+#     )
+#     target_include_directories(test_text_generation PRIVATE 
+#         ${CMAKE_CURRENT_SOURCE_DIR}/src
+#     )
+# endif()

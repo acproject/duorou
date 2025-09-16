@@ -3,19 +3,19 @@
 
 #include <cstdint>
 #include <fstream>
-#include <memory>
+#include <vector>
 #include <string>
 #include <unordered_map>
-#include <vector>
+#include <memory>
 
 #ifdef _WIN32
-#include <io.h>
-#include <windows.h>
+    #include <windows.h>
+    #include <io.h>
 #else
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+    #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <unistd.h>
 #endif
 
 namespace duorou {
@@ -45,8 +45,6 @@ enum class GGMLTensorType : uint32_t {
   F16 = 1,
   Q4_0 = 2,
   Q4_1 = 3,
-  // Q4_2 = 4, // removed
-  // Q4_3 = 5, // removed
   Q5_0 = 6,
   Q5_1 = 7,
   Q8_0 = 8,
@@ -56,25 +54,7 @@ enum class GGMLTensorType : uint32_t {
   Q4_K = 12,
   Q5_K = 13,
   Q6_K = 14,
-  Q8_K = 15,
-  IQ2_XXS = 16,
-  IQ2_XS = 17,
-  IQ3_XXS = 18,
-  IQ1_S = 19,
-  IQ4_NL = 20,
-  IQ3_S = 21,
-  IQ2_S = 22,
-  IQ4_XS = 23,
-  I8 = 24,
-  I16 = 25,
-  I32 = 26,
-  I64 = 27,
-  F64 = 28,
-  IQ1_M = 29,
-  BF16 = 30,
-  TQ1_0 = 34,
-  TQ2_0 = 35,
-  MXFP4 = 39
+  Q8_K = 15
 };
 
 // GGUF键值对结构
@@ -117,19 +97,18 @@ struct GGUFTensorInfo {
 
 // 模型架构信息
 struct ModelArchitecture {
-  std::string name;                              // 架构名称 (如 "qwen25vl")
-  uint32_t vocab_size;                           // 词汇表大小
-  uint32_t context_length;                       // 上下文长度
-  uint32_t embedding_length;                     // 嵌入维度
-  uint32_t block_count;                          // 层数
-  uint32_t feed_forward_length;                  // 前馈网络维度
-  uint32_t attention_head_count;                 // 注意力头数
-  uint32_t attention_head_count_kv;              // KV注意力头数
-  float layer_norm_rms_epsilon;                  // RMS归一化epsilon
-  uint32_t rope_dimension_count;                 // RoPE维度数
-  float rope_freq_base;                          // RoPE频率基数
+  std::string name;                    // 架构名称 (如 "qwen25vl")
+  uint32_t context_length;             // 上下文长度
+  uint32_t embedding_length;           // 嵌入维度
+  uint32_t block_count;                // 层数
+  uint32_t feed_forward_length;        // 前馈网络维度
+  uint32_t attention_head_count;       // 注意力头数
+  uint32_t attention_head_count_kv;    // KV注意力头数
+  float layer_norm_rms_epsilon;        // RMS归一化epsilon
+  uint32_t rope_dimension_count;       // RoPE维度数
+  float rope_freq_base;                // RoPE频率基数
   std::vector<uint64_t> rope_dimension_sections; // RoPE维度分段
-
+  
   // 视觉相关参数（用于多模态模型）
   bool has_vision = false;
   uint32_t vision_patch_size = 0;
@@ -139,7 +118,7 @@ struct ModelArchitecture {
 
 /**
  * @brief GGUF文件解析器
- *
+ * 
  * 直接解析GGUF格式文件，提取模型架构信息和张量数据，
  * 不依赖llama.cpp的架构映射机制
  */
@@ -147,7 +126,7 @@ class GGUFParser {
 public:
   explicit GGUFParser(bool verbose = false);
   ~GGUFParser();
-
+  
   // 内存映射相关
   bool useMmap() const { return use_mmap_; }
   void setUseMmap(bool use_mmap) { use_mmap_ = use_mmap; }
@@ -163,50 +142,39 @@ public:
    * 获取模型架构信息
    * @return 模型架构信息
    */
-  const ModelArchitecture &getArchitecture() const { return architecture_; }
+  const ModelArchitecture& getArchitecture() const { return architecture_; }
 
   /**
    * 获取元数据键值对
    * @param key 键名
    * @return 键值对指针，不存在返回nullptr
    */
-  const GGUFKeyValue *getMetadata(const std::string &key) const;
+  const GGUFKeyValue* getMetadata(const std::string &key) const;
 
   /**
    * 获取张量信息
    * @param name 张量名称
    * @return 张量信息指针，不存在返回nullptr
    */
-  const GGUFTensorInfo *getTensorInfo(const std::string &name) const;
+  const GGUFTensorInfo* getTensorInfo(const std::string &name) const;
 
   /**
    * 获取所有张量信息
    * @return 张量信息列表
    */
-  const std::vector<GGUFTensorInfo> &getAllTensorInfos() const {
-    return tensor_infos_;
-  }
+  const std::vector<GGUFTensorInfo>& getAllTensorInfos() const { return tensor_infos_; }
 
   /**
    * 获取文件头信息
    * @return 文件头
    */
-  const GGUFHeader &getHeader() const { return header_; }
+  const GGUFHeader& getHeader() const { return header_; }
 
   /**
    * 获取张量数据偏移量（相对于文件开始）
    * @return 张量数据偏移量
    */
   uint64_t getTensorDataOffset() const { return tensor_data_offset_; }
-
-  /**
-   * 读取张量数据
-   * @param tensor_name 张量名称
-   * @param data 输出数据缓冲区
-   * @return 成功返回true
-   */
-  bool getTensorData(const std::string &tensor_name,
-                     std::vector<uint8_t> &data) const;
 
   /**
    * 验证文件完整性
@@ -219,7 +187,7 @@ public:
    * @param arch_name 架构名称
    * @return 是否支持
    */
-  static bool isSupportedArchitecture(const std::string &arch_name);
+  static bool isSupportedArchitecture(const std::string& arch_name);
 
   /**
    * 设置详细输出模式
@@ -274,7 +242,7 @@ private:
    * @param tensor_info 张量信息
    * @return 数据大小（字节）
    */
-  uint64_t calculateTensorSize(const GGUFTensorInfo &tensor_info) const;
+  uint64_t calculateTensorSize(const GGUFTensorInfo& tensor_info) const;
 
   /**
    * 获取数据类型大小
@@ -296,44 +264,43 @@ private:
    * @param message 日志消息
    */
   void log(const std::string &level, const std::string &message) const;
-
+  
   /**
    * 内存映射相关
    */
-  bool initMmap(const std::string &file_path);
+  bool initMmap(const std::string& file_path);
   void cleanupMmap();
-
+  
   /**
    * 内存映射读取方法
    */
   bool readHeaderMmap();
-  bool readMetadataMmap();
-  bool readTensorInfoMmap();
-  bool readKeyValueMmap(size_t &offset, GGUFKeyValue &kv);
-  bool readFromMmap(void *buffer, size_t size);
-  std::string readStringFromMmap();
-  bool parseWithMmap();
-  bool readHeaderFromMmap();
-  bool readMetadataFromMmap();
-  bool readTensorInfoFromMmap();
-  GGUFKeyValue readKeyValueFromMmap();
+   bool readMetadataMmap();
+   bool readTensorInfoMmap();
+   bool readKeyValueMmap(size_t& offset, GGUFKeyValue& kv);
+   bool readFromMmap(void* buffer, size_t size);
+    std::string readStringFromMmap();
+    bool parseWithMmap();
+    bool readHeaderFromMmap();
+    bool readMetadataFromMmap();
+    bool readTensorInfoFromMmap();
+    GGUFKeyValue readKeyValueFromMmap();
 
 private:
   std::string file_path_;                                  // 当前文件路径
   GGUFHeader header_;                                      // GGUF文件头
   std::unordered_map<std::string, GGUFKeyValue> metadata_; // 元数据映射
   std::vector<GGUFTensorInfo> tensor_infos_;               // 张量信息列表
-  std::unordered_map<std::string, size_t>
-      tensor_name_to_index_;       // 张量名称到索引的映射
-  ModelArchitecture architecture_; // 模型架构信息
-  uint64_t tensor_data_offset_;    // 张量数据偏移量
-  bool verbose_;                   // 详细输出模式
-  bool file_parsed_;               // 文件是否已解析
-
+  std::unordered_map<std::string, size_t> tensor_name_to_index_; // 张量名称到索引的映射
+  ModelArchitecture architecture_;                         // 模型架构信息
+  uint64_t tensor_data_offset_;                            // 张量数据偏移量
+  bool verbose_;                                           // 详细输出模式
+  bool file_parsed_;                                       // 文件是否已解析
+  
   // 内存映射相关
   bool use_mmap_;
   int fd_;
-  void *mapped_data_;
+  void* mapped_data_;
   size_t file_size_;
   size_t current_offset_;
 
