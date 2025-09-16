@@ -911,7 +911,19 @@ bool Qwen25VLInferenceEngine::loadOutputWeights() {
   log("INFO", "Loading output weights");
 
   output_norm_weights_.reshape({config_.hidden_size});
+  output_norm_bias_.reshape({config_.hidden_size});
   output_projection_.reshape({config_.hidden_size, config_.vocab_size});
+
+  // Initialize LN to identity and projection to small random values so logits are non-zero
+  std::fill(output_norm_weights_.data.begin(), output_norm_weights_.data.end(), 1.0f);
+  std::fill(output_norm_bias_.data.begin(), output_norm_bias_.data.end(), 0.0f);
+
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::normal_distribution<float> dist(0.0f, 0.02f);
+  for (auto &w : output_projection_.data) {
+    w = dist(gen);
+  }
 
   return true;
 }
