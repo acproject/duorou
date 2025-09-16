@@ -152,7 +152,7 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
   std::cout << "[DEBUG] Starting forward pass loop" << std::endl;
   std::vector<int32_t> generated_tokens;
   int consecutive_zeros = 0; // 连续采样到0的次数
-  
+
   for (int i = 0; i < max_tokens; ++i) {
     std::cout << "[DEBUG] Forward pass iteration: " << i << std::endl;
     log("DEBUG", "Forward pass iteration: " + std::to_string(i));
@@ -178,9 +178,12 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
     // 检查连续采样到token 0的情况
     if (next_token == 0) {
       consecutive_zeros++;
-      std::cout << "[DEBUG] Consecutive zeros: " << consecutive_zeros << std::endl;
+      std::cout << "[DEBUG] Consecutive zeros: " << consecutive_zeros
+                << std::endl;
       if (consecutive_zeros >= 3) {
-        std::cout << "[DEBUG] Too many consecutive zeros, treating as EOS and stopping" << std::endl;
+        std::cout << "[DEBUG] Too many consecutive zeros, treating as EOS and "
+                     "stopping"
+                  << std::endl;
         log("WARNING", "Too many consecutive zeros, stopping generation");
         break;
       }
@@ -193,13 +196,15 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
       // 检查最近5个token是否都相同（可能陷入循环）
       bool all_same = true;
       for (int j = 1; j < 5; ++j) {
-        if (generated_tokens[generated_tokens.size() - j] != generated_tokens[generated_tokens.size() - 1]) {
+        if (generated_tokens[generated_tokens.size() - j] !=
+            generated_tokens[generated_tokens.size() - 1]) {
           all_same = false;
           break;
         }
       }
       if (all_same) {
-        std::cout << "[DEBUG] Detected repetitive pattern, stopping generation" << std::endl;
+        std::cout << "[DEBUG] Detected repetitive pattern, stopping generation"
+                  << std::endl;
         log("WARNING", "Detected repetitive pattern, stopping generation");
         break;
       }
@@ -213,10 +218,12 @@ std::string Qwen25VLInferenceEngine::generateText(const std::string &prompt,
       log("WARNING", "Input tokens exceeded 1000, stopping generation");
       break;
     }
-    
+
     // 如果生成了足够的内容，考虑提前停止
     if (generated_tokens.size() >= max_tokens * 0.8 && next_token == 0) {
-      std::cout << "[DEBUG] Generated sufficient content and hit token 0, stopping" << std::endl;
+      std::cout
+          << "[DEBUG] Generated sufficient content and hit token 0, stopping"
+          << std::endl;
       log("INFO", "Generated sufficient content, stopping generation");
       break;
     }
@@ -914,8 +921,10 @@ bool Qwen25VLInferenceEngine::loadOutputWeights() {
   output_norm_bias_.reshape({config_.hidden_size});
   output_projection_.reshape({config_.hidden_size, config_.vocab_size});
 
-  // Initialize LN to identity and projection to small random values so logits are non-zero
-  std::fill(output_norm_weights_.data.begin(), output_norm_weights_.data.end(), 1.0f);
+  // Initialize LN to identity and projection to small random values so logits
+  // are non-zero
+  std::fill(output_norm_weights_.data.begin(), output_norm_weights_.data.end(),
+            1.0f);
   std::fill(output_norm_bias_.data.begin(), output_norm_bias_.data.end(), 0.0f);
 
   std::random_device rd;
@@ -958,24 +967,30 @@ bool Qwen25VLInferenceEngine::loadTensorFromGGUF(const std::string &tensor_name,
 // 前向传播
 Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
   log("DEBUG", "=== Forward pass iteration: " + std::to_string(0) + " ===");
-  log("DEBUG", "Calling forward() with " + std::to_string(input_ids.size()) + " tokens");
-  
+  log("DEBUG",
+      "Calling forward() with " + std::to_string(input_ids.size()) + " tokens");
+
   // 嵌入tokens
   Tensor embeddings = embedTokens(input_ids);
-  log("DEBUG", "Embeddings tensor size: " + std::to_string(embeddings.data.size()));
-  log("DEBUG", "Embeddings dimensions: [" + std::to_string(input_ids.size()) + ", " + std::to_string(config_.hidden_size) + "]");
+  log("DEBUG",
+      "Embeddings tensor size: " + std::to_string(embeddings.data.size()));
+  log("DEBUG", "Embeddings dimensions: [" + std::to_string(input_ids.size()) +
+                   ", " + std::to_string(config_.hidden_size) + "]");
 
   // 通过transformer layers
   Tensor hidden_states = embeddings;
   for (uint32_t i = 0; i < config_.num_layers; ++i) {
-    log("DEBUG", "Processing layer " + std::to_string(i) + "/" + std::to_string(config_.num_layers));
-    log("DEBUG", "Hidden states size before attention: " + std::to_string(hidden_states.data.size()));
-    
+    log("DEBUG", "Processing layer " + std::to_string(i) + "/" +
+                     std::to_string(config_.num_layers));
+    log("DEBUG", "Hidden states size before attention: " +
+                     std::to_string(hidden_states.data.size()));
+
     // 注意力
     log("DEBUG", "Calling multiHeadAttention for layer " + std::to_string(i));
     Tensor attention_output =
         multiHeadAttention(hidden_states, transformer_layers_[i], i);
-    log("DEBUG", "Attention output size: " + std::to_string(attention_output.data.size()));
+    log("DEBUG", "Attention output size: " +
+                     std::to_string(attention_output.data.size()));
 
     // 残差连接
     for (size_t j = 0; j < hidden_states.data.size(); ++j) {
@@ -991,7 +1006,7 @@ Tensor Qwen25VLInferenceEngine::forward(const std::vector<int32_t> &input_ids) {
     for (size_t j = 0; j < hidden_states.data.size(); ++j) {
       hidden_states.data[j] += ffn_output.data[j];
     }
-    
+
     log("DEBUG", "Completed layer " + std::to_string(i));
   }
 
@@ -1093,24 +1108,27 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
   const size_t n_head_kv =
       config_.num_key_value_heads > 0 ? config_.num_key_value_heads : n_head;
   const size_t head_dim = config_.hidden_size / n_head;
-  
+
   // 修正序列长度计算 - 确保维度匹配
-  size_t seq_len = input.shape.size() > 1 ? input.shape[1] : 
-                   (input.data.size() / config_.hidden_size);
+  size_t seq_len = input.shape.size() > 1
+                       ? input.shape[1]
+                       : (input.data.size() / config_.hidden_size);
   const size_t batch_size = input.shape.size() > 2 ? input.shape[2] : 1;
-  
+
   // 验证序列长度计算的正确性
   const size_t expected_input_size = config_.hidden_size * seq_len * batch_size;
   if (input.data.size() != expected_input_size) {
-    log("WARNING", "Input size mismatch: expected=" + std::to_string(expected_input_size) + 
-        ", actual=" + std::to_string(input.data.size()));
+    log("WARNING",
+        "Input size mismatch: expected=" + std::to_string(expected_input_size) +
+            ", actual=" + std::to_string(input.data.size()));
     log("WARNING", "Adjusting seq_len to match input data size");
-    const size_t corrected_seq_len = input.data.size() / (config_.hidden_size * batch_size);
+    const size_t corrected_seq_len =
+        input.data.size() / (config_.hidden_size * batch_size);
     if (corrected_seq_len > 0) {
       seq_len = corrected_seq_len;
     }
   }
-  
+
   // 添加调试信息
   log("DEBUG", "Final calculated dimensions:");
   log("DEBUG", "  hidden_size=" + std::to_string(config_.hidden_size));
@@ -1126,8 +1144,9 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
 
   // 验证基本参数
   if (head_dim == 0 || n_head == 0) {
-    log("ERROR", "Invalid attention head configuration: head_dim=" + 
-        std::to_string(head_dim) + ", n_head=" + std::to_string(n_head));
+    log("ERROR", "Invalid attention head configuration: head_dim=" +
+                     std::to_string(head_dim) +
+                     ", n_head=" + std::to_string(n_head));
     // 使用fallback实现
     for (size_t i = 0; i < output.data.size(); ++i) {
       output.data[i] = input.data[i % input.data.size()] * 0.5f;
@@ -1189,7 +1208,9 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
   // 计算图开销
   total_mem_size += 1024 * 1024; // 1MB for computation graph
 
-  // 添加50%的安全边距\n  total_mem_size = static_cast<size_t>(total_mem_size * 1.5);\n  total_mem_size = std::max(total_mem_size, size_t(512ULL * 1024 * 1024));
+  // 添加50%的安全边距\n  total_mem_size = static_cast<size_t>(total_mem_size
+  // * 1.5);\n  total_mem_size = std::max(total_mem_size, size_t(512ULL * 1024 *
+  // 1024));
 
   log("DEBUG", "Calculated memory requirement: " +
                    std::to_string(total_mem_size / (1024 * 1024)) + " MB");
@@ -1217,22 +1238,25 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
   // 创建输入张量 - 使用正确的维度顺序
   // GGML矩阵乘法期望的维度顺序: [hidden_size, seq_len * batch_size]
   const size_t total_seq_batch = seq_len * batch_size;
-  
-  log("DEBUG", "Creating input tensor with dimensions: [" + 
-      std::to_string(config_.hidden_size) + ", " + std::to_string(total_seq_batch) + "]");
-  log("DEBUG", "Expected tensor elements: " + 
-      std::to_string(config_.hidden_size * total_seq_batch));
+
+  log("DEBUG", "Creating input tensor with dimensions: [" +
+                   std::to_string(config_.hidden_size) + ", " +
+                   std::to_string(total_seq_batch) + "]");
+  log("DEBUG", "Expected tensor elements: " +
+                   std::to_string(config_.hidden_size * total_seq_batch));
   log("DEBUG", "Actual input data size: " + std::to_string(input.data.size()));
-  
+
   struct ggml_tensor *input_tensor = ggml_new_tensor_2d(
       ctx, GGML_TYPE_F32, config_.hidden_size, total_seq_batch);
-      
+
   // 验证张量创建后的元素数量
   if (input_tensor) {
-    log("DEBUG", "Created tensor elements: " + std::to_string(ggml_nelements(input_tensor)));
-    log("DEBUG", "Tensor dimensions: [" + std::to_string(input_tensor->ne[0]) + ", " + 
-        std::to_string(input_tensor->ne[1]) + ", " + std::to_string(input_tensor->ne[2]) + ", " + 
-        std::to_string(input_tensor->ne[3]) + "]");
+    log("DEBUG", "Created tensor elements: " +
+                     std::to_string(ggml_nelements(input_tensor)));
+    log("DEBUG", "Tensor dimensions: [" + std::to_string(input_tensor->ne[0]) +
+                     ", " + std::to_string(input_tensor->ne[1]) + ", " +
+                     std::to_string(input_tensor->ne[2]) + ", " +
+                     std::to_string(input_tensor->ne[3]) + "]");
   }
 
   // 复制输入数据到张量
@@ -1253,11 +1277,14 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
         ctx, GGML_TYPE_F32, config_.hidden_size, head_dim * n_head_kv);
     struct ggml_tensor *v_weight = ggml_new_tensor_2d(
         ctx, GGML_TYPE_F32, config_.hidden_size, head_dim * n_head_kv);
-    
+
     log("DEBUG", "Weight tensor dimensions:");
-    log("DEBUG", "  Q weight: [" + std::to_string(config_.hidden_size) + ", " + std::to_string(config_.hidden_size) + "]");
-    log("DEBUG", "  K weight: [" + std::to_string(config_.hidden_size) + ", " + std::to_string(head_dim * n_head_kv) + "]");
-    log("DEBUG", "  V weight: [" + std::to_string(config_.hidden_size) + ", " + std::to_string(head_dim * n_head_kv) + "]");
+    log("DEBUG", "  Q weight: [" + std::to_string(config_.hidden_size) + ", " +
+                     std::to_string(config_.hidden_size) + "]");
+    log("DEBUG", "  K weight: [" + std::to_string(config_.hidden_size) + ", " +
+                     std::to_string(head_dim * n_head_kv) + "]");
+    log("DEBUG", "  V weight: [" + std::to_string(config_.hidden_size) + ", " +
+                     std::to_string(head_dim * n_head_kv) + "]");
 
     // 复制权重数据（如果有的话）
     size_t q_weight_size = config_.hidden_size * config_.hidden_size;
@@ -1282,18 +1309,22 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
 
     // 详细调试矩阵乘法前的张量维度
     log("DEBUG", "Before matrix multiplication:");
-    log("DEBUG", "Input tensor: [" + std::to_string(input_tensor->ne[0]) + ", " + 
-        std::to_string(input_tensor->ne[1]) + ", " + std::to_string(input_tensor->ne[2]) + ", " + 
-        std::to_string(input_tensor->ne[3]) + "]");
-    log("DEBUG", "Q weight: [" + std::to_string(q_weight->ne[0]) + ", " + 
-        std::to_string(q_weight->ne[1]) + ", " + std::to_string(q_weight->ne[2]) + ", " + 
-        std::to_string(q_weight->ne[3]) + "]");
-    log("DEBUG", "K weight: [" + std::to_string(k_weight->ne[0]) + ", " + 
-        std::to_string(k_weight->ne[1]) + ", " + std::to_string(k_weight->ne[2]) + ", " + 
-        std::to_string(k_weight->ne[3]) + "]");
-    log("DEBUG", "V weight: [" + std::to_string(v_weight->ne[0]) + ", " + 
-        std::to_string(v_weight->ne[1]) + ", " + std::to_string(v_weight->ne[2]) + ", " + 
-        std::to_string(v_weight->ne[3]) + "]");
+    log("DEBUG", "Input tensor: [" + std::to_string(input_tensor->ne[0]) +
+                     ", " + std::to_string(input_tensor->ne[1]) + ", " +
+                     std::to_string(input_tensor->ne[2]) + ", " +
+                     std::to_string(input_tensor->ne[3]) + "]");
+    log("DEBUG", "Q weight: [" + std::to_string(q_weight->ne[0]) + ", " +
+                     std::to_string(q_weight->ne[1]) + ", " +
+                     std::to_string(q_weight->ne[2]) + ", " +
+                     std::to_string(q_weight->ne[3]) + "]");
+    log("DEBUG", "K weight: [" + std::to_string(k_weight->ne[0]) + ", " +
+                     std::to_string(k_weight->ne[1]) + ", " +
+                     std::to_string(k_weight->ne[2]) + ", " +
+                     std::to_string(k_weight->ne[3]) + "]");
+    log("DEBUG", "V weight: [" + std::to_string(v_weight->ne[0]) + ", " +
+                     std::to_string(v_weight->ne[1]) + ", " +
+                     std::to_string(v_weight->ne[2]) + ", " +
+                     std::to_string(v_weight->ne[3]) + "]");
 
     // 计算Q、K、V投影 - 注意GGML矩阵乘法的维度顺序
     log("DEBUG", "Computing Q projection...");
@@ -1306,56 +1337,68 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
     // 详细调试张量维度
     log("DEBUG", "Input tensor dimensions:");
     log("DEBUG", "  input.data.size(): " + std::to_string(input.data.size()));
-    log("DEBUG", "  config_.hidden_size: " + std::to_string(config_.hidden_size));
+    log("DEBUG",
+        "  config_.hidden_size: " + std::to_string(config_.hidden_size));
     log("DEBUG", "  seq_len: " + std::to_string(seq_len));
     log("DEBUG", "  batch_size: " + std::to_string(batch_size));
     log("DEBUG", "  n_head: " + std::to_string(n_head));
     log("DEBUG", "  n_head_kv: " + std::to_string(n_head_kv));
     log("DEBUG", "  head_dim: " + std::to_string(head_dim));
 
-    log("DEBUG", "Q tensor shape: [" + std::to_string(q->ne[0]) + ", " + 
-        std::to_string(q->ne[1]) + ", " + std::to_string(q->ne[2]) + ", " + 
-        std::to_string(q->ne[3]) + "]");
+    log("DEBUG", "Q tensor shape: [" + std::to_string(q->ne[0]) + ", " +
+                     std::to_string(q->ne[1]) + ", " +
+                     std::to_string(q->ne[2]) + ", " +
+                     std::to_string(q->ne[3]) + "]");
     log("DEBUG", "Q tensor elements: " + std::to_string(ggml_nelements(q)));
 
     // 计算期望的重塑维度
     int64_t expected_elements = head_dim * seq_len * n_head * batch_size;
     int64_t actual_elements = ggml_nelements(q);
-    
+
     log("DEBUG", "Reshape calculation:");
     log("DEBUG", "  Expected elements: " + std::to_string(expected_elements));
     log("DEBUG", "  Actual elements: " + std::to_string(actual_elements));
-    log("DEBUG", "  head_dim * seq_len * n_head * batch_size = " + 
-        std::to_string(head_dim) + " * " + std::to_string(seq_len) + " * " + 
-        std::to_string(n_head) + " * " + std::to_string(batch_size) + " = " + 
-        std::to_string(expected_elements));
+    log("DEBUG", "  head_dim * seq_len * n_head * batch_size = " +
+                     std::to_string(head_dim) + " * " +
+                     std::to_string(seq_len) + " * " + std::to_string(n_head) +
+                     " * " + std::to_string(batch_size) + " = " +
+                     std::to_string(expected_elements));
 
     // 检查Q张量的实际维度是否符合重塑要求
     // Q张量应该有 hidden_size * seq_len * batch_size 个元素
     // 重塑后应该有 head_dim * seq_len * n_head * batch_size 个元素
     // 这两个值应该相等，因为 hidden_size = head_dim * n_head
-    
+
     size_t linear_output_elements = config_.hidden_size * seq_len * batch_size;
-    
-    if (actual_elements == linear_output_elements && actual_elements == expected_elements) {
+
+    if (actual_elements == linear_output_elements &&
+        actual_elements == expected_elements) {
       log("DEBUG", "Q tensor dimensions are correct for reshape");
-      
+
       // 详细验证每个张量的维度
       log("DEBUG", "Before reshape - Q tensor:");
-      log("DEBUG", "  ne[0]=" + std::to_string(q->ne[0]) + " ne[1]=" + std::to_string(q->ne[1]) + 
-          " ne[2]=" + std::to_string(q->ne[2]) + " ne[3]=" + std::to_string(q->ne[3]));
+      log("DEBUG", "  ne[0]=" + std::to_string(q->ne[0]) +
+                       " ne[1]=" + std::to_string(q->ne[1]) +
+                       " ne[2]=" + std::to_string(q->ne[2]) +
+                       " ne[3]=" + std::to_string(q->ne[3]));
       log("DEBUG", "  Total elements: " + std::to_string(ggml_nelements(q)));
-      
+
       log("DEBUG", "Reshape parameters:");
-      log("DEBUG", "  head_dim=" + std::to_string(head_dim) + " seq_len=" + std::to_string(seq_len) + 
-          " n_head=" + std::to_string(n_head) + " batch_size=" + std::to_string(batch_size));
-      log("DEBUG", "  Expected elements after reshape: " + std::to_string(head_dim * seq_len * n_head * batch_size));
-      
+      log("DEBUG", "  head_dim=" + std::to_string(head_dim) +
+                       " seq_len=" + std::to_string(seq_len) +
+                       " n_head=" + std::to_string(n_head) +
+                       " batch_size=" + std::to_string(batch_size));
+      log("DEBUG",
+          "  Expected elements after reshape: " +
+              std::to_string(head_dim * seq_len * n_head * batch_size));
+
       // 验证重塑参数的有效性
       if (head_dim <= 0 || seq_len <= 0 || n_head <= 0 || batch_size <= 0) {
         log("ERROR", "Invalid reshape parameters detected");
-        log("ERROR", "head_dim=" + std::to_string(head_dim) + " seq_len=" + std::to_string(seq_len) + 
-            " n_head=" + std::to_string(n_head) + " batch_size=" + std::to_string(batch_size));
+        log("ERROR", "head_dim=" + std::to_string(head_dim) +
+                         " seq_len=" + std::to_string(seq_len) +
+                         " n_head=" + std::to_string(n_head) +
+                         " batch_size=" + std::to_string(batch_size));
         // 使用fallback实现
         for (size_t i = 0; i < output.data.size(); ++i) {
           output.data[i] = input.data[i % input.data.size()] * 0.5f;
@@ -1363,36 +1406,41 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
         ggml_free(ctx);
         return output;
       }
-      
-      // 重塑为多头格式: [hidden_size, seq_len*batch] -> [head_dim, seq_len, n_head, batch]
+
+      // 重塑为多头格式: [hidden_size, seq_len*batch] -> [head_dim, seq_len,
+      // n_head, batch]
       log("DEBUG", "Calling ggml_reshape_4d for Q tensor...");
-      log("DEBUG", "Q tensor before reshape: [" + std::to_string(q->ne[0]) + ", " + 
-          std::to_string(q->ne[1]) + ", " + std::to_string(q->ne[2]) + ", " + 
-          std::to_string(q->ne[3]) + "]");
+      log("DEBUG", "Q tensor before reshape: [" + std::to_string(q->ne[0]) +
+                       ", " + std::to_string(q->ne[1]) + ", " +
+                       std::to_string(q->ne[2]) + ", " +
+                       std::to_string(q->ne[3]) + "]");
       q = ggml_reshape_4d(ctx, q, head_dim, seq_len, n_head, batch_size);
       log("DEBUG", "Q reshape completed successfully");
-      
+
       log("DEBUG", "Calling ggml_reshape_4d for K tensor...");
-      log("DEBUG", "K tensor before reshape: [" + std::to_string(k->ne[0]) + ", " + 
-          std::to_string(k->ne[1]) + ", " + std::to_string(k->ne[2]) + ", " + 
-          std::to_string(k->ne[3]) + "]");
+      log("DEBUG", "K tensor before reshape: [" + std::to_string(k->ne[0]) +
+                       ", " + std::to_string(k->ne[1]) + ", " +
+                       std::to_string(k->ne[2]) + ", " +
+                       std::to_string(k->ne[3]) + "]");
       k = ggml_reshape_4d(ctx, k, head_dim, seq_len, n_head_kv, batch_size);
       log("DEBUG", "K reshape completed successfully");
-      
+
       log("DEBUG", "Calling ggml_reshape_4d for V tensor...");
-      log("DEBUG", "V tensor before reshape: [" + std::to_string(v->ne[0]) + ", " + 
-          std::to_string(v->ne[1]) + ", " + std::to_string(v->ne[2]) + ", " + 
-          std::to_string(v->ne[3]) + "]");
+      log("DEBUG", "V tensor before reshape: [" + std::to_string(v->ne[0]) +
+                       ", " + std::to_string(v->ne[1]) + ", " +
+                       std::to_string(v->ne[2]) + ", " +
+                       std::to_string(v->ne[3]) + "]");
       v = ggml_reshape_4d(ctx, v, head_dim, seq_len, n_head_kv, batch_size);
       log("DEBUG", "V reshape completed successfully");
     } else {
       log("ERROR", "Tensor dimension mismatch in reshape operation");
       log("ERROR", "Q tensor elements: " + std::to_string(actual_elements));
-      log("ERROR", "Expected linear output: " + std::to_string(linear_output_elements));
+      log("ERROR",
+          "Expected linear output: " + std::to_string(linear_output_elements));
       log("ERROR", "Expected reshape: " + std::to_string(expected_elements));
       log("ERROR", "hidden_size: " + std::to_string(config_.hidden_size));
       log("ERROR", "head_dim * n_head: " + std::to_string(head_dim * n_head));
-      
+
       // 使用fallback实现
       for (size_t i = 0; i < output.data.size(); ++i) {
         output.data[i] = input.data[i % input.data.size()] * 0.5f;
@@ -1433,32 +1481,43 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
     // 使用标准注意力计算（避免flash attention的编译问题）
     // 计算注意力分数: Q * K^T
     log("DEBUG", "Before attention calculation:");
-    log("DEBUG", "Q shape: [" + std::to_string(q->ne[0]) + ", " + std::to_string(q->ne[1]) + ", " + 
-        std::to_string(q->ne[2]) + ", " + std::to_string(q->ne[3]) + "]");
-    log("DEBUG", "K shape: [" + std::to_string(k->ne[0]) + ", " + std::to_string(k->ne[1]) + ", " + 
-        std::to_string(k->ne[2]) + ", " + std::to_string(k->ne[3]) + "]");
-    
+    log("DEBUG", "Q shape: [" + std::to_string(q->ne[0]) + ", " +
+                     std::to_string(q->ne[1]) + ", " +
+                     std::to_string(q->ne[2]) + ", " +
+                     std::to_string(q->ne[3]) + "]");
+    log("DEBUG", "K shape: [" + std::to_string(k->ne[0]) + ", " +
+                     std::to_string(k->ne[1]) + ", " +
+                     std::to_string(k->ne[2]) + ", " +
+                     std::to_string(k->ne[3]) + "]");
+
     // 正确的注意力机制实现：Q @ K^T
-    // Q: [batch, n_head, seq_len, head_dim] -> reshape to [batch*n_head*seq_len, head_dim]
-    // K: [batch, n_head_kv, seq_len, head_dim] -> reshape to [batch*n_head_kv*seq_len, head_dim] -> transpose to [head_dim, batch*n_head_kv*seq_len]
-    
+    // Q: [batch, n_head, seq_len, head_dim] -> reshape to
+    // [batch*n_head*seq_len, head_dim] K: [batch, n_head_kv, seq_len, head_dim]
+    // -> reshape to [batch*n_head_kv*seq_len, head_dim] -> transpose to
+    // [head_dim, batch*n_head_kv*seq_len]
+
     // 将Q重塑为2D: [batch*n_head*seq_len, head_dim]
-    size_t q_batch_seq = q->ne[3] * q->ne[1] * q->ne[2]; // batch * n_head * seq_len
+    size_t q_batch_seq =
+        q->ne[3] * q->ne[1] * q->ne[2]; // batch * n_head * seq_len
     struct ggml_tensor *q_2d = ggml_reshape_2d(ctx, q, q->ne[0], q_batch_seq);
     q_2d = ggml_cont(ctx, q_2d);
-    
+
     // 将K重塑为2D并转置: [head_dim, batch*n_head_kv*seq_len]
-    size_t k_batch_seq = k->ne[3] * k->ne[1] * k->ne[2]; // batch * n_head_kv * seq_len
+    size_t k_batch_seq =
+        k->ne[3] * k->ne[1] * k->ne[2]; // batch * n_head_kv * seq_len
     struct ggml_tensor *k_2d = ggml_reshape_2d(ctx, k, k->ne[0], k_batch_seq);
     k_2d = ggml_cont(ctx, k_2d);
 
     log("DEBUG", "After reshape for attention:");
-    log("DEBUG", "Q_2d shape: [" + std::to_string(q_2d->ne[0]) + ", " + std::to_string(q_2d->ne[1]) + "]");
-    log("DEBUG", "K_2d shape: [" + std::to_string(k_2d->ne[0]) + ", " + std::to_string(k_2d->ne[1]) + "]");
-    log("DEBUG", "Checking GGML requirement: a.ne[0]=" + std::to_string(k_2d->ne[0]) + 
-        " == b.ne[0]=" + std::to_string(q_2d->ne[0]) + " ? " + 
-        (k_2d->ne[0] == q_2d->ne[0] ? "YES" : "NO"));
-    
+    log("DEBUG", "Q_2d shape: [" + std::to_string(q_2d->ne[0]) + ", " +
+                     std::to_string(q_2d->ne[1]) + "]");
+    log("DEBUG", "K_2d shape: [" + std::to_string(k_2d->ne[0]) + ", " +
+                     std::to_string(k_2d->ne[1]) + "]");
+    log("DEBUG",
+        "Checking GGML requirement: a.ne[0]=" + std::to_string(k_2d->ne[0]) +
+            " == b.ne[0]=" + std::to_string(q_2d->ne[0]) + " ? " +
+            (k_2d->ne[0] == q_2d->ne[0] ? "YES" : "NO"));
+
     // 现在可以进行矩阵乘法: K @ Q
     struct ggml_tensor *scores = ggml_mul_mat(ctx, k_2d, q_2d);
 
@@ -1475,38 +1534,47 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
 
     // 修复V矩阵维度计算问题，避免内存爆炸
     log("DEBUG", "Fixing V matrix multiplication dimensions");
-    log("DEBUG", "attn_weights shape: [" + std::to_string(attn_weights->ne[0]) + ", " + 
-        std::to_string(attn_weights->ne[1]) + "]");
-    log("DEBUG", "V shape before processing: [" + std::to_string(v->ne[0]) + ", " + 
-        std::to_string(v->ne[1]) + ", " + std::to_string(v->ne[2]) + ", " + 
-        std::to_string(v->ne[3]) + "]");
-    
+    log("DEBUG", "attn_weights shape: [" + std::to_string(attn_weights->ne[0]) +
+                     ", " + std::to_string(attn_weights->ne[1]) + "]");
+    log("DEBUG", "V shape before processing: [" + std::to_string(v->ne[0]) +
+                     ", " + std::to_string(v->ne[1]) + ", " +
+                     std::to_string(v->ne[2]) + ", " +
+                     std::to_string(v->ne[3]) + "]");
+
     // 按照 ggml 的矩阵乘法约定：ggml_mul_mat(A, B) 要求 A.ne0 == B.ne0
     // 当前 scores = K @ Q 的输出 attn_weights 形状为 [k_batch_seq, q_batch_seq]
-    // 因此需要将 V 重塑为 2D 张量 [k_batch_seq, head_dim]，使得 V 与 attn_weights 满足 A.ne0 == B.ne0
+    // 因此需要将 V 重塑为 2D 张量 [k_batch_seq, head_dim]，使得 V 与
+    // attn_weights 满足 A.ne0 == B.ne0
 
-    size_t v_expected_ne0 = k_batch_seq;      // 与 attn_weights.ne[0] 对齐
-    size_t v_expected_ne1 = v->ne[0];         // head_dim
+    size_t v_expected_ne0 = k_batch_seq; // 与 attn_weights.ne[0] 对齐
+    size_t v_expected_ne1 = v->ne[0];    // head_dim
 
     log("DEBUG", "Reshaping V to 2D using [k_batch_seq, head_dim]:");
-    log("DEBUG", "  v_expected_ne0 (k_batch_seq) = " + std::to_string(v_expected_ne0));
-    log("DEBUG", "  v_expected_ne1 (head_dim)    = " + std::to_string(v_expected_ne1));
+    log("DEBUG",
+        "  v_expected_ne0 (k_batch_seq) = " + std::to_string(v_expected_ne0));
+    log("DEBUG",
+        "  v_expected_ne1 (head_dim)    = " + std::to_string(v_expected_ne1));
 
-    struct ggml_tensor *v_2d_transposed = ggml_reshape_2d(ctx, v, v_expected_ne0, v_expected_ne1);
+    struct ggml_tensor *v_2d_transposed =
+        ggml_reshape_2d(ctx, v, v_expected_ne0, v_expected_ne1);
     v_2d_transposed = ggml_cont(ctx, v_2d_transposed);
 
     log("DEBUG", "After V reshape:");
-    log("DEBUG", "v_2d_transposed shape: [" + std::to_string(v_2d_transposed->ne[0]) + ", " + 
-        std::to_string(v_2d_transposed->ne[1]) + "]");
-    log("DEBUG", "attn_weights shape: [" + std::to_string(attn_weights->ne[0]) + ", " + 
-        std::to_string(attn_weights->ne[1]) + "]");
+    log("DEBUG", "v_2d_transposed shape: [" +
+                     std::to_string(v_2d_transposed->ne[0]) + ", " +
+                     std::to_string(v_2d_transposed->ne[1]) + "]");
+    log("DEBUG", "attn_weights shape: [" + std::to_string(attn_weights->ne[0]) +
+                     ", " + std::to_string(attn_weights->ne[1]) + "]");
 
     // 校验 ggml_mul_mat(A, B) 的前提条件：A.ne0 == B.ne0
-    bool dimensions_compatible = (attn_weights->ne[0] == v_2d_transposed->ne[0]);
+    bool dimensions_compatible =
+        (attn_weights->ne[0] == v_2d_transposed->ne[0]);
     log("DEBUG", "Dimension compatibility check for mul_mat(V, attn_weights):");
-    log("DEBUG", "  v_2d_transposed.ne[0] (" + std::to_string(v_2d_transposed->ne[0]) + ") == attn_weights.ne[0] (" + 
-        std::to_string(attn_weights->ne[0]) + ") ? " + (dimensions_compatible ? "YES" : "NO"));
-    
+    log("DEBUG",
+        "  v_2d_transposed.ne[0] (" + std::to_string(v_2d_transposed->ne[0]) +
+            ") == attn_weights.ne[0] (" + std::to_string(attn_weights->ne[0]) +
+            ") ? " + (dimensions_compatible ? "YES" : "NO"));
+
     if (!dimensions_compatible) {
       log("ERROR", "V matrix dimensions still incompatible after reshape");
       log("ERROR", "Using fallback implementation");
@@ -1517,7 +1585,7 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
       ggml_free(ctx);
       return output;
     }
-    
+
     // 确保张量连续性
     if (!ggml_is_contiguous(v_2d_transposed)) {
       log("DEBUG", "Making v_2d_transposed contiguous");
@@ -1527,26 +1595,36 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
       log("DEBUG", "Making attn_weights contiguous");
       attn_weights = ggml_cont(ctx, attn_weights);
     }
-    
+
     // 执行注意力权重与V的矩阵乘法: attn_weights * V
-    log("DEBUG", "Performing final matrix multiplication: attn_weights * v_2d_transposed");
-    log("DEBUG", "attn_weights final shape: [" + std::to_string(attn_weights->ne[0]) + ", " + std::to_string(attn_weights->ne[1]) + "]");
-    log("DEBUG", "v_2d_transposed final shape: [" + std::to_string(v_2d_transposed->ne[0]) + ", " + std::to_string(v_2d_transposed->ne[1]) + "]");
-    
+    log("DEBUG", "Performing final matrix multiplication: attn_weights * "
+                 "v_2d_transposed");
+    log("DEBUG", "attn_weights final shape: [" +
+                     std::to_string(attn_weights->ne[0]) + ", " +
+                     std::to_string(attn_weights->ne[1]) + "]");
+    log("DEBUG", "v_2d_transposed final shape: [" +
+                     std::to_string(v_2d_transposed->ne[0]) + ", " +
+                     std::to_string(v_2d_transposed->ne[1]) + "]");
+
     // 最终检查：验证矩阵乘法兼容性
     // 我们需要 attn_weights * v_2d_transposed
-    // attn_weights: (batch*n_head*seq_len, seq_len) 
+    // attn_weights: (batch*n_head*seq_len, seq_len)
     // v_2d_transposed: (head_dim, seq_len*n_head_kv*batch)
     // 为了兼容，我们需要 attn_weights.ne[1] == v_2d_transposed.ne[0]
     bool can_multiply = (attn_weights->ne[1] == v_2d_transposed->ne[0]);
-    
+
     if (!can_multiply) {
       log("ERROR", "Final matrix multiplication compatibility check failed");
-      log("ERROR", "attn_weights.ne[1]=" + std::to_string(attn_weights->ne[1]) + 
-          " != v_2d_transposed.ne[0]=" + std::to_string(v_2d_transposed->ne[0]));
-      log("ERROR", "Current shapes: attn_weights=" + std::to_string(attn_weights->ne[0]) + "x" + std::to_string(attn_weights->ne[1]) +
-          ", v_2d_transposed=" + std::to_string(v_2d_transposed->ne[0]) + "x" + std::to_string(v_2d_transposed->ne[1]));
-      
+      log("ERROR", "attn_weights.ne[1]=" + std::to_string(attn_weights->ne[1]) +
+                       " != v_2d_transposed.ne[0]=" +
+                       std::to_string(v_2d_transposed->ne[0]));
+      log("ERROR",
+          "Current shapes: attn_weights=" +
+              std::to_string(attn_weights->ne[0]) + "x" +
+              std::to_string(attn_weights->ne[1]) +
+              ", v_2d_transposed=" + std::to_string(v_2d_transposed->ne[0]) +
+              "x" + std::to_string(v_2d_transposed->ne[1]));
+
       // 使用fallback实现
       for (size_t i = 0; i < output.data.size(); ++i) {
         output.data[i] = input.data[i % input.data.size()] * 0.5f;
@@ -1554,16 +1632,20 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
       ggml_free(ctx);
       return output;
     }
-    
+
     // 计算最终输出: attn_weights * v_2d_transposed (标准注意力计算)
-    log("DEBUG", "Performing matrix multiplication: attn_weights * v_2d_transposed");
-    log("DEBUG", "attn_weights: (" + std::to_string(attn_weights->ne[0]) + "," + std::to_string(attn_weights->ne[1]) + ")");
-    log("DEBUG", "v_2d_transposed: (" + std::to_string(v_2d_transposed->ne[0]) + "," + std::to_string(v_2d_transposed->ne[1]) + ")");
-    struct ggml_tensor *attn_output_2d = ggml_mul_mat(ctx, v_2d_transposed, attn_weights);
+    log("DEBUG",
+        "Performing matrix multiplication: attn_weights * v_2d_transposed");
+    log("DEBUG", "attn_weights: (" + std::to_string(attn_weights->ne[0]) + "," +
+                     std::to_string(attn_weights->ne[1]) + ")");
+    log("DEBUG", "v_2d_transposed: (" + std::to_string(v_2d_transposed->ne[0]) +
+                     "," + std::to_string(v_2d_transposed->ne[1]) + ")");
+    struct ggml_tensor *attn_output_2d =
+        ggml_mul_mat(ctx, v_2d_transposed, attn_weights);
 
     // 直接重塑为 [hidden_size, seq_len, batch]
-    struct ggml_tensor *attn_output = ggml_reshape_3d(ctx, attn_output_2d, config_.hidden_size,
-                                  seq_len, batch_size);
+    struct ggml_tensor *attn_output = ggml_reshape_3d(
+        ctx, attn_output_2d, config_.hidden_size, seq_len, batch_size);
 
     // 应用输出投影（如果有）
     if (head.output_weights.data.size() >=
@@ -1605,41 +1687,42 @@ Tensor Qwen25VLInferenceEngine::multiHeadAttention(
 Tensor Qwen25VLInferenceEngine::feedForward(const Tensor &input,
                                             const TransformerLayer &layer) {
   Tensor output({config_.hidden_size});
-  
+
   // 动态计算前馈网络所需的内存大小
   const size_t seq_len = input.data.size() / config_.hidden_size;
   const size_t intermediate_size = config_.intermediate_size;
-  
+
   // 计算所需内存：输入、中间层、输出张量 + 权重张量 + 计算图开销
   size_t total_mem_size = 0;
-  
+
   // 输入张量
   total_mem_size += config_.hidden_size * seq_len * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 中间层张量 (gate, up projections)
-  total_mem_size += intermediate_size * seq_len * sizeof(float) * 2; // gate + up
+  total_mem_size +=
+      intermediate_size * seq_len * sizeof(float) * 2; // gate + up
   total_mem_size += ggml_tensor_overhead() * 2;
-  
+
   // 输出张量
   total_mem_size += config_.hidden_size * seq_len * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 权重张量 (gate_proj, up_proj, down_proj)
   total_mem_size += config_.hidden_size * intermediate_size * sizeof(float) * 3;
   total_mem_size += ggml_tensor_overhead() * 3;
-  
+
   // 计算图开销
   total_mem_size += 512 * 1024; // 512KB for computation graph
-  
+
   // 添加50%的安全边距
   total_mem_size = static_cast<size_t>(total_mem_size * 1.5);
   // 确保至少有128MB
   total_mem_size = std::max(total_mem_size, size_t(128ULL * 1024 * 1024));
-  
+
   log("DEBUG", "FeedForward calculated memory requirement: " +
                    std::to_string(total_mem_size / (1024 * 1024)) + " MB");
-  
+
   // 使用动态计算的内存池大小
   struct ggml_init_params params = {
       .mem_size = total_mem_size,
@@ -1745,8 +1828,9 @@ Tensor Qwen25VLInferenceEngine::processVisionInput(
 
 // 采样方法
 int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
-  std::cout << "[DEBUG] Entering sampleToken with " << logits.data.size() << " logits" << std::endl;
-  
+  std::cout << "[DEBUG] Entering sampleToken with " << logits.data.size()
+            << " logits" << std::endl;
+
   // 检查logits是否有效
   if (logits.data.empty()) {
     log("ERROR", "Empty logits tensor");
@@ -1758,55 +1842,62 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
   float min_logit = logits.data[0];
   float sum_logits = 0.0f;
   bool all_same = true;
-  
+
   for (size_t i = 0; i < logits.data.size(); ++i) {
-    if (logits.data[i] > max_logit) max_logit = logits.data[i];
-    if (logits.data[i] < min_logit) min_logit = logits.data[i];
+    if (logits.data[i] > max_logit)
+      max_logit = logits.data[i];
+    if (logits.data[i] < min_logit)
+      min_logit = logits.data[i];
     sum_logits += logits.data[i];
-    if (i > 0 && logits.data[i] != logits.data[0]) all_same = false;
+    if (i > 0 && logits.data[i] != logits.data[0])
+      all_same = false;
   }
-  
-  std::cout << "[DEBUG] Logits stats - min: " << min_logit << ", max: " << max_logit 
-            << ", range: " << (max_logit - min_logit) << ", all_same: " << all_same << std::endl;
-  
+
+  std::cout << "[DEBUG] Logits stats - min: " << min_logit
+            << ", max: " << max_logit << ", range: " << (max_logit - min_logit)
+            << ", all_same: " << all_same << std::endl;
+
   // 如果所有logits都相同或范围太小，使用后备采样
   if (all_same || (max_logit - min_logit) < 1e-6) {
-    std::cout << "[DEBUG] Logits are uniform, using fallback random sampling" << std::endl;
+    std::cout << "[DEBUG] Logits are uniform, using fallback random sampling"
+              << std::endl;
     log("WARNING", "Logits are uniform, using fallback sampling");
-    
+
     std::random_device rd;
     std::mt19937 gen(rd());
     // 避免选择token 0，从1开始选择
-    std::uniform_int_distribution<int32_t> dis(1, std::min(static_cast<int32_t>(logits.data.size()) - 1, 1000));
+    std::uniform_int_distribution<int32_t> dis(
+        1, std::min(static_cast<int32_t>(logits.data.size()) - 1, 1000));
     int32_t fallback_token = dis(gen);
-    
-    std::cout << "[DEBUG] Fallback selected token: " << fallback_token << std::endl;
+
+    std::cout << "[DEBUG] Fallback selected token: " << fallback_token
+              << std::endl;
     return fallback_token;
   }
 
   // 动态计算采样所需的内存大小
   size_t vocab_size = logits.data.size();
   size_t total_mem_size = 0;
-  
+
   // logits张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // softmax输出张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 计算图开销
   total_mem_size += 256 * 1024; // 256KB for computation graph
-  
+
   // 添加50%的安全边距
   total_mem_size = static_cast<size_t>(total_mem_size * 1.5);
   // 确保至少有32MB
   total_mem_size = std::max(total_mem_size, size_t(32ULL * 1024 * 1024));
-  
+
   log("DEBUG", "SampleToken calculated memory requirement: " +
                    std::to_string(total_mem_size / (1024 * 1024)) + " MB");
-  
+
   // 使用动态计算的内存池大小
   struct ggml_init_params params = {
       .mem_size = total_mem_size,
@@ -1825,9 +1916,10 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
         best_token = static_cast<int32_t>(i);
       }
     }
-    
+
     // 如果最佳token是0且不是压倒性优势，选择第二好的
-    if (best_token == 0 && best_score - min_logit < (max_logit - min_logit) * 0.8) {
+    if (best_token == 0 &&
+        best_score - min_logit < (max_logit - min_logit) * 0.8) {
       float second_best = min_logit;
       int32_t second_token = 1;
       for (size_t i = 1; i < logits.data.size(); ++i) {
@@ -1836,10 +1928,11 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
           second_token = static_cast<int32_t>(i);
         }
       }
-      std::cout << "[DEBUG] Avoiding token 0, using second best: " << second_token << std::endl;
+      std::cout << "[DEBUG] Avoiding token 0, using second best: "
+                << second_token << std::endl;
       return second_token;
     }
-    
+
     return best_token;
   }
 
@@ -1891,9 +1984,9 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
 
     // 如果选中了token 0且其概率不是压倒性的，重新采样
     if (result_token == 0 && probs_data[0] < 0.8f) {
-      std::cout << "[DEBUG] Token 0 selected but probability is low (" << probs_data[0] 
-                << "), resampling..." << std::endl;
-      
+      std::cout << "[DEBUG] Token 0 selected but probability is low ("
+                << probs_data[0] << "), resampling..." << std::endl;
+
       // 找到概率第二高的token
       float second_best_prob = 0.0f;
       int32_t second_best_token = 1;
@@ -1903,10 +1996,10 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
           second_best_token = static_cast<int32_t>(i);
         }
       }
-      
+
       if (second_best_prob > 0.1f) {
         result_token = second_best_token;
-        std::cout << "[DEBUG] Using second best token: " << result_token 
+        std::cout << "[DEBUG] Using second best token: " << result_token
                   << " with probability: " << second_best_prob << std::endl;
       }
     }
@@ -1924,9 +2017,10 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
         result_token = static_cast<int32_t>(i);
       }
     }
-    
+
     // 如果最佳token是0且不是压倒性优势，选择第二好的
-    if (result_token == 0 && best_score - min_logit < (max_logit - min_logit) * 0.8) {
+    if (result_token == 0 &&
+        best_score - min_logit < (max_logit - min_logit) * 0.8) {
       float second_best = min_logit;
       int32_t second_token = 1;
       for (size_t i = 1; i < logits.data.size(); ++i) {
@@ -1935,7 +2029,8 @@ int32_t Qwen25VLInferenceEngine::sampleToken(const Tensor &logits) {
           second_token = static_cast<int32_t>(i);
         }
       }
-      std::cout << "[DEBUG] Greedy: avoiding token 0, using second best: " << second_token << std::endl;
+      std::cout << "[DEBUG] Greedy: avoiding token 0, using second best: "
+                << second_token << std::endl;
       result_token = second_token;
     }
   }
@@ -1951,26 +2046,26 @@ int32_t Qwen25VLInferenceEngine::sampleTopK(const Tensor &logits, int k) {
   // 动态计算top-k采样所需的内存大小
   size_t vocab_size = logits.data.size();
   size_t total_mem_size = 0;
-  
+
   // logits张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // top-k索引和值张量
   total_mem_size += k * sizeof(float) * 2; // values + indices
   total_mem_size += ggml_tensor_overhead() * 2;
-  
+
   // 计算图开销
   total_mem_size += 256 * 1024; // 256KB for computation graph
-  
+
   // 添加50%的安全边距
   total_mem_size = static_cast<size_t>(total_mem_size * 1.5);
   // 确保至少有16MB
   total_mem_size = std::max(total_mem_size, size_t(16ULL * 1024 * 1024));
-  
+
   log("DEBUG", "SampleTopK calculated memory requirement: " +
                    std::to_string(total_mem_size / (1024 * 1024)) + " MB");
-  
+
   // 使用动态计算的内存池大小
   struct ggml_init_params params = {
       .mem_size = total_mem_size,
@@ -2063,34 +2158,34 @@ int32_t Qwen25VLInferenceEngine::sampleTemperature(const Tensor &logits,
   // 动态计算温度缩放所需的内存大小
   size_t vocab_size = logits.data.size();
   size_t total_mem_size = 0;
-  
+
   // 输入logits张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 温度标量张量
   total_mem_size += sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 缩放后的张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // softmax输出张量
   total_mem_size += vocab_size * sizeof(float);
   total_mem_size += ggml_tensor_overhead();
-  
+
   // 计算图开销
   total_mem_size += 256 * 1024; // 256KB for computation graph
-  
+
   // 添加50%的安全边距
   total_mem_size = static_cast<size_t>(total_mem_size * 1.5);
   // 确保至少有32MB
   total_mem_size = std::max(total_mem_size, size_t(32ULL * 1024 * 1024));
-  
+
   log("DEBUG", "SampleTemperature calculated memory requirement: " +
                    std::to_string(total_mem_size / (1024 * 1024)) + " MB");
-  
+
   // 使用动态计算的内存池大小
   struct ggml_init_params params = {
       .mem_size = total_mem_size,
