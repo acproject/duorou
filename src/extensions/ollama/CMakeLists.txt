@@ -6,9 +6,11 @@ set(OLLAMA_EXTENSION_NAME "duorou_ollama_extension")
 # 收集源文件
 set(OLLAMA_EXTENSION_SOURCES
     gguf_parser.cpp
-    qwen25vl_inference_engine.cpp
     ollama_model_manager.cpp
     ollama_path_resolver.cpp
+    inference_engine.cpp
+    ggml/ggml_wrapper.cpp
+    gguf/gguf_wrapper.cpp
 )
 
 # llama.cpp源文件
@@ -21,9 +23,11 @@ set(LLAMA_CPP_SOURCES
 # 收集头文件
 set(OLLAMA_EXTENSION_HEADERS
     gguf_parser.h
-    qwen25vl_inference_engine.h
     ollama_model_manager.h
     ollama_path_resolver.h
+    inference_engine.h
+    ggml/ggml_wrapper.h
+    gguf/gguf_wrapper.h
 )
 
 # 创建静态库
@@ -46,11 +50,20 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
 target_include_directories(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/ggml
+        ${CMAKE_CURRENT_SOURCE_DIR}/gguf
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/ggml/include
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
+)
+
+# 链接库
+target_link_libraries(${OLLAMA_EXTENSION_NAME}
+    PUBLIC
+        duorou_ml
+        duorou_kvcache
 )
 
 # 编译定义
@@ -82,6 +95,8 @@ install(TARGETS ${OLLAMA_EXTENSION_NAME}
 install(FILES ${OLLAMA_EXTENSION_HEADERS}
     DESTINATION include/duorou/extensions/ollama
 )
+
+# 测试程序已移除
 
 # 测试（如果启用）
 if(BUILD_TESTING)

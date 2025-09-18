@@ -6,6 +6,7 @@
 #include "logger.h"
 #include "model_manager.h"
 #include "workflow_engine.h"
+#include "../extensions/ollama/ollama_model_manager.h"
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #endif
@@ -262,6 +263,16 @@ bool Application::initializeComponents() {
     }
     std::cout << "Model manager initialized successfully" << std::endl;
 
+    // 初始化全局模型管理器
+    std::cout << "Initializing global model manager..." << std::endl;
+    try {
+      extensions::ollama::GlobalModelManager::initialize();
+      std::cout << "Global model manager initialized successfully" << std::endl;
+    } catch (const std::exception& e) {
+      logger_->error("Failed to initialize global model manager: " + std::string(e.what()));
+      return false;
+    }
+
     // 初始化工作流引擎
     std::cout << "Creating workflow engine..." << std::endl;
     workflow_engine_ = std::make_unique<WorkflowEngine>();
@@ -353,6 +364,15 @@ void Application::cleanup() {
 
   // 清理核心组件（按相反顺序）
   workflow_engine_.reset();
+  
+  // 关闭全局模型管理器
+  try {
+    extensions::ollama::GlobalModelManager::shutdown();
+  } catch (const std::exception& e) {
+    // 在关闭过程中，即使出错也要继续清理
+    std::cerr << "Warning: Failed to shutdown global model manager: " << e.what() << std::endl;
+  }
+  
   model_manager_.reset();
   config_manager_.reset();
   logger_.reset();

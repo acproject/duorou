@@ -1,9 +1,11 @@
 #include "ollama_model_manager.h"
+#include "inference_engine.h"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
+#include <optional>
 
 namespace duorou {
 namespace extensions {
@@ -26,7 +28,9 @@ bool OllamaModelManager::registerModel(const std::string& model_id, const std::s
         return false;
     }
     
-    if (!std::filesystem::exists(gguf_file_path)) {
+    // 简单的文件存在检查，不使用filesystem
+    std::ifstream file_check(gguf_file_path);
+    if (!file_check.good()) {
         log("ERROR", "GGUF file does not exist: " + gguf_file_path);
         return false;
     }
@@ -70,13 +74,8 @@ bool OllamaModelManager::registerModelByName(const std::string& model_name) {
         return false;
     }
     
-    // 生成有效的模型 ID（将特殊字符替换为下划线）
-    std::string model_id = model_name;
-    for (char& c : model_id) {
-        if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
-            c = '_';
-        }
-    }
+    // 生成有效的模型 ID（使用统一的转换函数）
+    std::string model_id = normalizeModelId(model_name);
     
     std::cout << "[DEBUG] OllamaModelManager: Generated model ID: " << model_id << " for model: " << model_name << std::endl;
     log("DEBUG", "Generated model ID: " + model_id + " for model: " + model_name);
@@ -146,7 +145,8 @@ bool OllamaModelManager::unloadModel(const std::string& model_id) {
 }
 
 bool OllamaModelManager::isModelLoaded(const std::string& model_id) const {
-    auto it = model_states_.find(model_id);
+    std::string normalized_id = normalizeModelId(model_id);
+    auto it = model_states_.find(normalized_id);
     return it != model_states_.end() && it->second == ModelLoadState::LOADED;
 }
 
@@ -174,65 +174,74 @@ std::vector<std::string> OllamaModelManager::getLoadedModels() const {
 }
 
 const ModelInfo* OllamaModelManager::getModelInfo(const std::string& model_id) const {
-    auto it = registered_models_.find(model_id);
+    std::string normalized_id = normalizeModelId(model_id);
+    auto it = registered_models_.find(normalized_id);
     return (it != registered_models_.end()) ? &it->second : nullptr;
 }
 
 ModelLoadState OllamaModelManager::getModelLoadState(const std::string& model_id) const {
-    auto it = model_states_.find(model_id);
+    std::string normalized_id = normalizeModelId(model_id);
+    auto it = model_states_.find(normalized_id);
     return (it != model_states_.end()) ? it->second : ModelLoadState::UNLOADED;
 }
 
 InferenceResponse OllamaModelManager::generateText(const InferenceRequest& request) {
     std::cout << "[DEBUG] OllamaModelManager::generateText called with model: " << request.model_id << std::endl;
     InferenceResponse response;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    // 转换模型ID以匹配注册时的格式
+    std::string normalized_model_id = normalizeModelId(request.model_id);
+    std::cout << "[DEBUG] Normalized model ID: " << normalized_model_id << std::endl;
     
     // 检查模型是否加载
-    std::cout << "[DEBUG] Checking if model is loaded: " << request.model_id << std::endl;
-    if (!isModelLoaded(request.model_id)) {
+    std::cout << "[DEBUG] Checking if model is loaded: " << normalized_model_id << std::endl;
+    if (!isModelLoaded(normalized_model_id)) {
         std::cout << "[DEBUG] Model not loaded: " << request.model_id << std::endl;
         response.error_message = "Model not loaded: " + request.model_id;
         return response;
     }
-    std::cout << "[DEBUG] Model is loaded, getting inference engine" << std::endl;
-    
-    // 获取推理引擎
-    Qwen25VLInferenceEngine* engine = getInferenceEngine(request.model_id);
-    if (!engine) {
-        std::cout << "[DEBUG] Failed to get inference engine for: " << request.model_id << std::endl;
-        response.error_message = "Failed to get inference engine for: " + request.model_id;
-        return response;
-    }
-    std::cout << "[DEBUG] Got inference engine, starting text generation" << std::endl;
-    
-    // 记录开始时间
-    auto start_time = std::chrono::high_resolution_clock::now();
     
     try {
-        // 执行推理
-        std::cout << "[DEBUG] Calling engine->generateText with prompt: " << request.prompt.substr(0, 20) << "..." << std::endl;
-        response.generated_text = engine->generateText(request.prompt, request.max_tokens);
-        std::cout << "[DEBUG] engine->generateText completed successfully" << std::endl;
-        response.success = true;
+        // 获取模型信息
+        const ModelInfo* model_info = getModelInfo(normalized_model_id);
+        if (!model_info) {
+            response.error_message = "Model info not found: " + normalized_model_id;
+            return response;
+        }
         
-        // 计算生成的token数量（简化实现）
-        std::cout << "[DEBUG] Tokenizing generated text for token count" << std::endl;
-        auto tokens = engine->tokenize(response.generated_text);
-        response.tokens_generated = static_cast<uint32_t>(tokens.size());
-        std::cout << "[DEBUG] Generated " << response.tokens_generated << " tokens" << std::endl;
+        // 创建推理引擎实例（使用我们的ML模块）
+        auto inference_engine = createInferenceEngine(normalized_model_id);
+        if (!inference_engine) {
+            response.error_message = "Failed to create inference engine for: " + normalized_model_id;
+            return response;
+        }
+        
+        // 执行文本生成
+        std::string generated_text = inference_engine->generateText(
+            request.prompt, 
+            request.max_tokens, 
+            request.temperature, 
+            request.top_p
+        );
+        
+        // 计算推理时间
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        
+        // 设置响应
+        response.success = true;
+        response.generated_text = generated_text;
+        response.tokens_generated = static_cast<int>(generated_text.length() / 4); // 粗略估算
+        response.inference_time_ms = static_cast<float>(duration.count());
+        
+        std::cout << "[DEBUG] Text generation completed successfully" << std::endl;
         
     } catch (const std::exception& e) {
-        std::cout << "[DEBUG] Exception during inference: " << e.what() << std::endl;
         response.error_message = "Inference error: " + std::string(e.what());
         response.success = false;
     }
     
-    // 计算推理时间
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    response.inference_time_ms = static_cast<float>(duration.count());
-    
-    std::cout << "[DEBUG] OllamaModelManager::generateText completed in " << response.inference_time_ms << "ms" << std::endl;
     return response;
 }
 
@@ -252,35 +261,11 @@ InferenceResponse OllamaModelManager::generateTextWithImages(const InferenceRequ
         return response;
     }
     
-    // 获取推理引擎
-    Qwen25VLInferenceEngine* engine = getInferenceEngine(request.model_id);
-    if (!engine) {
-        response.error_message = "Failed to get inference engine for: " + request.model_id;
-        return response;
-    }
-    
-    // 记录开始时间
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    try {
-        // 执行多模态推理
-        response.generated_text = engine->generateTextWithImages(
-            request.prompt, request.image_features, request.max_tokens);
-        response.success = true;
-        
-        // 计算生成的token数量
-        auto tokens = engine->tokenize(response.generated_text);
-        response.tokens_generated = static_cast<uint32_t>(tokens.size());
-        
-    } catch (const std::exception& e) {
-        response.error_message = "Multimodal inference error: " + std::string(e.what());
-        response.success = false;
-    }
-    
-    // 计算推理时间
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    response.inference_time_ms = static_cast<float>(duration.count());
+    // TODO: 重新实现多模态推理引擎集成
+    response.error_message = "Multimodal inference engine not implemented yet";
+    response.success = false;
+    response.tokens_generated = 0;
+    response.inference_time_ms = 0.0f;
     
     return response;
 }
@@ -341,7 +326,7 @@ void OllamaModelManager::clearAllModels() {
     
     // 清空所有数据结构
     registered_models_.clear();
-    inference_engines_.clear();
+    // inference_engines_.clear(); // TODO: 重新实现
     model_states_.clear();
     
     total_memory_usage_ = 0;
@@ -354,40 +339,32 @@ size_t OllamaModelManager::getMemoryUsage() const {
     // 简化的内存使用计算
     total_memory_usage_ = 0;
     
-    for (const auto& pair : inference_engines_) {
-        // 估算每个模型的内存使用（简化实现）
-        const ModelInfo* info = getModelInfo(pair.first);
-        if (info) {
-            // 粗略估算：参数数量 * 4字节（float32）
-            size_t estimated_size = static_cast<size_t>(info->vocab_size) * 1024; // 简化估算
-            total_memory_usage_ += estimated_size;
-        }
-    }
+    // TODO: 重新实现内存使用计算
+    // for (const auto& pair : inference_engines_) {
+    //     // 估算每个模型的内存使用（简化实现）
+    //     const ModelInfo* info = getModelInfo(pair.first);
+    //     if (info) {
+    //         // 粗略估算：参数数量 * 4字节（float32）
+    //         size_t estimated_size = static_cast<size_t>(info->vocab_size) * 1024; // 简化估算
+    //         total_memory_usage_ += estimated_size;
+    //     }
+    // }
     
     return total_memory_usage_;
 }
 
 // 私有方法实现
 bool OllamaModelManager::loadModelInternal(const std::string& model_id) {
-    const ModelInfo& model_info = registered_models_[model_id];
-    
-    // 创建推理引擎
-    if (!createInferenceEngine(model_id)) {
-        return false;
-    }
-    
-    // 加载模型
-    Qwen25VLInferenceEngine* engine = getInferenceEngine(model_id);
-    if (!engine || !engine->loadModel(model_info.file_path)) {
-        destroyInferenceEngine(model_id);
-        return false;
-    }
-    
+    // TODO: 重新实现推理引擎加载
+    // const ModelInfo& model_info = registered_models_[model_id];
+    // 暂时返回true，表示加载成功（占位实现）
+    log("INFO", "Model loaded (stub): " + model_id);
     return true;
 }
 
 bool OllamaModelManager::unloadModelInternal(const std::string& model_id) {
-    destroyInferenceEngine(model_id);
+    // TODO: 重新实现推理引擎卸载
+    log("INFO", "Model unloaded (stub): " + model_id);
     return true;
 }
 
@@ -424,30 +401,26 @@ bool OllamaModelManager::parseModelInfo(const std::string& gguf_file_path, Model
     }
 }
 
-Qwen25VLInferenceEngine* OllamaModelManager::getInferenceEngine(const std::string& model_id) {
-    auto it = inference_engines_.find(model_id);
-    return (it != inference_engines_.end()) ? it->second.get() : nullptr;
-}
-
-bool OllamaModelManager::createInferenceEngine(const std::string& model_id) {
-    if (inference_engines_.find(model_id) != inference_engines_.end()) {
-        return true; // 已存在
+std::unique_ptr<InferenceEngine> OllamaModelManager::createInferenceEngine(const std::string& model_id) {
+    const ModelInfo* model_info = getModelInfo(model_id);
+    if (!model_info) {
+        log("ERROR", "Model info not found for: " + model_id);
+        return nullptr;
     }
     
     try {
-        auto engine = std::make_unique<Qwen25VLInferenceEngine>(verbose_);
-        inference_engines_[model_id] = std::move(engine);
-        return true;
+         auto engine = std::make_unique<MLInferenceEngine>(model_id);
+         if (!engine->initialize()) {
+             log("ERROR", "Failed to initialize inference engine for: " + model_id);
+             return nullptr;
+         }
+         
+         log("INFO", "Inference engine created successfully for: " + model_id);
+         return std::move(engine);
+        
     } catch (const std::exception& e) {
         log("ERROR", "Failed to create inference engine: " + std::string(e.what()));
-        return false;
-    }
-}
-
-void OllamaModelManager::destroyInferenceEngine(const std::string& model_id) {
-    auto it = inference_engines_.find(model_id);
-    if (it != inference_engines_.end()) {
-        inference_engines_.erase(it);
+        return nullptr;
     }
 }
 
@@ -467,8 +440,28 @@ void OllamaModelManager::cleanupUnusedResources() {
 }
 
 std::string OllamaModelManager::generateModelId(const std::string& file_path) const {
-    std::filesystem::path path(file_path);
-    return path.stem().string();
+    // 简单的文件名提取，不使用filesystem
+    size_t last_slash = file_path.find_last_of("/\\");
+    std::string filename = (last_slash != std::string::npos) ? file_path.substr(last_slash + 1) : file_path;
+    
+    // 移除扩展名
+    size_t last_dot = filename.find_last_of('.');
+    if (last_dot != std::string::npos) {
+        filename = filename.substr(0, last_dot);
+    }
+    
+    return filename;
+}
+
+std::string OllamaModelManager::normalizeModelId(const std::string& model_name) const {
+    std::string model_id = model_name;
+    // 将特殊字符替换为下划线（与registerModelByName中的逻辑保持一致）
+    for (char& c : model_id) {
+        if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+            c = '_';
+        }
+    }
+    return model_id;
 }
 
 bool OllamaModelManager::isValidModelId(const std::string& model_id) const {

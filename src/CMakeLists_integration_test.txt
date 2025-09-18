@@ -1,0 +1,32 @@
+# 独立的模块集成测试
+cmake_minimum_required(VERSION 3.16)
+
+# 创建集成测试可执行文件
+add_executable(module_integration_test test_module_integration.cpp)
+
+# 设置C++标准
+set_target_properties(module_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+
+# 包含目录
+target_include_directories(module_integration_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/ml
+    ${CMAKE_CURRENT_SOURCE_DIR}/kvcache
+)
+
+# 链接库
+target_link_libraries(module_integration_test
+    duorou_ml
+    duorou_kvcache
+)
+
+# 编译器标志
+target_compile_options(module_integration_test PRIVATE
+    -Wall -Wextra -O2
+)
+
+# 添加测试
+add_test(NAME ModuleIntegrationTest COMMAND module_integration_test)

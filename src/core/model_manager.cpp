@@ -47,15 +47,10 @@ public:
     logger.info("[OLLAMA] Loading model: " + model_path);
 
     // Use new ollama extension architecture
-    // First register the model by name (supports Ollama model names), then load
-    // it Generate the same model_id that registerModelByName will use
-    model_id_ = model_path;
-    for (char &c : model_id_) {
-      if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
-        c = '_';
-      }
-    }
-    std::cout << "[DEBUG] OllamaModelImpl: Generated model_id: " << model_id_
+    // First register the model by name (supports Ollama model names), then load it
+    // Store the original model name, not the converted ID
+    model_id_ = model_path;  // Keep original model name
+    std::cout << "[DEBUG] OllamaModelImpl: Using original model name as ID: " << model_id_
               << " from path: " << model_path << std::endl;
 
     bool registered = model_manager_->registerModelByName(model_path);
@@ -65,9 +60,17 @@ public:
       return false;
     }
 
-    bool success = model_manager_->loadModel(model_id_);
+    // For loading, we need to use the normalized model ID that registerModelByName created
+    std::string normalized_id = model_path;
+    for (char &c : normalized_id) {
+      if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+        c = '_';
+      }
+    }
+    
+    bool success = model_manager_->loadModel(normalized_id);
     if (!success) {
-      std::cerr << "[ERROR] Failed to load Ollama model: " << model_id_
+      std::cerr << "[ERROR] Failed to load Ollama model: " << normalized_id
                 << std::endl;
       return false;
     }
