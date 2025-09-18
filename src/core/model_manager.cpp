@@ -35,9 +35,8 @@ public:
     model_info_.memory_usage = 0;
     model_info_.path = model_path;
 
-    // Initialize the new ollama model manager
-    model_manager_ =
-        std::make_unique<duorou::extensions::ollama::OllamaModelManager>();
+    // 使用全局的 OllamaModelManager 实例
+    // model_manager_ 将在 load() 方法中通过 GlobalModelManager 获取
   }
 
   bool load(const std::string &model_path) override {
@@ -46,29 +45,28 @@ public:
     duorou::core::Logger logger;
     logger.info("[OLLAMA] Loading model: " + model_path);
 
-    // Use new ollama extension architecture
+    // Use new ollama extension architecture with global manager
     // First register the model by name (supports Ollama model names), then load it
     // Store the original model name, not the converted ID
     model_id_ = model_path;  // Keep original model name
     std::cout << "[DEBUG] OllamaModelImpl: Using original model name as ID: " << model_id_
               << " from path: " << model_path << std::endl;
 
-    bool registered = model_manager_->registerModelByName(model_path);
+    // 获取全局的 OllamaModelManager 实例
+    auto& global_manager = duorou::extensions::ollama::GlobalModelManager::getInstance();
+
+    bool registered = global_manager.registerModelByName(model_path);
     if (!registered) {
       std::cerr << "[ERROR] Failed to register Ollama model: " << model_path
                 << std::endl;
       return false;
     }
 
-    // For loading, we need to use the normalized model ID that registerModelByName created
-    std::string normalized_id = model_path;
-    for (char &c : normalized_id) {
-      if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
-        c = '_';
-      }
-    }
+    // Use the same normalization logic as registerModelByName
+    std::string normalized_id = global_manager.normalizeModelId(model_path);
+    std::cout << "[DEBUG] OllamaModelImpl: Normalized ID for loading: " << normalized_id << std::endl;
     
-    bool success = model_manager_->loadModel(normalized_id);
+    bool success = global_manager.loadModel(normalized_id);
     if (!success) {
       std::cerr << "[ERROR] Failed to load Ollama model: " << normalized_id
                 << std::endl;
@@ -82,13 +80,14 @@ public:
     model_info_.status = duorou::core::ModelStatus::LOADED;
     model_info_.memory_usage = memory_usage_;
 
-    // Create text generator using shared_ptr to model_manager
-    auto shared_manager =
-        std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>(
-            model_manager_.get(),
-            [](duorou::extensions::ollama::OllamaModelManager *) {});
-    text_generator_ = std::make_unique<duorou::core::TextGenerator>(
-        shared_manager, model_id_);
+    // Create text generator using global manager
+     // 创建一个不会删除全局管理器的shared_ptr
+     auto shared_manager = std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>(
+         &global_manager, [](duorou::extensions::ollama::OllamaModelManager*) {
+           // 空删除器，因为全局管理器由GlobalModelManager管理
+         });
+     text_generator_ = std::make_unique<duorou::core::TextGenerator>(
+         shared_manager, model_id_);
     std::cout
         << "[DEBUG] OllamaModelImpl: Created TextGenerator with Ollama backend"
         << std::endl;
@@ -99,8 +98,13 @@ public:
   }
 
   void unload() override {
-    if (model_manager_ && !model_id_.empty()) {
-      model_manager_->unloadModel(model_id_);
+    if (!model_id_.empty()) {
+      try {
+        auto& global_manager = duorou::extensions::ollama::GlobalModelManager::getInstance();
+        global_manager.unloadModel(model_id_);
+      } catch (const std::exception& e) {
+        std::cerr << "Warning: Failed to unload model from global manager: " << e.what() << std::endl;
+      }
     }
     text_generator_.reset();
     loaded_ = false;
@@ -115,7 +119,7 @@ public:
 
   // Get the model manager for text generation
   duorou::extensions::ollama::OllamaModelManager *getModelManager() const {
-    return model_manager_.get();
+    return &duorou::extensions::ollama::GlobalModelManager::getInstance();
   }
 
   // Get text generator for this model
@@ -133,8 +137,6 @@ private:
   size_t memory_usage_;
   mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
   duorou::core::ModelInfo model_info_;
-  std::unique_ptr<duorou::extensions::ollama::OllamaModelManager>
-      model_manager_;
 };
 
 namespace duorou {

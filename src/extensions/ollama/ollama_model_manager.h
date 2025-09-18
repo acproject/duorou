@@ -86,6 +86,9 @@ public:
     void clearAllModels();
     size_t getMemoryUsage() const;
 
+    // 公共工具方法
+    std::string normalizeModelId(const std::string& model_name) const;
+
 private:
     bool loadModelInternal(const std::string& model_id);
     bool unloadModelInternal(const std::string& model_id);
@@ -98,7 +101,6 @@ private:
     void cleanupUnusedResources();
 
     std::string generateModelId(const std::string& file_path) const;
-    std::string normalizeModelId(const std::string& model_name) const;
     bool isValidModelId(const std::string& model_id) const;
     void log(const std::string& level, const std::string& message) const;
 

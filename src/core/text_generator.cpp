@@ -1,5 +1,6 @@
 #include "text_generator.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -24,7 +25,7 @@ TextGenerator::TextGenerator(
         model_manager,
     const std::string &model_id)
     : context_size_(2048), vocab_size_(32000), model_manager_(model_manager),
-      model_id_(model_id), use_ollama_(true) {
+      model_id_(normalizeModelId(model_id)), use_ollama_(true) {
   // 初始化随机数生成器
   std::random_device rd;
   rng_.seed(rd());
@@ -356,6 +357,17 @@ void TextGenerator::initializeRNG(int64_t seed) {
   } else {
     rng_.seed(static_cast<unsigned int>(seed));
   }
+}
+
+std::string TextGenerator::normalizeModelId(const std::string &model_name) const {
+  std::string model_id = model_name;
+  // 将特殊字符替换为下划线（与OllamaModelManager中的逻辑保持一致）
+  for (char &c : model_id) {
+    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+      c = '_';
+    }
+  }
+  return model_id;
 }
 
 } // namespace core

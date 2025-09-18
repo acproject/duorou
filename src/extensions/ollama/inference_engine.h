@@ -11,6 +11,7 @@ typedef int32_t llama_token;
 
 // 前向声明
 #include "gguf_parser.h"
+#include "../../kvcache/cache.h"
 
 // 前向声明
 namespace duorou {
@@ -75,11 +76,34 @@ private:
     std::unique_ptr<GGUFParser> gguf_parser_;
     std::string model_path_;
     
+    // KV缓存
+    std::unique_ptr<kvcache::Cache> kv_cache_;
+    kvcache::CacheConfig cache_config_;
+    
+    // 模型权重和配置
+    std::vector<ml::Tensor*> model_weights_;
+    uint32_t vocab_size_;
+    uint32_t n_layers_;
+    uint32_t n_heads_;
+    uint32_t n_embd_;
+    uint32_t n_ctx_;
+    
+    // RoPE频率
+    std::vector<float> rope_freqs_;
+    bool rope_initialized_;
+    
     // 辅助方法
     std::string processText(const std::string& text);
     bool loadModel(const std::string& model_path);
     std::vector<llama_token> tokenize(const std::string& text);
     std::string detokenize(const std::vector<llama_token>& tokens);
+    
+    // 模型加载步骤
+    bool parseModelConfig();
+    bool loadModelWeights();
+    bool initializeKVCache();
+    bool precomputeRoPEFreqs();
+    void cleanupResources();
 };
 
 } // namespace ollama

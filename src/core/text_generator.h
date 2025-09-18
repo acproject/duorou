@@ -197,6 +197,13 @@ private:
    */
   void initializeRNG(int64_t seed);
 
+  /**
+   * @brief 归一化模型ID，与OllamaModelManager保持一致
+   * @param model_name 原始模型名称
+   * @return 归一化后的模型ID
+   */
+  std::string normalizeModelId(const std::string &model_name) const;
+
 private:
   std::mt19937 rng_; ///< 随机数生成器
 
