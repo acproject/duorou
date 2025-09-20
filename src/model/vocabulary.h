@@ -14,6 +14,12 @@ namespace model {
 const int32_t TOKEN_TYPE_NORMAL = 0;
 const int32_t TOKEN_TYPE_CONTROL = 1;
 const int32_t TOKEN_TYPE_USER_DEFINED = 2;
+// Extended token types for compatibility with Go/SentencePiece ecosystems
+// Note: Current implementation only treats CONTROL and USER_DEFINED as special.
+// UNKNOWN/UNUSED/BYTE behave like NORMAL unless explicitly handled elsewhere.
+const int32_t TOKEN_TYPE_UNKNOWN = 3;  // e.g., <unk>
+const int32_t TOKEN_TYPE_UNUSED  = 4;  // reserved/unused slots
+const int32_t TOKEN_TYPE_BYTE    = 5;  // byte-fallback tokens in some BPE vocabs
 
 /**
  * Vocabulary class for managing tokens, scores, and merges
@@ -87,6 +93,21 @@ public:
      * Set EOS (End of Sequence) tokens
      */
     void setEOS(const std::vector<int32_t>& eos, bool addEOS = false);
+
+    /**
+     * Set PAD tokens
+     */
+    void setPAD(const std::vector<int32_t>& pad);
+
+    /**
+     * Set UNK tokens
+     */
+    void setUNK(const std::vector<int32_t>& unk);
+
+    /**
+     * Get the first id of a given Special token, or -1 if not present
+     */
+    int32_t getSpecialId(Special special) const;
     
     // Getters
     const std::vector<std::string>& getValues() const { return values_; }
@@ -105,6 +126,8 @@ private:
     // Special tokens
     std::vector<int32_t> bos_;
     std::vector<int32_t> eos_;
+    std::vector<int32_t> pad_;
+    std::vector<int32_t> unk_;
     bool addBOS_ = false;
     bool addEOS_ = false;
     
@@ -122,6 +145,9 @@ private:
     void buildTokenMap() const;
     void buildSpecialTokens() const;
     void buildMergeMap() const;
+
+    // Auto-detect PAD/UNK ids by common token strings (e.g., "<pad>", "<unk>")
+    void autodetectPadUnk();
 };
 
 } // namespace model

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include "tokenizer_factory.h"
 
 namespace duorou {
 namespace model {
@@ -128,7 +129,7 @@ std::vector<int32_t> QwenTextModel::encode(const std::string& text, bool addSpec
     if (!tokenizer_) {
         return {};
     }
-    return tokenizer_->encode(text);
+    return tokenizer_->encode(text, addSpecial);
 }
 
 std::string QwenTextModel::decode(const std::vector<int32_t>& ids) {
@@ -161,9 +162,10 @@ bool QwenTextModel::initialize(const std::string& configPath) {
         vocabulary_ = std::make_unique<Vocabulary>();
         auto vocabPtr = std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary*){});
         
-        // Default Qwen tokenizer pattern
-        std::string pattern = R"((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
-        tokenizer_ = std::make_unique<BytePairEncoding>(pattern, vocabPtr);
+        // Create Qwen tokenizer via factory
+        TokenizerFactoryOptions opts;
+        opts.override_type = "bpe"; // Qwen uses BPE by default
+        tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts);
         
         // Initialize layers if not already done
         if (layers_.empty()) {

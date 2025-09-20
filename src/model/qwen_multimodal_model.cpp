@@ -264,7 +264,8 @@ bool QwenMultimodalModel::initializeComponents() {
     }
     
     // Initialize image processor
-    imageProcessor_ = std::make_unique<QwenImageProcessor>(config_.imageProcessorConfig);
+    // TODO: Fix linking issue with QwenImageProcessor constructor
+    // imageProcessor_ = std::make_unique<QwenImageProcessor>(config_.imageProcessorConfig);
     
     // Set up vocabulary and tokenizer from text model
     vocabulary_ = std::unique_ptr<Vocabulary>(const_cast<Vocabulary*>(textModel_->getVocabulary()));

@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(duorou VERSION 1.0.0 LANGUAGES C CXX)
 
+# 启用 CTest/CTest 相关变量 (提供 BUILD_TESTING 选项)
+include(CTest)
+# 启用测试收集（生成CTestTestfile.cmake）
+enable_testing()
+
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -482,6 +487,7 @@ if(DUOROU_SOURCES)
         llama
         stable-diffusion
         duorou_ollama_extension
+        duorou_model
         ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json

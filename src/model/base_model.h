@@ -7,13 +7,13 @@
 #include <functional>
 #include <unordered_map>
 #include <utility>
+#include "text_processor.h"
 
 namespace duorou {
 namespace model {
 
 // Forward declarations
 class Vocabulary;
-class BytePairEncoding;
 
 // Input types for multimodal processing
 struct MultimodalInput {
@@ -49,7 +49,7 @@ protected:
     bool initialized_ = false;
     std::string modelType_;
     std::unique_ptr<Vocabulary> vocabulary_;
-    std::unique_ptr<BytePairEncoding> tokenizer_;
+    std::unique_ptr<TextProcessor> tokenizer_;
 };
 
 // Multimodal processor interface for models that support multiple input types

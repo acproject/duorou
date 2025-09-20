@@ -49,12 +49,11 @@ std::string BytePairEncoding::decode(const std::vector<int32_t>& ids) {
     for (int32_t id : ids) {
         std::string token = vocab_->decode(id);
         
-        // Convert Unicode codepoints back to bytes
+        // Iterate UTF-8 runes in token and map back to single bytes like Go implementation
         for (size_t i = 0; i < token.length(); ) {
             uint32_t codepoint = 0;
             int bytes = 1;
             
-            // Simple UTF-8 decoding
             unsigned char c = token[i];
             if (c < 0x80) {
                 codepoint = c;
@@ -80,31 +79,24 @@ std::string BytePairEncoding::decode(const std::vector<int32_t>& ids) {
                     bytes = 4;
                 }
             }
-            
-            // Convert back to byte if needed
-            uint8_t byte = unicodeToByte(codepoint);
-            if (byte != 0 || codepoint == 0x0100) {
-                result << static_cast<char>(byte);
-            } else {
-                // Regular Unicode character
-                std::string utf8;
-                if (codepoint < 0x80) {
-                    utf8 += static_cast<char>(codepoint);
-                } else if (codepoint < 0x800) {
-                    utf8 += static_cast<char>(0xC0 | (codepoint >> 6));
-                    utf8 += static_cast<char>(0x80 | (codepoint & 0x3F));
-                } else if (codepoint < 0x10000) {
-                    utf8 += static_cast<char>(0xE0 | (codepoint >> 12));
-                    utf8 += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                    utf8 += static_cast<char>(0x80 | (codepoint & 0x3F));
-                } else {
-                    utf8 += static_cast<char>(0xF0 | (codepoint >> 18));
-                    utf8 += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-                    utf8 += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                    utf8 += static_cast<char>(0x80 | (codepoint & 0x3F));
-                }
-                result << utf8;
+
+            // Align with Go's Decode mapping
+            uint32_t r = codepoint;
+            if (r == 0x0100) {
+                // Skip writing NULL byte just like Go does
+                i += bytes;
+                continue;
             }
+            if (r == 0x0143) {
+                r = 0x00ad;
+            } else if (r > 0x0100 && r <= 0x0120) {
+                r = r - 0x0100;
+            } else if (r > 0x0120 && r <= 0x0142) {
+                r = r - 0x00a2;
+            }
+
+            // Always write a single byte (lower 8 bits), matching Go's WriteByte(byte(r))
+            result << static_cast<char>(static_cast<uint8_t>(r & 0xFF));
             
             i += bytes;
         }
@@ -138,23 +130,22 @@ std::vector<std::string> BytePairEncoding::split(const std::string& text) const 
 }
 
 uint32_t BytePairEncoding::byteToUnicode(uint8_t byte) const {
-    // Convert byte to Unicode codepoint for BPE processing
-    // Following Ollama's mapping
+    // Convert byte to Unicode codepoint for BPE processing (aligned with Go)
     if (byte == 0x00ad) {
         return 0x0143;
-    } else if (byte <= 0x0020) {
-        return byte + 0x0100;
-    } else if (byte >= 0x007f && byte <= 0x00a0) {
-        return byte + 0x00a2;
+    } else if (byte <= 0x20) {
+        return static_cast<uint32_t>(byte) + 0x0100;
+    } else if (byte >= 0x7f && byte <= 0xa0) {
+        return static_cast<uint32_t>(byte) + 0x00a2;
     } else {
         return byte;
     }
 }
 
 uint8_t BytePairEncoding::unicodeToByte(uint32_t codepoint) const {
-    // Convert Unicode codepoint back to byte
+    // Retained for completeness, but decode() now mirrors Go directly
     if (codepoint == 0x0100) {
-        return 0x00; // NULL
+        return 0x00; // NULL (handled specially in decode)
     } else if (codepoint == 0x0143) {
         return 0x00ad;
     } else if (codepoint > 0x0100 && codepoint <= 0x0120) {
@@ -164,7 +155,7 @@ uint8_t BytePairEncoding::unicodeToByte(uint32_t codepoint) const {
     } else if (codepoint <= 0xFF) {
         return static_cast<uint8_t>(codepoint);
     } else {
-        return 0; // Invalid
+        return 0; // Invalid/unmapped
     }
 }
 
@@ -214,7 +205,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
     std::ostringstream unicodeText;
     for (uint8_t byte : text) {
         uint32_t codepoint = byteToUnicode(byte);
-        // Convert codepoint to UTF-8
+        // Convert codepoint to UTF-8 (only up to 3 bytes needed for our mapping)
         if (codepoint < 0x80) {
             unicodeText << static_cast<char>(codepoint);
         } else if (codepoint < 0x800) {
@@ -260,7 +251,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
         return {};
     }
     
-    // Initialize merges
+    // Initialize merges (store indices into the runes array)
     std::vector<Merge> merges(runes.size());
     for (size_t i = 0; i < runes.size(); ++i) {
         merges[i].prev = (i > 0) ? static_cast<int>(i - 1) : -1;
@@ -301,8 +292,8 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
         }
         
         std::string leftStr, rightStr;
-        for (const auto& rune : left.runes) leftStr += rune;
-        for (const auto& rune : right.runes) rightStr += rune;
+        for (const auto& idx : left.runes) leftStr += runes[idx];
+        for (const auto& idx : right.runes) rightStr += runes[idx];
         
         if (leftStr + rightStr != pair.value) {
             continue;
@@ -325,7 +316,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
         // Add new pairs
         if (left.prev >= 0) {
             std::string prevStr;
-            for (const auto& rune : merges[left.prev].runes) prevStr += rune;
+            for (const auto& idx : merges[left.prev].runes) prevStr += runes[idx];
             int rank = vocab_->getMergeRank(prevStr, pair.value);
             if (rank >= 0) {
                 pairs.emplace(left.prev, pair.a, rank, prevStr + pair.value);
@@ -334,7 +325,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
         
         if (left.next >= 0) {
             std::string nextStr;
-            for (const auto& rune : merges[left.next].runes) nextStr += rune;
+            for (const auto& idx : merges[left.next].runes) nextStr += runes[idx];
             int rank = vocab_->getMergeRank(pair.value, nextStr);
             if (rank >= 0) {
                 pairs.emplace(pair.a, left.next, rank, pair.value + nextStr);
@@ -347,8 +338,8 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string& text) const {
     for (const auto& merge : merges) {
         if (!merge.runes.empty()) {
             std::string token;
-            for (const auto& rune : merge.runes) {
-                token += rune;
+            for (const auto& idx : merge.runes) {
+                token += runes[idx];
             }
             int32_t id = vocab_->encode(token);
             if (id >= 0) {

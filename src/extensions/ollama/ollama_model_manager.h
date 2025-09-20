@@ -113,6 +113,9 @@ private:
     std::unordered_map<std::string, ModelInfo> registered_models_;
 
     std::unordered_map<std::string, ModelLoadState> model_states_;
+    
+    // 存储已加载的推理引擎
+    std::unordered_map<std::string, std::unique_ptr<InferenceEngine>> inference_engines_;
 
     mutable size_t total_memory_usage_;
     mutable unsigned int active_models_count_;

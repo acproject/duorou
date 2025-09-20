@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include "tokenizer_factory.h"
 
 namespace duorou {
 namespace model {
@@ -194,19 +195,10 @@ bool BaseModel::loadTokenizer(const std::string& tokenizerPath) {
         return false;
     }
     
-    // Determine tokenizer type and create appropriate tokenizer
-    if (config_.tokenizer_type == "bpe" || config_.tokenizer_type == "BytePairEncoding") {
-        // Create BPE tokenizer
-        std::string pattern = R"('s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+)";
-        tokenizer_ = std::make_unique<BytePairEncoding>(pattern, vocabulary_);
-    } else if (config_.tokenizer_type == "spm" || config_.tokenizer_type == "SentencePiece") {
-        // Create SentencePiece tokenizer
-        tokenizer_ = std::make_unique<SentencePiece>(vocabulary_);
-    } else {
-        // Default to BPE
-        std::string pattern = R"('s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+)";
-        tokenizer_ = std::make_unique<BytePairEncoding>(pattern, vocabulary_);
-    }
+    // Use factory to determine tokenizer type based on architecture and overrides
+    TokenizerFactoryOptions opts;
+    opts.override_type = config_.tokenizer_type; // respect config if provided
+    tokenizer_ = createTextProcessorForArchitecture(config_.architecture, vocabulary_, opts);
     
     config_.vocab_size = vocabulary_->size();
     return true;

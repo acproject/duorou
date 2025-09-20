@@ -154,8 +154,12 @@ bool OllamaModelManager::unloadModel(const std::string &model_id) {
 
 bool OllamaModelManager::isModelLoaded(const std::string &model_id) const {
   // model_id should already be normalized when passed to this method
-  auto it = model_states_.find(model_id);
-  return it != model_states_.end() && it->second == ModelLoadState::LOADED;
+  auto state_it = model_states_.find(model_id);
+  auto engine_it = inference_engines_.find(model_id);
+  
+  return state_it != model_states_.end() && 
+         state_it->second == ModelLoadState::LOADED &&
+         engine_it != inference_engines_.end();
 }
 
 std::vector<std::string> OllamaModelManager::getRegisteredModels() const {
@@ -214,12 +218,30 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     std::cout << "[DEBUG]   - " << model << std::endl;
   }
 
-  // 检查模型是否加载
-  std::cout << "[DEBUG] Checking if model is loaded: " << normalized_model_id
-            << std::endl;
-  if (!isModelLoaded(normalized_model_id)) {
-    std::cout << "[DEBUG] Model not loaded: " << request.model_id << std::endl;
-    response.error_message = "Model not loaded: " + request.model_id;
+  // 先检查模型是否已注册
+  if (registered_models_.find(normalized_model_id) == registered_models_.end()) {
+    std::cout << "[ERROR] Model not registered: " << normalized_model_id << std::endl;
+    response.error_message = "Model not registered: " + normalized_model_id;
+    response.success = false;
+    return response;
+  }
+
+  // 检查模型加载状态并在 ERROR 场景下返回更明确错误
+  auto load_state = getModelLoadState(normalized_model_id);
+  std::cout << "[DEBUG] Model load state for " << normalized_model_id << ": "
+            << static_cast<int>(load_state) << std::endl;
+
+  if (load_state != ModelLoadState::LOADED) {
+    if (load_state == ModelLoadState::ERROR) {
+      std::cout << "[ERROR] Model initialization failed previously: "
+                << normalized_model_id << std::endl;
+      response.error_message =
+          "Model initialization failed: " + normalized_model_id;
+    } else {
+      std::cout << "[DEBUG] Model not loaded: " << normalized_model_id << std::endl;
+      response.error_message = "Model not loaded: " + normalized_model_id;
+    }
+    response.success = false;
     return response;
   }
 
@@ -228,14 +250,28 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     const ModelInfo *model_info = getModelInfo(normalized_model_id);
     if (!model_info) {
       response.error_message = "Model info not found: " + normalized_model_id;
+      response.success = false;
       return response;
     }
 
-    // 创建推理引擎实例（使用我们的ML模块）
-    auto inference_engine = createInferenceEngine(normalized_model_id);
-    if (!inference_engine) {
+    // 获取已加载的推理引擎
+    auto engine_it = inference_engines_.find(normalized_model_id);
+    if (engine_it == inference_engines_.end()) {
       response.error_message =
-          "Failed to create inference engine for: " + normalized_model_id;
+          "Inference engine not found for: " + normalized_model_id;
+      response.success = false;
+      return response;
+    }
+
+    InferenceEngine* inference_engine = engine_it->second.get();
+
+    // 双重校验：引擎存在但未就绪（理论上不应发生，但为了更好错误提示）
+    if (!inference_engine || !inference_engine->isReady()) {
+      std::cout << "[ERROR] Inference engine not ready: "
+                << normalized_model_id << std::endl;
+      response.error_message =
+          "Inference engine not ready: " + normalized_model_id;
+      response.success = false;
       return response;
     }
 
@@ -378,17 +414,69 @@ size_t OllamaModelManager::getMemoryUsage() const {
 
 // 私有方法实现
 bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
-  // TODO: 重新实现推理引擎加载
-  // const ModelInfo& model_info = registered_models_[model_id];
-  // 暂时返回true，表示加载成功（占位实现）
-  log("INFO", "Model loaded (stub): " + model_id);
-  return true;
+  // 检查模型是否已注册
+  auto model_it = registered_models_.find(model_id);
+  if (model_it == registered_models_.end()) {
+    log("ERROR", "Model not registered: " + model_id);
+    return false;
+  }
+
+  // 检查模型是否已加载
+  if (inference_engines_.find(model_id) != inference_engines_.end()) {
+    log("INFO", "Model already loaded: " + model_id);
+    return true;
+  }
+
+  // 设置加载状态
+  model_states_[model_id] = ModelLoadState::LOADING;
+  
+  try {
+    // 创建推理引擎
+    auto engine = createInferenceEngine(model_id);
+    if (!engine) {
+      log("ERROR", "Failed to create inference engine for: " + model_id);
+      model_states_[model_id] = ModelLoadState::ERROR;
+      return false;
+    }
+
+    // 推理引擎会在initialize时自动加载模型文件
+
+    // 存储推理引擎
+    inference_engines_[model_id] = std::move(engine);
+    model_states_[model_id] = ModelLoadState::LOADED;
+    active_models_count_++;
+
+    log("INFO", "Model loaded successfully: " + model_id);
+    return true;
+
+  } catch (const std::exception &e) {
+    log("ERROR", "Exception during model loading: " + std::string(e.what()));
+    model_states_[model_id] = ModelLoadState::ERROR;
+    return false;
+  }
 }
 
 bool OllamaModelManager::unloadModelInternal(const std::string &model_id) {
-  // TODO: 重新实现推理引擎卸载
-  log("INFO", "Model unloaded (stub): " + model_id);
-  return true;
+  // 查找推理引擎
+  auto engine_it = inference_engines_.find(model_id);
+  if (engine_it == inference_engines_.end()) {
+    log("WARNING", "Model not loaded: " + model_id);
+    return true; // 已经卸载，返回成功
+  }
+
+  try {
+    // 移除推理引擎（析构函数会自动清理资源）
+    inference_engines_.erase(engine_it);
+    model_states_[model_id] = ModelLoadState::UNLOADED;
+    active_models_count_--;
+
+    log("INFO", "Model unloaded successfully: " + model_id);
+    return true;
+
+  } catch (const std::exception &e) {
+    log("ERROR", "Exception during model unloading: " + std::string(e.what()));
+    return false;
+  }
 }
 
 bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
@@ -439,6 +527,12 @@ OllamaModelManager::createInferenceEngine(const std::string &model_id) {
     auto engine = std::make_unique<MLInferenceEngine>(model_id);
     if (!engine->initialize()) {
       log("ERROR", "Failed to initialize inference engine for: " + model_id);
+      return nullptr;
+    }
+
+    // 进一步校验引擎就绪状态
+    if (!engine->isReady()) {
+      log("ERROR", "Inference engine not ready after initialization for: " + model_id);
       return nullptr;
     }
 

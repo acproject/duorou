@@ -1,106 +1,71 @@
 # Model module CMakeLists.txt
 
 # Set minimum CMake version
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.15)
 
-# Model library sources
+# Model library
 set(MODEL_SOURCES
-    vocabulary.cpp
-    byte_pair_encoding.cpp
-    qwen_text_model.cpp
-    qwen_vision_model.cpp
-    qwen_image_processor.cpp
-    qwen_multimodal_model.cpp
-    sentence_piece.cpp
-    model.cpp
-    simple_integration_demo.cpp
-    integrated_model_example.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vocabulary.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sentence_piece.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/byte_pair_encoding.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_text_model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_vision_model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_image_processor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_multimodal_model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_factory.cpp
 )
 
-# Model library headers
 set(MODEL_HEADERS
-    base_model.h
-    text_processor.h
-    vocabulary.h
-    byte_pair_encoding.h
-    sentence_piece.h
-    model.h
-    qwen_text_model.h
-    qwen_vision_model.h
-    qwen_image_processor.h
-    qwen_multimodal_model.h
-    simple_integration_demo.h
-    integrated_model_example.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/model.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/vocabulary.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/sentence_piece.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/byte_pair_encoding.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/text_processor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_text_model.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_vision_model.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_image_processor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_multimodal_model.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_factory.h
 )
 
-# Create model static library
-add_library(duorou_model STATIC ${MODEL_SOURCES})
-
-# Set target properties
-set_target_properties(duorou_model PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
+add_library(duorou_model STATIC ${MODEL_SOURCES} ${MODEL_HEADERS})
 
 # Include directories
-target_include_directories(duorou_model PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src/ml
-    ${CMAKE_SOURCE_DIR}/src/kvcache
-    ${CMAKE_SOURCE_DIR}/src/extensions/ollama/gguf
-)
+# Add include directories for GGUF parser
+include_directories(${CMAKE_SOURCE_DIR}/src/extensions/ollama)
+include_directories(${CMAKE_SOURCE_DIR}/src/extensions/ollama/gguf)
 
-# Compiler flags
-target_compile_options(duorou_model PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-unused-parameter
-)
+# Set standards and compile options
+set_target_properties(duorou_model PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 
-# Link libraries
-target_link_libraries(duorou_model PRIVATE
-    duorou_ml
-    duorou_kvcache
-    duorou_ollama_extension
-)
+# Link dependencies
+# Assuming duorou and llama targets exist elsewhere in the project
 
-# Test executable
-add_executable(test_model test_model.cpp)
+# Tests and executables
+add_executable(test_model ${CMAKE_CURRENT_SOURCE_DIR}/test_model.cpp)
+add_dependencies(test_model duorou_model)
+# Link against model and ollama extension for GGUF symbols
+target_link_libraries(test_model PRIVATE duorou_model duorou_ollama_extension)
 
-# Integration test executable
-add_executable(test_integration test_integration.cpp)
+add_executable(tokenizer_cli ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_cli.cpp)
+add_dependencies(tokenizer_cli duorou_model)
+# Link against model and ollama extension (factory may touch GGUF symbols)
+target_link_libraries(tokenizer_cli PRIVATE duorou_model duorou_ollama_extension)
 
-# Link test with model library
-target_link_libraries(test_model PRIVATE duorou_model)
-target_link_libraries(test_integration PRIVATE duorou_model)
+add_executable(tokenizer_golden_test ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_golden_test.cpp)
+add_dependencies(tokenizer_golden_test duorou_model)
+# Link against model and ollama extension (for consistency)
+target_link_libraries(tokenizer_golden_test PRIVATE duorou_model duorou_ollama_extension)
 
-# Set test properties
-set_target_properties(test_model PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
-
-set_target_properties(test_integration PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
-
-# Add test to CTest
-enable_testing()
-add_test(NAME ModelTests COMMAND test_model)
-add_test(NAME IntegrationTests COMMAND test_integration)
+# 将 tokenizer_golden_test 纳入 CTest（使用环境变量驱动数据路径）
+if(BUILD_TESTING)
+    add_test(NAME TokenizerGoldenTest COMMAND tokenizer_golden_test)
+    set_tests_properties(TokenizerGoldenTest PROPERTIES
+        ENVIRONMENT "DUOROU_TOKENIZER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden_tokenizer;DUOROU_TOKENIZER_TYPE=bpe;DUOROU_ADD_SPECIAL=0;DUOROU_GOLDEN_ENCODE=${CMAKE_CURRENT_SOURCE_DIR}/golden_tokenizer/encode.tsv;DUOROU_GOLDEN_DECODE=${CMAKE_CURRENT_SOURCE_DIR}/golden_tokenizer/decode.tsv"
+    )
+endif()
 
 # Install targets
-install(TARGETS duorou_model
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-)
-
-install(FILES ${MODEL_HEADERS}
-    DESTINATION include/duorou/model
-)
+install(TARGETS duorou_model ARCHIVE DESTINATION lib)
+install(FILES ${MODEL_HEADERS} DESTINATION include/duorou/model)

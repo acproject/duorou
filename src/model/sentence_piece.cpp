@@ -71,7 +71,7 @@ std::vector<int32_t> SentencePiece::encodeText(const std::string& text) const {
 }
 
 std::string SentencePiece::normalizeText(const std::string& text) const {
-    // Basic normalization - convert to lowercase and handle whitespace
+    // Basic normalization - collapse consecutive whitespace to a single space
     std::string result;
     result.reserve(text.length());
     
@@ -120,17 +120,16 @@ std::vector<int32_t> SentencePiece::encodeWord(const std::string& word) const {
 
 double SentencePiece::calculateScore(const std::vector<std::string>& tokens) const {
     double score = 0.0;
-    
+    const auto& scores = vocab_->getScores();
     for (const auto& token : tokens) {
-        // Simple scoring based on token length (longer tokens are preferred)
-        double tokenScore = std::log(static_cast<double>(token.length()));
-        if (vocab_->encode(token) < 0) {
-            // Unknown token penalty
-            tokenScore = -10.0;
+        int32_t id = vocab_->encode(token);
+        if (id >= 0 && static_cast<size_t>(id) < scores.size()) {
+            score += static_cast<double>(scores[id]);
+        } else {
+            // Unknown token heavy penalty
+            score += -10.0;
         }
-        score += tokenScore;
     }
-    
     return score;
 }
 
@@ -140,53 +139,69 @@ std::vector<std::string> SentencePiece::viterbiDecode(const std::string& text) c
     }
     
     size_t len = text.length();
-    std::vector<double> scores(len + 1, -std::numeric_limits<double>::infinity());
+    std::vector<double> dp(len + 1, -std::numeric_limits<double>::infinity());
     std::vector<int> prev(len + 1, -1);
-    
-    scores[0] = 0.0;
-    
-    // Dynamic programming
+    dp[0] = 0.0;
+
+    const auto& scores = vocab_->getScores();
+
+    // Dynamic programming over substrings
     for (size_t i = 0; i < len; ++i) {
-        if (scores[i] == -std::numeric_limits<double>::infinity()) {
-            continue;
-        }
-        
-        // Try all possible tokens starting at position i
+        if (dp[i] == -std::numeric_limits<double>::infinity()) continue;
         for (size_t j = i + 1; j <= len; ++j) {
             std::string token = text.substr(i, j - i);
-            int32_t tokenId = vocab_->encode(token);
-            
-            if (tokenId >= 0) {
-                // Simple scoring based on token length (longer tokens are preferred)
-                double tokenScore = std::log(static_cast<double>(token.length()));
-                double newScore = scores[i] + tokenScore;
-                if (newScore > scores[j]) {
-                    scores[j] = newScore;
+            int32_t id = vocab_->encode(token);
+            if (id >= 0) {
+                double tokenScore = 0.0;
+                if (static_cast<size_t>(id) < scores.size()) {
+                    tokenScore = static_cast<double>(scores[id]);
+                } else {
+                    // If no explicit score, approximate by length preference
+                    tokenScore = std::log(static_cast<double>(token.length()));
+                }
+                double newScore = dp[i] + tokenScore;
+                if (newScore > dp[j]) {
+                    dp[j] = newScore;
                     prev[j] = static_cast<int>(i);
                 }
             }
         }
     }
-    
-    // Backtrack to find the best path
+
+    // Backtrack
     std::vector<std::string> result;
     int pos = static_cast<int>(len);
-    
     while (pos > 0 && prev[pos] >= 0) {
         int start = prev[pos];
         result.push_back(text.substr(start, pos - start));
         pos = start;
     }
-    
     std::reverse(result.begin(), result.end());
-    
-    // If no valid segmentation found, fall back to character-level
+
+    // Fallback: if no path, try byte-level <0x..> tokens if present
+    if ((result.empty() || prev[len] < 0) && !text.empty()) {
+        result.clear();
+        for (unsigned char b : std::string(text.begin(), text.end())) {
+            char buf[6];
+            std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned int>(b));
+            std::string hex(buf);
+            std::string byteTok = std::string("<0x") + hex + ">";
+            if (vocab_->encode(byteTok) >= 0) {
+                result.push_back(byteTok);
+            } else {
+                // fallback to raw single-byte string
+                result.push_back(std::string(1, static_cast<char>(b)));
+            }
+        }
+    }
+
+    // If still empty, final fallback to character-level split
     if (result.empty() && !text.empty()) {
         for (char c : text) {
             result.push_back(std::string(1, c));
         }
     }
-    
+
     return result;
 }
 
@@ -195,7 +210,7 @@ bool SentencePiece::isWhitespace(char c) const {
 }
 
 std::string SentencePiece::addSpacePrefix(const std::string& text) const {
-    // SentencePiece uses U+2581 (▁) as space symbol (UTF-8 encoded)
+    // SentencePiece uses U+2581 ( ) as space symbol (UTF-8 encoded)
     return "\xe2\x96\x81" + text;
 }
 
