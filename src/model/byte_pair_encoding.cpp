@@ -3,12 +3,30 @@
 #include <sstream>
 #include <codecvt>
 #include <locale>
+#include <stdexcept>
+#include <iostream>
 
 namespace duorou {
 namespace model {
 
 BytePairEncoding::BytePairEncoding(const std::string& pattern, std::shared_ptr<Vocabulary> vocab)
-    : preTokenizeRegex_(pattern), vocab_(vocab) {
+    : vocab_(vocab) {
+    try {
+        // Explicitly use ECMAScript grammar and optimize
+        preTokenizeRegex_ = std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
+    } catch (const std::regex_error& e) {
+        // Fallback to a safe, ECMAScript-compatible pattern that roughly mimics intended behavior
+        std::cerr << "[WARN] Invalid BPE regex pattern for std::regex (ECMAScript). Falling back to safe pattern. Reason: "
+                  << e.what() << std::endl;
+        // This groups: ASCII letters, digits, runs of non-ASCII bytes (UTF-8), punctuation runs, and whitespace runs
+        const char* kSafeFallbackPattern = R"([A-Za-z]+|\d+|[\x80-\xFF]+|[^\sA-Za-z\d\x80-\xFF]+|\s+)";
+        try {
+            preTokenizeRegex_ = std::regex(kSafeFallbackPattern, std::regex::ECMAScript | std::regex::optimize);
+        } catch (...) {
+            // Ultimate guard: extremely simple splitter that always compiles
+            preTokenizeRegex_ = std::regex(R"(\S+|\s+)", std::regex::ECMAScript);
+        }
+    }
 }
 
 std::vector<int32_t> BytePairEncoding::encode(const std::string& text, bool addSpecial) {

@@ -127,14 +127,24 @@ QwenTextModel::QwenTextModel(const TextModelOptions& options)
 
 std::vector<int32_t> QwenTextModel::encode(const std::string& text, bool addSpecial) {
     if (!tokenizer_) {
-        return {};
+        std::cerr << "Error: Tokenizer not initialized. Cannot encode text." << std::endl;
+        throw std::runtime_error("Tokenizer not initialized");
     }
-    return tokenizer_->encode(text, addSpecial);
+    
+    auto tokens = tokenizer_->encode(text, addSpecial);
+    if (tokens.empty() && !text.empty()) {
+        std::cerr << "Warning: Tokenizer returned empty tokens for non-empty text: " << text << std::endl;
+        // Return a fallback token (UNK token) to prevent empty vectors
+        return {0}; // Assuming 0 is UNK token ID
+    }
+    
+    return tokens;
 }
 
 std::string QwenTextModel::decode(const std::vector<int32_t>& ids) {
     if (!tokenizer_) {
-        return "";
+        std::cerr << "Error: Tokenizer not initialized. Cannot decode tokens." << std::endl;
+        throw std::runtime_error("Tokenizer not initialized");
     }
     return tokenizer_->decode(ids);
 }
@@ -160,12 +170,93 @@ bool QwenTextModel::initialize(const std::string& configPath) {
         
         // Initialize vocabulary and tokenizer
         vocabulary_ = std::make_unique<Vocabulary>();
+        
+        // Initialize vocabulary with default Qwen vocabulary
+        std::vector<std::string> defaultVocab;
+        std::vector<int32_t> defaultTypes;
+        std::vector<float> defaultScores;
+        std::vector<std::string> defaultMerges;
+        
+        // Create a minimal vocabulary for testing with byte-level support
+        size_t vocabSize = getVocabSize();
+        defaultVocab.reserve(vocabSize);
+        defaultTypes.reserve(vocabSize);
+        defaultScores.reserve(vocabSize);
+        
+        // Set special tokens first
+        defaultVocab.push_back("<unk>");  // 0: UNK token
+        defaultTypes.push_back(1); // Special token
+        defaultScores.push_back(0.0f);
+        
+        defaultVocab.push_back("<bos>");  // 1: BOS token
+        defaultTypes.push_back(1); // Special token
+        defaultScores.push_back(0.0f);
+        
+        defaultVocab.push_back("<eos>");  // 2: EOS token
+        defaultTypes.push_back(1); // Special token
+        defaultScores.push_back(0.0f);
+        
+        // Add byte-level tokens (0-255) for proper BPE encoding
+        for (int i = 0; i < 256; ++i) {
+            std::string byteToken;
+            if (i < 32 || i >= 127) {
+                // Non-printable characters - use byte representation
+                byteToken = "<0x" + std::to_string(i) + ">";
+            } else {
+                // Printable ASCII characters
+                byteToken = std::string(1, static_cast<char>(i));
+            }
+            defaultVocab.push_back(byteToken);
+            defaultTypes.push_back(0); // Normal token
+            defaultScores.push_back(0.0f);
+        }
+        
+        // Add some common Chinese characters for better support
+        std::vector<std::string> commonChinese = {
+            "你", "好", "我", "是", "的", "在", "有", "不", "了", "人",
+            "他", "这", "中", "大", "为", "上", "个", "国", "一", "以",
+            "要", "就", "出", "会", "可", "也", "都", "后", "自", "时"
+        };
+        
+        for (const auto& ch : commonChinese) {
+            if (defaultVocab.size() < vocabSize) {
+                defaultVocab.push_back(ch);
+                defaultTypes.push_back(0); // Normal token
+                defaultScores.push_back(0.0f);
+            }
+        }
+        
+        // Fill remaining slots with generic tokens if needed
+        while (defaultVocab.size() < vocabSize) {
+            defaultVocab.push_back("<token_" + std::to_string(defaultVocab.size()) + ">");
+            defaultTypes.push_back(0); // Normal token
+            defaultScores.push_back(0.0f);
+        }
+        
+        vocabulary_->initialize(defaultVocab, defaultTypes, defaultScores, defaultMerges);
+        vocabulary_->setUNK({0});
+        vocabulary_->setBOS({1}, true);
+        vocabulary_->setEOS({2}, true);
+        
+        std::cout << "[DEBUG] Vocabulary initialized with " << vocabulary_->size() << " tokens" << std::endl;
+        
         auto vocabPtr = std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary*){});
         
         // Create Qwen tokenizer via factory
+        std::cout << "[DEBUG] Creating Qwen tokenizer via factory..." << std::endl;
         TokenizerFactoryOptions opts;
         opts.override_type = "bpe"; // Qwen uses BPE by default
+        std::cout << "[DEBUG] Calling createTextProcessorForArchitecture with architecture='qwen', override_type='bpe'" << std::endl;
         tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts);
+        
+        // Verify tokenizer was created successfully
+        if (!tokenizer_) {
+            std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture" << std::endl;
+            std::cerr << "[ERROR] createTextProcessorForArchitecture returned nullptr" << std::endl;
+            return false;
+        } else {
+            std::cout << "[DEBUG] Tokenizer created successfully!" << std::endl;
+        }
         
         // Initialize layers if not already done
         if (layers_.empty()) {

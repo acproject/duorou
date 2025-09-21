@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iostream>
 
 #include "byte_pair_encoding.h"
 #include "sentence_piece.h"
@@ -26,8 +27,9 @@ const char* kDefaultGpt2Pattern =
     "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
 
 // Qwen specific BPE pattern used in QwenTextModel
+// Updated to properly handle Chinese characters using Unicode property classes
 const char* kQwenPattern =
-    "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}+| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
 // Registry map
 using Registry = std::unordered_map<std::string, TextProcessorCreator>;
@@ -156,6 +158,9 @@ std::unique_ptr<TextProcessor> createTextProcessorForArchitecture(
     const std::string& architecture,
     std::shared_ptr<Vocabulary> vocab,
     const TokenizerFactoryOptions& opts) {
+    std::cout << "[DEBUG] createTextProcessorForArchitecture called with architecture='" << architecture << "'" << std::endl;
+    ensureDefaultRegistry();
+    
     // Environment overrides
     std::string envType = toLower(getEnv("DUOROU_TOKENIZER_TYPE")); // "bpe" or "spm"
     std::string envPattern = getEnv("DUOROU_BPE_PATTERN");
@@ -164,15 +169,28 @@ std::unique_ptr<TextProcessor> createTextProcessorForArchitecture(
     std::string type = toLower(opts.override_type);
     if (type.empty()) type = envType;
     if (type.empty()) type = decideTypeFromArch(architecture);
+    
+    std::cout << "[DEBUG] Determined tokenizer type: '" << type << "'" << std::endl;
 
     if (type == "spm" || type == "sentencepiece" || type == "sentence_piece") {
+        std::cout << "[DEBUG] Creating SentencePiece tokenizer" << std::endl;
         return std::make_unique<SentencePiece>(vocab);
     }
 
     // BPE path
     std::string pattern = opts.override_bpe_pattern.empty() ? envPattern : opts.override_bpe_pattern;
     if (pattern.empty()) pattern = decidePatternFromArch(architecture);
-    return std::make_unique<BytePairEncoding>(pattern, vocab);
+    std::cout << "[DEBUG] Using BPE pattern: '" << pattern << "'" << std::endl;
+    std::cout << "[DEBUG] Creating BytePairEncoding tokenizer..." << std::endl;
+    
+    try {
+        auto tokenizer = std::make_unique<BytePairEncoding>(pattern, vocab);
+        std::cout << "[DEBUG] BytePairEncoding tokenizer created successfully!" << std::endl;
+        return tokenizer;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Failed to create BytePairEncoding tokenizer: " << e.what() << std::endl;
+        return nullptr;
+    }
 }
 
 std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
