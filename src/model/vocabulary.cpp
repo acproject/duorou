@@ -1,4 +1,5 @@
 #include "vocabulary.h"
+#include "../utils/string_utils.h"
 #include <algorithm>
 #include <sstream>
 
@@ -9,7 +10,8 @@ void Vocabulary::initialize(const std::vector<std::string>& values,
                            const std::vector<int32_t>& types,
                            const std::vector<float>& scores,
                            const std::vector<std::string>& merges) {
-    values_ = values;
+    // 解码可能包含十六进制转义序列的token字符串
+    values_ = utils::decodeTokenStrings(values);
     types_ = types;
     scores_ = scores;
     merges_ = merges;

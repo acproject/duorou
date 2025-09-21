@@ -86,7 +86,9 @@ struct MultimodalInputData {
 class QwenMultimodalModel : public BaseModel, public MultimodalProcessor {
 public:
     QwenMultimodalModel();
-    explicit QwenMultimodalModel(const QwenMultimodalConfig& config);
+    QwenMultimodalModel(const QwenMultimodalConfig& config);
+    QwenMultimodalModel(const QwenMultimodalConfig& config, 
+                        std::shared_ptr<Vocabulary> external_vocab);
     ~QwenMultimodalModel() override = default;
     
     // BaseModel interface implementation
@@ -150,7 +152,10 @@ public:
 private:
     QwenMultimodalConfig config_;
     
-    // Model components
+    // 新增：外部词汇表（可选）
+    std::shared_ptr<Vocabulary> external_vocabulary_;
+    
+    // Component models
     std::unique_ptr<QwenTextModel> textModel_;
     std::unique_ptr<QwenVisionModel> visionModel_;
     std::unique_ptr<QwenImageProcessor> imageProcessor_;
@@ -212,7 +217,12 @@ private:
 };
 
 // Factory function for creating Qwen multimodal models
+// Factory functions
 std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath);
+
+// 新增：接受外部词汇表的工厂函数
+std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath, 
+                                                     std::shared_ptr<Vocabulary> external_vocab);
 
 // Utility functions for multimodal processing
 namespace MultimodalUtils {

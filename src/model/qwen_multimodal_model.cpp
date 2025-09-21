@@ -1,4 +1,5 @@
 #include "qwen_multimodal_model.h"
+#include "tokenizer_factory.h"
 #include <iostream>
 #include <fstream>
 #include <algorithm>
@@ -15,6 +16,13 @@ QwenMultimodalModel::QwenMultimodalModel() {
 
 QwenMultimodalModel::QwenMultimodalModel(const QwenMultimodalConfig& config) 
     : config_(config) {
+    initializeMLComponents();
+}
+
+// 新增：接受外部词汇表的构造函数
+QwenMultimodalModel::QwenMultimodalModel(const QwenMultimodalConfig& config, 
+                                         std::shared_ptr<Vocabulary> external_vocab) 
+    : config_(config), external_vocabulary_(external_vocab) {
     initializeMLComponents();
 }
 
@@ -45,11 +53,46 @@ bool QwenMultimodalModel::loadModel(const std::string& modelPath) {
         std::cerr << "Model not initialized. Call initialize() first." << std::endl;
         return false;
     }
-    
+
+    // 如果传入的是 GGUF 文件，优先从 GGUF 初始化词汇表和分词器
+    auto ends_with = [](const std::string& s, const std::string& suffix) {
+        return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+
+    bool gguf_inited = false;
+    if (!modelPath.empty() && (ends_with(modelPath, ".gguf") || modelPath.find(".gguf") != std::string::npos)) {
+        gguf_inited = loadGGUFModel(modelPath);
+        if (!gguf_inited) {
+            std::cerr << "[WARN] Failed to initialize tokenizer/vocab from GGUF: " << modelPath << std::endl;
+        }
+    } else if (!config_.textModelPath.empty() && (ends_with(config_.textModelPath, ".gguf") || config_.textModelPath.find(".gguf") != std::string::npos)) {
+        gguf_inited = loadGGUFModel(config_.textModelPath);
+        if (!gguf_inited) {
+            std::cerr << "[WARN] Failed to initialize tokenizer/vocab from GGUF: " << config_.textModelPath << std::endl;
+        }
+    }
+
+    // 继续加载各组件模型（文本/视觉）
     return loadComponentModels();
 }
 
 std::vector<int32_t> QwenMultimodalModel::encode(const std::string& text, bool addSpecial) {
+    // 如果有外部词汇表，优先使用基于外部词汇表创建的 tokenizer
+    if (external_vocabulary_) {
+        std::cout << "[DEBUG] Using external vocabulary for encoding" << std::endl;
+        if (tokenizer_) {
+            return tokenizer_->encode(text, addSpecial);
+        }
+        // 回退：简单的字节级编码
+        std::vector<int32_t> tokens;
+        tokens.reserve(text.size());
+        for (unsigned char c : text) {
+            tokens.push_back(static_cast<int32_t>(c));
+        }
+        return tokens;
+    }
+    
+    // 回退到文本模型
     if (!textModel_) {
         std::cerr << "Text model not initialized" << std::endl;
         return {};
@@ -59,6 +102,24 @@ std::vector<int32_t> QwenMultimodalModel::encode(const std::string& text, bool a
 }
 
 std::string QwenMultimodalModel::decode(const std::vector<int32_t>& ids) {
+    // 如果有外部词汇表，优先使用基于外部词汇表创建的 tokenizer
+    if (external_vocabulary_) {
+        std::cout << "[DEBUG] Using external vocabulary for decoding" << std::endl;
+        if (tokenizer_) {
+            return tokenizer_->decode(ids);
+        }
+        // 回退：简单的字节级解码
+        std::string result;
+        result.reserve(ids.size());
+        for (int32_t id : ids) {
+            if (id >= 0 && id <= 255) {
+                result += static_cast<char>(id);
+            }
+        }
+        return result;
+    }
+    
+    // 回退到文本模型
     if (!textModel_) {
         std::cerr << "Text model not initialized" << std::endl;
         return "";
@@ -68,19 +129,27 @@ std::string QwenMultimodalModel::decode(const std::vector<int32_t>& ids) {
 }
 
 size_t QwenMultimodalModel::getVocabSize() const {
-    if (!textModel_) {
-        return 0;
+    // 优先使用外部词汇表
+    if (external_vocabulary_) {
+        return external_vocabulary_->size();
     }
-    
-    return textModel_->getVocabSize();
+    // 回退到文本模型的词汇表
+    if (textModel_) {
+        return textModel_->getVocabSize();
+    }
+    return 0;
 }
 
 const Vocabulary* QwenMultimodalModel::getVocabulary() const {
-    if (!textModel_) {
-        return nullptr;
+    // 优先使用外部词汇表
+    if (external_vocabulary_) {
+        return external_vocabulary_.get();
     }
-    
-    return textModel_->getVocabulary();
+    // 回退到文本模型的词汇表
+    if (textModel_) {
+        return textModel_->getVocabulary();
+    }
+    return nullptr;
 }
 
 std::vector<int32_t> QwenMultimodalModel::processMultimodal(
@@ -249,11 +318,38 @@ bool QwenMultimodalModel::loadFromCheckpoint(const std::string& checkpointPath) 
 }
 
 bool QwenMultimodalModel::initializeComponents() {
-    // Initialize text model
-    textModel_ = std::make_unique<QwenTextModel>(config_.textOptions);
-    if (!textModel_->initialize(config_.configPath)) {
-        std::cerr << "Failed to initialize text model" << std::endl;
-        return false;
+    // 如果尚未提供外部词汇表，但配置的文本模型路径是 GGUF 文件，
+    // 则优先从 GGUF 初始化 external_vocabulary_ 与 tokenizer_
+    if (!external_vocabulary_) {
+        const std::string& path = config_.textModelPath;
+        if (!path.empty() && path.find(".gguf") != std::string::npos) {
+            bool ok = loadGGUFModel(path);
+            if (ok) {
+                std::cout << "[DEBUG] Initialized external vocabulary from GGUF in initializeComponents, size="
+                          << (external_vocabulary_ ? external_vocabulary_->size() : 0) << std::endl;
+            } else {
+                std::cerr << "[WARN] Failed to initialize from GGUF in initializeComponents: " << path << std::endl;
+            }
+        }
+    }
+
+    // 如果有外部词汇表，就不需要初始化文本模型的词汇表
+    if (external_vocabulary_) {
+        // 使用外部词汇表，创建一个不初始化词汇表的文本模型
+        textModel_ = std::make_unique<QwenTextModel>(config_.textOptions);
+        // 不调用 textModel_->initialize()，因为我们使用外部词汇表
+        std::cout << "[DEBUG] Using external vocabulary with size: " << external_vocabulary_->size() << std::endl;
+        
+        // 基于外部词汇表创建 tokenizer（使用 Qwen 架构的工厂）
+        TokenizerFactoryOptions opts; // 允许将来通过配置覆盖
+        tokenizer_ = createTextProcessorForArchitecture("qwen", external_vocabulary_, opts);
+        if (!tokenizer_) {
+            std::cerr << "[ERROR] Failed to create tokenizer with external vocabulary" << std::endl;
+        }
+    } else {
+        // 仅创建文本模型实例，延迟初始化到 loadComponentModels 阶段，避免回退词表的初始化日志
+        textModel_ = std::make_unique<QwenTextModel>(config_.textOptions);
+        std::cout << "[DEBUG] Defer QwenTextModel initialization to loadComponentModels()" << std::endl;
     }
     
     // Initialize vision model
@@ -267,8 +363,8 @@ bool QwenMultimodalModel::initializeComponents() {
     // TODO: Fix linking issue with QwenImageProcessor constructor
     // imageProcessor_ = std::make_unique<QwenImageProcessor>(config_.imageProcessorConfig);
     
-    // Set up vocabulary and tokenizer from text model
-    vocabulary_ = std::unique_ptr<Vocabulary>(const_cast<Vocabulary*>(textModel_->getVocabulary()));
+    // 不在此处接管文本模型的词汇表所有权，避免重复释放/悬挂指针
+    // QwenMultimodalModel::getVocabulary() 会安全地返回 external_vocabulary_ 或 textModel_->getVocabulary()
     
     return true;
 }
@@ -277,8 +373,16 @@ bool QwenMultimodalModel::loadComponentModels() {
     bool success = true;
     
     // Load text model
-    if (!config_.textModelPath.empty()) {
-        success &= textModel_->loadModel(config_.textModelPath);
+    if (!external_vocabulary_) {
+        if (!textModel_->initialize(config_.configPath)) {
+            std::cerr << "Failed to initialize text model" << std::endl;
+            success = false;
+        }
+        if (!config_.textModelPath.empty()) {
+            success &= textModel_->loadModel(config_.textModelPath);
+        }
+    } else {
+        std::cout << "[DEBUG] Skipping textModel_ initialize/loadModel because external_vocabulary_ is provided" << std::endl;
     }
     
     // Load vision model
@@ -424,6 +528,17 @@ void QwenMultimodalModel::setConfig(const QwenMultimodalConfig& config) {
 // Factory function
 std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath) {
     auto model = std::make_unique<QwenMultimodalModel>();
+    if (!model->initialize(configPath)) {
+        return nullptr;
+    }
+    return std::move(model);
+}
+
+// 新增：接受外部词汇表的工厂函数
+std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath, 
+                                                     std::shared_ptr<Vocabulary> external_vocab) {
+    QwenMultimodalConfig config{};  // 使用默认配置
+    auto model = std::make_unique<QwenMultimodalModel>(config, external_vocab);
     if (!model->initialize(configPath)) {
         return nullptr;
     }
@@ -627,7 +742,77 @@ std::vector<float> QwenMultimodalModel::convertFromTensor(const duorou::ml::Tens
 bool QwenMultimodalModel::loadGGUFModel(const std::string& modelPath) {
     try {
         ggufParser_ = std::make_unique<duorou::extensions::ollama::GGUFParser>(true);
-        return ggufParser_->parseFile(modelPath);
+        if (!ggufParser_->parseFile(modelPath)) {
+            std::cerr << "Failed to load GGUF model: parseFile failed for " << modelPath << std::endl;
+            return false;
+        }
+
+        // 基于 GGUF 元数据构建 Vocabulary 和 TextProcessor（Tokenizer）
+        try {
+            // 读取 tokens
+            std::vector<std::string> tokens;
+            if (const auto* kvTokens = ggufParser_->getMetadata("tokenizer.ggml.tokens")) {
+                tokens = kvTokens->asStringArray();
+            }
+
+            // 读取 token types
+            std::vector<int32_t> types;
+            if (const auto* kvTypes = ggufParser_->getMetadata("tokenizer.ggml.token_type")) {
+                types = kvTypes->asInt32Array();
+            }
+            if (types.empty() && !tokens.empty()) {
+                types.assign(tokens.size(), duorou::model::TOKEN_TYPE_NORMAL);
+            }
+
+            // 读取 merges
+            std::vector<std::string> merges;
+            if (const auto* kvMerges = ggufParser_->getMetadata("tokenizer.ggml.merges")) {
+                merges = kvMerges->asStringArray();
+            }
+
+            if (!tokens.empty()) {
+                // 使用从 GGUF 读取的词汇构建 Vocabulary
+                external_vocabulary_ = std::make_shared<duorou::model::Vocabulary>();
+                external_vocabulary_->initialize(tokens, types, /*scores*/ {}, merges);
+
+                // BOS/EOS 配置
+                std::vector<int32_t> bos_ids;
+                std::vector<int32_t> eos_ids;
+                bool add_bos = false;
+                bool add_eos = false;
+                if (const auto* kvBOS = ggufParser_->getMetadata("tokenizer.ggml.bos_token_id")) {
+                    bos_ids.push_back(kvBOS->asInt32());
+                }
+                if (const auto* kvEOS = ggufParser_->getMetadata("tokenizer.ggml.eos_token_id")) {
+                    eos_ids.push_back(kvEOS->asInt32());
+                }
+                if (const auto* kvAddBOS = ggufParser_->getMetadata("tokenizer.ggml.add_bos_token")) {
+                    add_bos = kvAddBOS->asBool();
+                }
+                if (const auto* kvAddEOS = ggufParser_->getMetadata("tokenizer.ggml.add_eos_token")) {
+                    add_eos = kvAddEOS->asBool();
+                }
+                if (!bos_ids.empty()) {
+                    external_vocabulary_->setBOS(bos_ids, add_bos);
+                }
+                if (!eos_ids.empty()) {
+                    external_vocabulary_->setEOS(eos_ids, add_eos);
+                }
+
+                // 通过 GGUF 创建 TextProcessor（Tokenizer）
+                TokenizerFactoryOptions opts; // 使用 GGUF 元数据默认推断
+                tokenizer_ = createTextProcessorFromGGUF(*ggufParser_, external_vocabulary_, opts);
+
+                std::cout << "[DEBUG] Initialized Vocabulary(size=" << external_vocabulary_->size()
+                          << ") and TextProcessor from GGUF" << std::endl;
+            } else {
+                std::cerr << "[WARN] GGUF does not contain tokenizer tokens; skipping tokenizer init" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[WARN] Exception initializing tokenizer from GGUF: " << e.what() << std::endl;
+        }
+
+        return true;
     } catch (const std::exception& e) {
         std::cerr << "Failed to load GGUF model: " << e.what() << std::endl;
         return false;
