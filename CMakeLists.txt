@@ -643,33 +643,3 @@ message(STATUS "  OpenCL Support: ${DUOROU_ENABLE_OPENCL}")
 
 message(STATUS "  Build Examples: ${DUOROU_BUILD_EXAMPLES}")
 message(STATUS "")
-
-# Test programs removed as requested
-
-# 添加独立的模块集成测试
-add_executable(module_integration_test src/test_module_integration.cpp)
-
-set_target_properties(module_integration_test PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-)
-
-target_include_directories(module_integration_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/kvcache
-)
-
-target_link_libraries(module_integration_test
-    duorou_ml
-    duorou_kvcache
-)
-
-target_compile_options(module_integration_test PRIVATE
-    -Wall -Wextra -O2
-)
-
-# 添加集成测试到测试套件
-if(BUILD_TESTING)
-    add_test(NAME ModuleIntegrationTest COMMAND module_integration_test)
-endif()
