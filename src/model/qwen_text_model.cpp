@@ -193,94 +193,30 @@ bool QwenTextModel::initialize(const std::string &configPath) {
                 << std::endl;
       duorou::extensions::ollama::GGUFParser parser(/*verbose=*/true);
       if (parser.parseFile(ggufFile)) {
-        // Read tokens/types/merges from GGUF
-        std::vector<std::string> tokens;
-        if (const auto *kvTokens =
-                parser.getMetadata("tokenizer.ggml.tokens")) {
-          tokens = kvTokens->asStringArray();
-        }
+        // Use the new unified GGUF vocabulary creation function
+        TokenizerFactoryOptions opts; // defaults; env may override
+        tokenizer_ = createTextProcessorFromGGUF(parser, opts);
 
-        std::vector<int32_t> types;
-        if (const auto *kvTypes =
-                parser.getMetadata("tokenizer.ggml.token_type")) {
-          types = kvTypes->asInt32Array();
-        }
-        if (types.empty() && !tokens.empty()) {
-          types.assign(tokens.size(), duorou::model::TOKEN_TYPE_NORMAL);
-        }
-
-        std::vector<std::string> merges;
-        if (const auto *kvMerges =
-                parser.getMetadata("tokenizer.ggml.merges")) {
-          merges = kvMerges->asStringArray();
-        }
-
-        if (!tokens.empty()) {
-          std::cout << "[DEBUG] QwenTextModel: GGUF vocabulary size = "
-                    << tokens.size() << std::endl;
-          auto vocab_shared = std::make_shared<Vocabulary>();
-          vocab_shared->initialize(tokens, types, /*scores*/ {}, merges);
-
-          // BOS/EOS configuration
-          std::vector<int32_t> bos_ids;
-          std::vector<int32_t> eos_ids;
-          bool add_bos = false;
-          bool add_eos = false;
-          if (const auto *kvBOS =
-                  parser.getMetadata("tokenizer.ggml.bos_token_id")) {
-            bos_ids.push_back(kvBOS->asInt32());
-          }
-          if (const auto *kvEOS =
-                  parser.getMetadata("tokenizer.ggml.eos_token_id")) {
-            eos_ids.push_back(kvEOS->asInt32());
-          }
-          if (const auto *kvAddBOS =
-                  parser.getMetadata("tokenizer.ggml.add_bos_token")) {
-            add_bos = kvAddBOS->asBool();
-          }
-          if (const auto *kvAddEOS =
-                  parser.getMetadata("tokenizer.ggml.add_eos_token")) {
-            add_eos = kvAddEOS->asBool();
-          }
-          if (!bos_ids.empty()) {
-            vocab_shared->setBOS(bos_ids, add_bos);
-          }
-          if (!eos_ids.empty()) {
-            vocab_shared->setEOS(eos_ids, add_eos);
-          }
-
-          // Create tokenizer from GGUF metadata
-          TokenizerFactoryOptions opts; // defaults; env may override
-          tokenizer_ = createTextProcessorFromGGUF(parser, vocab_shared, opts);
-
-          if (tokenizer_) {
-            std::cout << "[DEBUG] QwenTextModel: Tokenizer created from GGUF "
-                         "successfully"
-                      << std::endl;
-            // Ensure embedding/output sizes match tokenizer vocab size
-            size_t newVocab = tokenizer_->getVocabSize();
-            if (newVocab == 0 && vocab_shared) {
-              newVocab = vocab_shared->size();
-            }
-            if (newVocab > 0) {
-              size_t hidden = options_.hiddenSize;
-              tokenEmbeddings_.assign(newVocab * hidden, 0.0f);
-              outputWeights_.assign(hidden * newVocab, 0.0f);
-              if (outputNormWeights_.size() != hidden) {
-                outputNormWeights_.assign(hidden, 1.0f);
-              }
-            }
-            initialized_ = true;
-            return true;
-          } else {
-            std::cerr
-                << "[ERROR] QwenTextModel: Failed to create tokenizer from GGUF"
-                << std::endl;
-          }
-        } else {
-          std::cerr << "[WARN] QwenTextModel: GGUF has no tokenizer tokens; "
-                       "falling back to default vocab"
+        if (tokenizer_) {
+          std::cout << "[DEBUG] QwenTextModel: Tokenizer created from GGUF "
+                       "successfully"
                     << std::endl;
+          // Ensure embedding/output sizes match tokenizer vocab size
+          size_t newVocab = tokenizer_->getVocabSize();
+          if (newVocab > 0) {
+            size_t hidden = options_.hiddenSize;
+            tokenEmbeddings_.assign(newVocab * hidden, 0.0f);
+            outputWeights_.assign(hidden * newVocab, 0.0f);
+            if (outputNormWeights_.size() != hidden) {
+              outputNormWeights_.assign(hidden, 1.0f);
+            }
+          }
+          initialized_ = true;
+          return true;
+        } else {
+          std::cerr
+              << "[ERROR] QwenTextModel: Failed to create tokenizer from GGUF"
+              << std::endl;
         }
       } else {
         std::cerr << "[WARN] QwenTextModel: Failed to parse GGUF file; falling "

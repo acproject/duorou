@@ -193,6 +193,78 @@ std::unique_ptr<TextProcessor> createTextProcessorForArchitecture(
     }
 }
 
+std::shared_ptr<Vocabulary> createVocabularyFromGGUF(
+    const duorou::extensions::ollama::GGUFParser& parser) {
+    // Read tokens from GGUF
+    std::vector<std::string> tokens;
+    if (const auto* kvTokens = parser.getMetadata("tokenizer.ggml.tokens")) {
+        tokens = kvTokens->asStringArray();
+    }
+    
+    if (tokens.empty()) {
+        std::cerr << "[ERROR] No tokens found in GGUF file" << std::endl;
+        return nullptr;
+    }
+    
+    // Read token types
+    std::vector<int32_t> types;
+    if (const auto* kvTypes = parser.getMetadata("tokenizer.ggml.token_type")) {
+        types = kvTypes->asInt32Array();
+    }
+    
+    // If no types provided, default all to normal
+    if (types.empty() && !tokens.empty()) {
+        types.assign(tokens.size(), TOKEN_TYPE_NORMAL);
+    }
+    
+    // Read token scores (optional) - currently not implemented in GGUFKeyValue
+    std::vector<float> scores;
+    // TODO: Implement scores reading when asFloat32Array is available
+    // if (const auto* kvScores = parser.getMetadata("tokenizer.ggml.scores")) {
+    //     scores = kvScores->asFloat32Array();
+    // }
+    
+    // Read merges
+    std::vector<std::string> merges;
+    if (const auto* kvMerges = parser.getMetadata("tokenizer.ggml.merges")) {
+        merges = kvMerges->asStringArray();
+    }
+    
+    // Create and initialize vocabulary
+    auto vocab = std::make_shared<Vocabulary>();
+    vocab->initialize(tokens, types, scores, merges);
+    
+    // Set special tokens based on GGUF metadata
+    // BOS token
+    if (const auto* kvBOS = parser.getMetadata("tokenizer.ggml.bos_token_id")) {
+        std::vector<int32_t> bos = {kvBOS->asInt32()};
+        vocab->setBOS(bos, false); // Don't auto-add BOS by default
+    }
+    
+    // EOS token
+    if (const auto* kvEOS = parser.getMetadata("tokenizer.ggml.eos_token_id")) {
+        std::vector<int32_t> eos = {kvEOS->asInt32()};
+        vocab->setEOS(eos, false); // Don't auto-add EOS by default
+    }
+    
+    // PAD token
+    if (const auto* kvPAD = parser.getMetadata("tokenizer.ggml.pad_token_id")) {
+        std::vector<int32_t> pad = {kvPAD->asInt32()};
+        vocab->setPAD(pad);
+    }
+    
+    // UNK token
+    if (const auto* kvUNK = parser.getMetadata("tokenizer.ggml.unk_token_id")) {
+        std::vector<int32_t> unk = {kvUNK->asInt32()};
+        vocab->setUNK(unk);
+    }
+    
+    std::cout << "[INFO] Created vocabulary from GGUF: " << tokens.size() 
+              << " tokens, " << merges.size() << " merges" << std::endl;
+    
+    return vocab;
+}
+
 std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
     const duorou::extensions::ollama::GGUFParser& parser,
     std::shared_ptr<Vocabulary> vocab,
@@ -218,6 +290,20 @@ std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
     }
 
     return createTextProcessorForArchitecture(arch, std::move(vocab), opts);
+}
+
+std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
+    const duorou::extensions::ollama::GGUFParser& parser,
+    const TokenizerFactoryOptions& opts) {
+    // Create vocabulary from GGUF
+    auto vocab = createVocabularyFromGGUF(parser);
+    if (!vocab) {
+        std::cerr << "[ERROR] Failed to create vocabulary from GGUF" << std::endl;
+        return nullptr;
+    }
+    
+    // Create text processor with the vocabulary
+    return createTextProcessorFromGGUF(parser, vocab, opts);
 }
 
 } // namespace model

@@ -39,10 +39,19 @@ std::unique_ptr<TextProcessor> getTextProcessor(
     std::shared_ptr<Vocabulary> vocab,
     const TokenizerFactoryOptions& opts = {});
 
+// Create Vocabulary from GGUF metadata
+std::shared_ptr<Vocabulary> createVocabularyFromGGUF(
+    const duorou::extensions::ollama::GGUFParser& parser);
+
 // Create TextProcessor from GGUF metadata and a prepared Vocabulary
 std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
     const duorou::extensions::ollama::GGUFParser& parser,
     std::shared_ptr<Vocabulary> vocab,
+    const TokenizerFactoryOptions& opts = {});
+
+// Create TextProcessor from GGUF metadata (creates Vocabulary internally)
+std::unique_ptr<TextProcessor> createTextProcessorFromGGUF(
+    const duorou::extensions::ollama::GGUFParser& parser,
     const TokenizerFactoryOptions& opts = {});
 
 // Create TextProcessor from architecture name (without GGUF), useful for tests or non-GGUF loaders
