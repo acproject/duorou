@@ -40,7 +40,7 @@ include_directories(${CMAKE_SOURCE_DIR}/src/fs/gguf)
 set_target_properties(duorou_model PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 
 # Link dependencies
-target_link_libraries(duorou_model PUBLIC duorou_utils)
+target_link_libraries(duorou_model PUBLIC duorou_utils duorou_ollama_extension)
 # Assuming duorou and llama targets exist elsewhere in the project
 
 # Tests and executables

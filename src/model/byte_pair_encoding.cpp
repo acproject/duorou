@@ -9,21 +9,60 @@
 namespace duorou {
 namespace model {
 
+// Simple utility to replace all occurrences of a substring
+static void replaceAll(std::string &s, const std::string &from, const std::string &to) {
+    if (from.empty()) return;
+    size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from.length(), to);
+        pos += to.length();
+    }
+}
+
+// Sanitize a Unicode-property regex into an ECMAScript-compatible approximation
+// Notes:
+// - std::regex (ECMAScript) does not support \p{..} classes.
+// - We approximate:
+//   \p{L} -> [A-Za-z\x80-\xFF] (treat non-ASCII bytes as letters to keep them grouped)
+//   \p{N} -> \d
+//   [^\s\p{L}\p{N}] -> [^\sA-Za-z\d\x80-\xFF]
+//   [^\r\n\p{L}\p{N}] -> [^\r\nA-Za-z\d\x80-\xFF]
+// This is a pragmatic compromise to avoid over-fragmentation for UTF-8 text.
+static std::string sanitizePatternForECMA(std::string pattern) {
+    // First handle common negated classes to avoid double-replacing inner tokens later
+    replaceAll(pattern, "[^\\s\\p{L}\\p{N}]", "[^\\sA-Za-z\\d\\x80-\\xFF]");
+    replaceAll(pattern, "[^\\r\\n\\p{L}\\p{N}]", "[^\\r\\nA-Za-z\\d\\x80-\\xFF]");
+
+    // Replace Unicode property classes with ECMAScript-compatible approximations
+    replaceAll(pattern, "\\p{L}", "[A-Za-z\\x80-\\xFF]");
+    replaceAll(pattern, "\\p{N}", "\\d");
+    // Some patterns might contain double-escaped forms from C++ string literals or env strings
+    replaceAll(pattern, "\\\\p{L}", "[A-Za-z\\x80-\\xFF]");
+    replaceAll(pattern, "\\\\p{N}", "\\d");
+
+    // Remove unsupported non-capturing groups (?:...) by turning them into normal groups
+    replaceAll(pattern, "(?:", "(");
+
+    // Approximate unsupported negative lookahead used by GPT-2 pattern: \s+(?!\S) -> \s+
+    // This loses the end-of-string specificity but remains a safe over-approximation for token splitting
+    replaceAll(pattern, "\\s+(?!\\S)", "\\s+");
+
+    return pattern;
+}
+
 BytePairEncoding::BytePairEncoding(const std::string &pattern,
                                    std::shared_ptr<Vocabulary> vocab)
     : vocab_(vocab) {
   try {
-    // Explicitly use ECMAScript grammar and optimize
+    // Try to compile given pattern with ECMAScript first
+    std::string sanitized = sanitizePatternForECMA(pattern);
     preTokenizeRegex_ =
-        std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
+        std::regex(sanitized, std::regex::ECMAScript | std::regex::optimize);
   } catch (const std::regex_error &e) {
-    // Fallback to a safe, ECMAScript-compatible pattern that roughly mimics
-    // intended behavior
-    std::cerr << "[WARN] Invalid BPE regex pattern for std::regex "
-                 "(ECMAScript). Falling back to safe pattern. Reason: "
+    // Fallback to a safe, ECMAScript-compatible pattern that roughly mimics intended behavior
+    std::cerr << "[WARN] Invalid BPE regex pattern for std::regex (ECMAScript). Fallback to safe pattern. Reason: "
               << e.what() << std::endl;
-    // This groups: ASCII letters, digits, runs of non-ASCII bytes (UTF-8),
-    // punctuation runs, and whitespace runs
+    // This groups: ASCII letters, digits, runs of non-ASCII bytes (UTF-8), punctuation runs, and whitespace runs
     const char *kSafeFallbackPattern =
         R"([A-Za-z]+|\d+|[\x80-\xFF]+|[^\sA-Za-z\d\x80-\xFF]+|\s+)";
     try {
@@ -230,60 +269,70 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string &text) const {
     }
 
     if (i + len <= processedText.length()) {
-      runes.push_back(processedText.substr(i, len));
+      runes.emplace_back(processedText.substr(i, len));
     }
     i += len;
   }
 
-  if (runes.empty()) {
-    return {};
-  }
+  // Initialize merges
+  struct MergeInfo {
+    int prev = -1;
+    int next = -1;
+    std::vector<uint32_t> runes;
+  };
 
-  // Initialize merges (store indices into the runes array)
-  std::vector<Merge> merges(runes.size());
+  std::vector<MergeInfo> merges;
+  merges.reserve(runes.size());
+
   for (size_t i = 0; i < runes.size(); ++i) {
-    merges[i].prev = (i > 0) ? static_cast<int>(i - 1) : -1;
-    merges[i].next = (i < runes.size() - 1) ? static_cast<int>(i + 1) : -1;
-    merges[i].runes.clear();
-    merges[i].runes.push_back(static_cast<uint32_t>(i));
+    MergeInfo m;
+    m.prev = (i == 0) ? -1 : static_cast<int>(i - 1);
+    m.next = (i + 1 < runes.size()) ? static_cast<int>(i + 1) : -1;
+    m.runes.push_back(static_cast<uint32_t>(i));
+    merges.push_back(std::move(m));
   }
 
-  // Priority queue for pairs
-  std::priority_queue<Pair, std::vector<Pair>, std::greater<Pair>> pairs;
+  // Priority queue of pairs by rank
+  struct PairInfo {
+    int a;
+    int b;
+    int rank;
+    std::string value;
+    bool operator>(const PairInfo &other) const { return rank > other.rank; }
+  };
 
-  // Add initial pairs
-  for (size_t i = 0; i < runes.size() - 1; ++i) {
-    int rank = vocab_->getMergeRank(runes[i], runes[i + 1]);
+  auto getPairRank = [&](int leftIdx, int rightIdx) -> int {
+    if (leftIdx < 0 || rightIdx < 0) return -1;
+    std::string leftStr, rightStr;
+    for (const auto &idx : merges[leftIdx].runes) leftStr += runes[idx];
+    for (const auto &idx : merges[rightIdx].runes) rightStr += runes[idx];
+    int rank = vocab_->getMergeRank(leftStr, rightStr);
+    return rank;
+  };
+
+  std::priority_queue<PairInfo, std::vector<PairInfo>, std::greater<PairInfo>> pairs;
+  for (size_t i = 0; i < merges.size(); ++i) {
+    int rank = getPairRank(static_cast<int>(i), merges[i].next);
     if (rank >= 0) {
-      pairs.emplace(static_cast<int>(i), static_cast<int>(i + 1), rank,
-                    runes[i] + runes[i + 1]);
+      std::string leftStr, rightStr;
+      for (const auto &idx : merges[i].runes) leftStr += runes[idx];
+      for (const auto &idx : merges[merges[i].next].runes) rightStr += runes[idx];
+      pairs.push({static_cast<int>(i), merges[i].next, rank, leftStr + rightStr});
     }
   }
 
-  // Apply BPE merges
   while (!pairs.empty()) {
-    Pair pair = pairs.top();
+    auto pair = pairs.top();
     pairs.pop();
 
-    // Skip if indices are out of bounds
-    if (pair.a < 0 || pair.b < 0 || pair.a >= static_cast<int>(merges.size()) ||
-        pair.b >= static_cast<int>(merges.size())) {
-      continue;
-    }
-
-    Merge &left = merges[pair.a];
-    Merge &right = merges[pair.b];
-
-    // Check if merge is still valid
-    if (left.runes.empty() || right.runes.empty()) {
-      continue;
-    }
+    if (pair.a < 0 || pair.b < 0) continue;
+    auto &left = merges[pair.a];
+    auto &right = merges[pair.b];
+    if (right.runes.empty()) continue; // already merged
 
     std::string leftStr, rightStr;
-    for (const auto &idx : left.runes)
-      leftStr += runes[idx];
-    for (const auto &idx : right.runes)
-      rightStr += runes[idx];
+    for (const auto &idx : left.runes) leftStr += runes[idx];
+    for (const auto &idx : right.runes) rightStr += runes[idx];
 
     if (leftStr + rightStr != pair.value) {
       continue;
@@ -310,7 +359,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string &text) const {
         prevStr += runes[idx];
       int rank = vocab_->getMergeRank(prevStr, pair.value);
       if (rank >= 0) {
-        pairs.emplace(left.prev, pair.a, rank, prevStr + pair.value);
+        pairs.push(PairInfo{left.prev, pair.a, rank, prevStr + pair.value});
       }
     }
 
@@ -320,7 +369,7 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string &text) const {
         nextStr += runes[idx];
       int rank = vocab_->getMergeRank(pair.value, nextStr);
       if (rank >= 0) {
-        pairs.emplace(pair.a, left.next, rank, pair.value + nextStr);
+        pairs.push(PairInfo{pair.a, left.next, rank, pair.value + nextStr});
       }
     }
   }
