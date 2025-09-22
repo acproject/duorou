@@ -69,7 +69,51 @@ int32_t Vocabulary::encode(const std::string& token) const {
 
 std::string Vocabulary::decode(int32_t id) const {
     if (id >= 0 && static_cast<size_t>(id) < values_.size()) {
-        return values_[id];
+        const std::string& token_text = values_[id];
+        
+        // Handle byte tokens in <0xXX> format
+        if (token_text.length() == 6 && 
+            token_text.substr(0, 3) == "<0x" && 
+            token_text.back() == '>') {
+            
+            std::string hex_str = token_text.substr(3, 2);
+            try {
+                int byte_val = std::stoi(hex_str, nullptr, 16);
+                return std::string(1, static_cast<char>(byte_val));
+            } catch (const std::exception&) {
+                // If hex parsing fails, return original token
+                return token_text;
+            }
+        }
+        
+        // Handle placeholder tokens like <token_146895>
+        // These often represent byte values that cannot be directly encoded as UTF-8
+        if (token_text.length() > 7 && 
+            token_text.substr(0, 7) == "<token_" && 
+            token_text.back() == '>') {
+            
+            // Try to extract the token ID and convert it to a byte value
+            std::string id_str = token_text.substr(7, token_text.length() - 8);
+            try {
+                int token_id = std::stoi(id_str);
+                // For many tokenizers, high token IDs represent byte values
+                // Try to map the token ID to a byte value
+                if (token_id >= 0 && token_id <= 255) {
+                    return std::string(1, static_cast<char>(token_id));
+                } else if (token_id > 255) {
+                    // For token IDs > 255, try to map them to byte values
+                    // This is a heuristic approach - different tokenizers may use different mappings
+                    int byte_val = token_id % 256;
+                    return std::string(1, static_cast<char>(byte_val));
+                }
+            } catch (const std::exception&) {
+                // If parsing fails, return original token
+                return token_text;
+            }
+        }
+        
+        // For GPT-2 byte-level BPE, apply Unicode to byte decoding
+        return decodeText(token_text);
     }
     return "";
 }
@@ -140,6 +184,88 @@ void Vocabulary::buildMergeMap() const {
     for (size_t i = 0; i < merges_.size(); ++i) {
         mergeMap_[merges_[i]] = static_cast<int32_t>(i);
     }
+}
+
+std::string Vocabulary::decodeText(const std::string& text) const {
+    std::string decoded_text;
+    
+    // Convert UTF-8 string to Unicode code points
+    std::vector<uint32_t> codepoints;
+    size_t i = 0;
+    while (i < text.length()) {
+        uint32_t codepoint = 0;
+        uint8_t byte = static_cast<uint8_t>(text[i]);
+        
+        if (byte < 0x80) {
+            // ASCII character
+            codepoint = byte;
+            i++;
+        } else if ((byte & 0xE0) == 0xC0) {
+            // 2-byte UTF-8 sequence
+            if (i + 1 < text.length()) {
+                codepoint = ((byte & 0x1F) << 6) | (static_cast<uint8_t>(text[i + 1]) & 0x3F);
+                i += 2;
+            } else {
+                i++;
+            }
+        } else if ((byte & 0xF0) == 0xE0) {
+            // 3-byte UTF-8 sequence
+            if (i + 2 < text.length()) {
+                codepoint = ((byte & 0x0F) << 12) | 
+                           ((static_cast<uint8_t>(text[i + 1]) & 0x3F) << 6) | 
+                           (static_cast<uint8_t>(text[i + 2]) & 0x3F);
+                i += 3;
+            } else {
+                i++;
+            }
+        } else if ((byte & 0xF8) == 0xF0) {
+            // 4-byte UTF-8 sequence
+            if (i + 3 < text.length()) {
+                codepoint = ((byte & 0x07) << 18) | 
+                           ((static_cast<uint8_t>(text[i + 1]) & 0x3F) << 12) | 
+                           ((static_cast<uint8_t>(text[i + 2]) & 0x3F) << 6) | 
+                           (static_cast<uint8_t>(text[i + 3]) & 0x3F);
+                i += 4;
+            } else {
+                i++;
+            }
+        } else {
+            // Invalid UTF-8, skip
+            i++;
+        }
+        
+        if (codepoint > 0) {
+            codepoints.push_back(codepoint);
+        }
+    }
+    
+    // Convert Unicode code points to bytes using GPT-2 mapping
+    for (uint32_t cpt : codepoints) {
+        uint8_t byte_val = 0;
+        
+        // GPT-2 byte-level BPE mapping
+        if (cpt >= 0x21 && cpt <= 0x7E) {
+            // Printable ASCII: '!' to '~'
+            byte_val = static_cast<uint8_t>(cpt);
+        } else if (cpt >= 0xA1 && cpt <= 0xAC) {
+            // Extended ASCII: '¡' to '¬'
+            byte_val = static_cast<uint8_t>(cpt);
+        } else if (cpt >= 0xAE && cpt <= 0xFF) {
+            // Extended ASCII: '®' to 'ÿ'
+            byte_val = static_cast<uint8_t>(cpt);
+        } else if (cpt >= 256) {
+            // High Unicode code points map to unmapped bytes
+            // This is a simplified mapping - in practice, GPT-2 uses a specific mapping table
+            byte_val = static_cast<uint8_t>(cpt - 256);
+        } else {
+            // For other code points, use the code point value directly if it fits in a byte
+            byte_val = static_cast<uint8_t>(cpt);
+        }
+        
+        decoded_text += static_cast<char>(byte_val);
+    }
+    
+    return decoded_text;
 }
 
 void Vocabulary::autodetectPadUnk() {

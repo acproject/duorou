@@ -108,12 +108,12 @@ std::string QwenMultimodalModel::decode(const std::vector<int32_t>& ids) {
         if (tokenizer_) {
             return tokenizer_->decode(ids);
         }
-        // 回退：简单的字节级解码
+        // 回退：使用外部词汇表进行解码
         std::string result;
-        result.reserve(ids.size());
         for (int32_t id : ids) {
-            if (id >= 0 && id <= 255) {
-                result += static_cast<char>(id);
+            std::string token_text = external_vocabulary_->decode(id);
+            if (!token_text.empty()) {
+                result += token_text;
             }
         }
         return result;
@@ -337,7 +337,10 @@ bool QwenMultimodalModel::initializeComponents() {
     if (external_vocabulary_) {
         // 使用外部词汇表，创建一个不初始化词汇表的文本模型
         textModel_ = std::make_unique<QwenTextModel>(config_.textOptions);
-        // 不调用 textModel_->initialize()，因为我们使用外部词汇表
+        // 调用 textModel_->initialize() 来设置 initialized_ 标志，但跳过词汇表初始化
+        if (!textModel_->initialize(config_.configPath, true)) {
+            std::cerr << "[WARN] Failed to initialize text model with external vocabulary" << std::endl;
+        }
         std::cout << "[DEBUG] Using external vocabulary with size: " << external_vocabulary_->size() << std::endl;
         
         // 基于外部词汇表创建 tokenizer（使用 Qwen 架构的工厂）
@@ -771,6 +774,17 @@ bool QwenMultimodalModel::loadGGUFModel(const std::string& modelPath) {
             }
 
             if (!tokens.empty()) {
+                // 调试：检查从GGUF读取的词汇表内容
+                std::cout << "[DEBUG] GGUF vocabulary loaded with " << tokens.size() << " tokens" << std::endl;
+                std::cout << "[DEBUG] First 10 tokens from GGUF:" << std::endl;
+                for (size_t i = 0; i < std::min(tokens.size(), size_t(10)); ++i) {
+                    std::cout << "[DEBUG]   Token " << i << ": '" << tokens[i] << "'" << std::endl;
+                }
+                std::cout << "[DEBUG] Last 10 tokens from GGUF:" << std::endl;
+                for (size_t i = std::max(size_t(0), tokens.size() - 10); i < tokens.size(); ++i) {
+                    std::cout << "[DEBUG]   Token " << i << ": '" << tokens[i] << "'" << std::endl;
+                }
+                
                 // 使用从 GGUF 读取的词汇构建 Vocabulary
                 external_vocabulary_ = std::make_shared<duorou::model::Vocabulary>();
                 external_vocabulary_->initialize(tokens, types, /*scores*/ {}, merges);
@@ -802,6 +816,16 @@ bool QwenMultimodalModel::loadGGUFModel(const std::string& modelPath) {
                 // 通过 GGUF 创建 TextProcessor（Tokenizer）
                 TokenizerFactoryOptions opts; // 使用 GGUF 元数据默认推断
                 tokenizer_ = createTextProcessorFromGGUF(*ggufParser_, external_vocabulary_, opts);
+
+                if (tokenizer_) {
+                    std::cout << "[DEBUG] Tokenizer created successfully from GGUF" << std::endl;
+                    // 测试tokenizer是否能正确解码一些token
+                    std::vector<int32_t> test_tokens = {146895, 89621, 99014};
+                    std::string decoded = tokenizer_->decode(test_tokens);
+                    std::cout << "[DEBUG] Test decode tokens [146895, 89621, 99014]: '" << decoded << "'" << std::endl;
+                } else {
+                    std::cerr << "[ERROR] Failed to create tokenizer from GGUF" << std::endl;
+                }
 
                 std::cout << "[DEBUG] Initialized Vocabulary(size=" << external_vocabulary_->size()
                           << ") and TextProcessor from GGUF" << std::endl;

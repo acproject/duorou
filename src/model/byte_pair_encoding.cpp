@@ -1,6 +1,7 @@
 #include "byte_pair_encoding.h"
 #include <algorithm>
 #include <codecvt>
+#include <iomanip>
 #include <iostream>
 #include <locale>
 #include <sstream>
@@ -111,12 +112,46 @@ std::vector<int32_t> BytePairEncoding::encode(const std::string &text,
 std::string BytePairEncoding::decode(const std::vector<int32_t> &ids) {
   std::ostringstream result;
 
-  for (int32_t id : ids) {
+  std::cout << "[DEBUG] BytePairEncoding::decode called with " << ids.size() << " token IDs" << std::endl;
+  std::cout << "[DEBUG] Vocabulary size: " << vocab_->size() << std::endl;
+  
+  // Show first few and last few token IDs for debugging
+  if (ids.size() > 0) {
+    std::cout << "[DEBUG] First 10 token IDs: ";
+    for (size_t i = 0; i < std::min(static_cast<size_t>(10), ids.size()); ++i) {
+      std::cout << ids[i] << " ";
+    }
+    std::cout << std::endl;
+    
+    if (ids.size() > 10) {
+      std::cout << "[DEBUG] Last 10 token IDs: ";
+      for (size_t i = std::max(static_cast<size_t>(0), ids.size() - 10); i < ids.size(); ++i) {
+        std::cout << ids[i] << " ";
+      }
+      std::cout << std::endl;
+    }
+  }
+
+  for (size_t i = 0; i < ids.size(); ++i) {
+    int32_t id = ids[i];
     std::string token = vocab_->decode(id);
     
-    // Debug: Print token ID and corresponding string
-    if (ids.size() <= 20) { // Only debug for short sequences to avoid spam
-      std::cout << "[DEBUG] Token ID " << id << " -> '" << token << "' (length: " << token.length() << ")" << std::endl;
+    // Debug: Print detailed info for first few tokens and any problematic tokens
+    if (i < 10 || token.find("<token_") != std::string::npos) {
+      std::cout << "[DEBUG] Token[" << i << "] ID=" << id << " -> '" << token << "' (length: " << token.length();
+      if (token.find("<token_") != std::string::npos) {
+        std::cout << ") [PLACEHOLDER TOKEN DETECTED]";
+      }
+      std::cout << ")" << std::endl;
+      
+      // Show hex representation for problematic tokens
+      if (token.find("<token_") != std::string::npos) {
+        std::cout << "[DEBUG] Hex bytes: ";
+        for (unsigned char c : token) {
+          std::cout << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(c) << " ";
+        }
+        std::cout << std::dec << std::endl;
+      }
     }
     
     // For BPE tokenizers, we should directly append the token string
@@ -125,7 +160,11 @@ std::string BytePairEncoding::decode(const std::vector<int32_t> &ids) {
     result << token;
   }
 
-  return result.str();
+  std::string final_result = result.str();
+  std::cout << "[DEBUG] Final decoded string length: " << final_result.length() << std::endl;
+  std::cout << "[DEBUG] Final decoded string (first 100 chars): '" << final_result.substr(0, 100) << "'" << std::endl;
+
+  return final_result;
 }
 
 bool BytePairEncoding::isSpecial(int32_t id, Special special) const {

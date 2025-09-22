@@ -112,6 +112,7 @@ public:
     size_t getVocabSize() const override;
     const Vocabulary* getVocabulary() const override;
     bool initialize(const std::string& configPath) override;
+    bool initialize(const std::string& configPath, bool skipVocabInit);
     bool isInitialized() const override { return initialized_; }
     
     // TextModel interface implementation

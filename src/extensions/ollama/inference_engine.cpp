@@ -475,9 +475,12 @@ bool MLInferenceEngine::initializeSampler() {
 }
 
 std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
+  std::cout << "[DEBUG] Tokenizing text: '" << text << "' (length: " << text.length() << ")" << std::endl;
+  
   // 优先使用自定义 TextProcessor
   try {
     if (tokenizer_) {
+      std::cout << "[DEBUG] Using TextProcessor tokenizer" << std::endl;
       std::vector<int32_t> ids = tokenizer_->encode(text, /*addSpecial=*/true);
       std::vector<llama_token> tokens;
       tokens.reserve(ids.size());
@@ -490,6 +493,7 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
 
     // 其次使用 llama.cpp 自带 tokenizer
     if (llama_model_) {
+      std::cout << "[DEBUG] Using llama.cpp tokenizer" << std::endl;
       std::vector<llama_token> tokens;
       tokens.resize(text.length() + 8);
       const struct llama_vocab *vocab = llama_model_get_vocab(llama_model_);
@@ -502,25 +506,37 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
         tokens.resize(n_tokens);
         std::cout << "[DEBUG] Tokenized via llama.cpp into " << n_tokens
                   << " tokens" << std::endl;
+        for (int i = 0; i < std::min(5, n_tokens); i++) {
+          std::cout << "[DEBUG] Token[" << i << "] = " << tokens[i] << std::endl;
+        }
         return tokens;
+      } else {
+        std::cout << "[DEBUG] llama.cpp tokenization failed, n_tokens = " << n_tokens << std::endl;
       }
+    } else {
+      std::cout << "[DEBUG] llama_model_ is null, cannot use llama.cpp tokenizer" << std::endl;
     }
   } catch (const std::exception &e) {
     std::cerr << "Error during tokenization: " << e.what() << std::endl;
   }
 
   // 最后退化为简单分词（仅作为兜底）
+  std::cout << "[DEBUG] Using fallback tokenizer" << std::endl;
   std::vector<llama_token> tokens;
   try {
     std::istringstream iss(text);
     std::string word;
+    int word_count = 0;
     while (iss >> word) {
+      std::cout << "[DEBUG] Fallback processing word[" << word_count << "]: '" << word << "'" << std::endl;
       llama_token id = 0;
       for (char c : word) {
         id = id * 31 + static_cast<llama_token>(c);
       }
       id = std::abs(id) % 50000 + 1;
+      std::cout << "[DEBUG] Fallback word '" << word << "' -> token ID " << id << std::endl;
       tokens.push_back(id);
+      word_count++;
     }
     std::cout << "[DEBUG] Tokenized by fallback into " << tokens.size()
               << " tokens" << std::endl;

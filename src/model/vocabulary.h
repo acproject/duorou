@@ -146,6 +146,9 @@ private:
     void buildSpecialTokens() const;
     void buildMergeMap() const;
 
+    // GPT-2 byte-level BPE decoding
+    std::string decodeText(const std::string& text) const;
+
     // Auto-detect PAD/UNK ids by common token strings (e.g., "<pad>", "<unk>")
     void autodetectPadUnk();
 };
