@@ -9,8 +9,8 @@ set(OLLAMA_EXTENSION_SOURCES
     ollama_model_manager.cpp
     ollama_path_resolver.cpp
     inference_engine.cpp
-    ggml/ggml_wrapper.cpp
-    gguf/gguf_wrapper.cpp
+    ../../fs/ggml/ggml_wrapper.cpp
+    ../../fs/gguf/gguf_wrapper.cpp
 )
 
 # llama.cpp源文件
@@ -26,8 +26,8 @@ set(OLLAMA_EXTENSION_HEADERS
     ollama_model_manager.h
     ollama_path_resolver.h
     inference_engine.h
-    ggml/ggml_wrapper.h
-    gguf/gguf_wrapper.h
+    ../../fs/ggml/ggml_wrapper.h
+    ../../fs/gguf/gguf_wrapper.h
 )
 
 # 创建静态库
@@ -50,8 +50,8 @@ set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
 target_include_directories(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/ggml
-        ${CMAKE_CURRENT_SOURCE_DIR}/gguf
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fs/ggml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fs/gguf
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/llama.cpp/ggml/include

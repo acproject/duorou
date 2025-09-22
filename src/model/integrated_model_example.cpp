@@ -2,7 +2,7 @@
 #include "../kvcache/encoder.h"
 #include "../kvcache/causal.h"
 #include "../kvcache/wrapper.h"
-#include "../extensions/ollama/gguf/gguf_wrapper.h"
+#include "../fs/gguf/gguf_wrapper.h"
 #include <iostream>
 #include <stdexcept>
 

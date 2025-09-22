@@ -34,7 +34,7 @@ add_library(duorou_model STATIC ${MODEL_SOURCES} ${MODEL_HEADERS})
 # Include directories
 # Add include directories for GGUF parser
 include_directories(${CMAKE_SOURCE_DIR}/src/extensions/ollama)
-include_directories(${CMAKE_SOURCE_DIR}/src/extensions/ollama/gguf)
+include_directories(${CMAKE_SOURCE_DIR}/src/fs/gguf)
 
 # Set standards and compile options
 set_target_properties(duorou_model PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
