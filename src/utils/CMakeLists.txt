@@ -1,5 +1,5 @@
 # Utils library
-add_library(duorou_utils
+add_library(duorou_utils STATIC
     string_utils.cpp
 )
 

@@ -64,6 +64,7 @@ target_link_libraries(${OLLAMA_EXTENSION_NAME}
     PUBLIC
         duorou_ml
         duorou_kvcache
+        llama
 )
 
 # 编译定义
