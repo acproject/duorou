@@ -253,7 +253,11 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
 // GGUFParser 实现
 GGUFParser::GGUFParser(bool verbose)
     : verbose_(verbose), file_parsed_(false), tensor_data_offset_(0),
-      use_mmap_(true), fd_(-1), mapped_data_(nullptr), file_size_(0), current_offset_(0) {
+      use_mmap_(true), fd_(-1), mapped_data_(nullptr), file_size_(0), current_offset_(0)
+#ifdef _WIN32
+      , file_handle_(INVALID_HANDLE_VALUE), mapping_handle_(nullptr)
+#endif
+{
   std::memset(&header_, 0, sizeof(header_));
   std::memset(&architecture_, 0, sizeof(architecture_));
   log("DEBUG", "GGUFParser initialized with verbose=" + std::to_string(verbose) + ", mmap enabled");

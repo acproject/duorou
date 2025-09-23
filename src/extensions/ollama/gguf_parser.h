@@ -303,6 +303,12 @@ private:
   void* mapped_data_;
   size_t file_size_;
   size_t current_offset_;
+  
+#ifdef _WIN32
+  // Windows 特定的句柄
+  HANDLE file_handle_;
+  HANDLE mapping_handle_;
+#endif
 
   // 支持的架构列表
   static const std::vector<std::string> SUPPORTED_ARCHITECTURES;
