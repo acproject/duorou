@@ -73,10 +73,10 @@ ModelPathManager::ModelPathManager(const std::string& base_path)
             // Use ollama's default model storage path
             const char* home = std::getenv("HOME");
             if (home) {
-                base_path_ = std::filesystem::path(home) / ".ollama" / "models";
+                base_path_ = (std::filesystem::path(home) / ".ollama" / "models").string();
             } else {
                 // If unable to get HOME environment variable, use models under current directory as fallback
-                base_path_ = std::filesystem::current_path() / "models";
+                base_path_ = (std::filesystem::current_path() / "models").string();
             }
         }
     }

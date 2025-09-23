@@ -31,17 +31,23 @@ set_target_properties(duorou_kvcache PROPERTIES
 
 # 设置编译选项
 if(MSVC)
-    target_compile_options(duorou_kvcache PRIVATE
-        /W4
-        /O2
-    )
+    target_compile_options(duorou_kvcache PRIVATE /W4)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_options(duorou_kvcache PRIVATE /Od /Zi /RTC1)
+    else()
+        target_compile_options(duorou_kvcache PRIVATE /O2 /DNDEBUG)
+    endif()
 else()
     target_compile_options(duorou_kvcache PRIVATE
         -Wall
         -Wextra
         -Wpedantic
-        -O2
     )
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_options(duorou_kvcache PRIVATE -g -O0)
+    else()
+        target_compile_options(duorou_kvcache PRIVATE -O2 -DNDEBUG)
+    endif()
 endif()
 
 # 设置包含目录

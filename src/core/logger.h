@@ -16,7 +16,7 @@ enum class LogLevel {
     DEBUG = 0,
     INFO = 1,
     WARNING = 2,
-    ERROR = 3,
+    LOAD_ERROR = 3,
     FATAL = 4
 };
 

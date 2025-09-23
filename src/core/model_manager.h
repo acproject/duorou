@@ -6,6 +6,7 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include <future>
 #include "text_generator.h"
 #include "image_generator.h"
 #include "model_downloader.h"
@@ -30,13 +31,13 @@ enum class ModelStatus {
     NOT_LOADED,         ///< Not loaded
     LOADING,            ///< Loading
     LOADED,             ///< Loaded
-    ERROR               ///< Error status
+    LOAD_ERROR,              ///< Error status
 };
 
 /**
  * @brief Model information structure
  */
-struct ModelInfo {
+struct ModelManagerInfo {
     std::string id;                 ///< Model ID
     std::string name;               ///< Model name
     std::string path;               ///< Model file path
@@ -45,7 +46,7 @@ struct ModelInfo {
     size_t memory_usage;            ///< Memory usage (bytes)
     std::string description;        ///< Model description
     
-    ModelInfo() : type(ModelType::LANGUAGE_MODEL), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
+    ModelManagerInfo() : type(ModelType::LANGUAGE_MODEL), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
 };
 
 /**
@@ -77,7 +78,7 @@ public:
      * @brief Get model information
      * @return Model information
      */
-    virtual ModelInfo getInfo() const = 0;
+    virtual ModelManagerInfo getInfo() const = 0;
     
     /**
      * @brief Get memory usage
@@ -114,7 +115,7 @@ public:
      * @param model_info Model information
      * @return Returns true on success, false on failure
      */
-    bool registerModel(const ModelInfo& model_info);
+    bool registerModel(const ModelManagerInfo& model_info);
     
     /**
      * @brief Load model
@@ -152,15 +153,15 @@ public:
     /**
      * @brief Get model information
      * @param model_id Model ID
-     * @return Model information, returns empty ModelInfo if not found
+     * @return Model information, returns empty ModelManagerInfo if not found
      */
-    ModelInfo getModelInfo(const std::string& model_id) const;
+    ModelManagerInfo getModelInfo(const std::string& model_id) const;
     
     /**
      * @brief Get list of all registered models
      * @return List of model information
      */
-    std::vector<ModelInfo> getAllModels() const;
+    std::vector<ModelManagerInfo> getAllModels() const;
     
     /**
      * @brief Get list of loaded models
@@ -204,7 +205,7 @@ public:
      * @param model_id Model ID
      * @return Text generator pointer
      */
-    TextGenerator* getTextGenerator(const std::string& model_id) const;
+    duorou::core::TextGenerator* getTextGenerator(const std::string& model_id) const;
     
     /**
      * @brief Get image generator
@@ -231,8 +232,8 @@ public:
      * @param progress_callback Progress callback function
      * @return Future of download result
      */
-    std::future<DownloadResult> downloadModel(const std::string& model_name, 
-                                             DownloadProgressCallback progress_callback = nullptr);
+    std::future<duorou::DownloadResult> downloadModel(const std::string& model_name, 
+                                             duorou::DownloadProgressCallback progress_callback = nullptr);
     
     /**
      * @brief Download model synchronously
@@ -240,15 +241,15 @@ public:
      * @param progress_callback Progress callback function
      * @return Download result
      */
-    DownloadResult downloadModelSync(const std::string& model_name,
-                                    DownloadProgressCallback progress_callback = nullptr);
+    duorou::DownloadResult downloadModelSync(const std::string& model_name,
+                                    duorou::DownloadProgressCallback progress_callback = nullptr);
     
     /**
      * @brief Get model information
      * @param model_name Model name
      * @return Model information
      */
-    ModelInfo getModelInfo(const std::string& model_name);
+    ModelManagerInfo getModelInfo(const std::string& model_name);
     
     /**
      * @brief Check if model is downloaded
@@ -301,7 +302,7 @@ private:
      * @param model_info Model information
      * @return Model instance pointer
      */
-    std::shared_ptr<BaseModel> createModel(const ModelInfo& model_info);
+    std::shared_ptr<BaseModel> createModel(const ModelManagerInfo& model_info);
     
     /**
      * @brief Update model status
@@ -317,9 +318,9 @@ private:
     void scanModelDirectory(const std::string& directory);
     
 private:
-    std::unordered_map<std::string, ModelInfo> registered_models_;     ///< Registered models
+    std::unordered_map<std::string, ModelManagerInfo> registered_models_;     ///< Registered models
     std::unordered_map<std::string, std::shared_ptr<BaseModel>> loaded_models_;  ///< Loaded models
-    std::unordered_map<std::string, std::unique_ptr<TextGenerator>> text_generators_; ///< Text generator mapping
+    std::unordered_map<std::string, std::unique_ptr<duorou::core::TextGenerator>> text_generators_; ///< Text generator mapping
     mutable std::mutex mutex_;                                         ///< Thread-safe mutex
     size_t memory_limit_;                                              ///< Memory limit
     bool initialized_;                                                 ///< Whether initialized

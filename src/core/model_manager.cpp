@@ -43,7 +43,7 @@ public:
     std::cout << "[DEBUG] OllamaModelImpl::load called with path: "
               << model_path << std::endl;
     duorou::core::Logger logger;
-    logger.info("[OLLAMA] Loading model: " + model_path);
+  logger.info("[OLLAMA] Loading model: " + model_path);
 
     // Use new ollama extension architecture with global manager
     // First register the model by name (supports Ollama model names), then load it
@@ -114,7 +114,7 @@ public:
   }
 
   bool isLoaded() const override { return loaded_; }
-  duorou::core::ModelInfo getInfo() const override { return model_info_; }
+  duorou::core::ModelManagerInfo getInfo() const override { return model_info_; }
   size_t getMemoryUsage() const override { return memory_usage_; }
 
   // Get the model manager for text generation
@@ -136,7 +136,7 @@ private:
   bool loaded_;
   size_t memory_usage_;
   mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
-  duorou::core::ModelInfo model_info_;
+  duorou::core::ModelManagerInfo model_info_;
 };
 
 namespace duorou {
@@ -219,8 +219,8 @@ public:
 
   bool isLoaded() const override { return loaded_; }
 
-  ModelInfo getInfo() const override {
-    ModelInfo info;
+  ModelManagerInfo getInfo() const override {
+        ModelManagerInfo info;
     info.name = std::filesystem::path(model_path_).filename().string();
     info.path = model_path_;
     info.type = ModelType::DIFFUSION_MODEL;
@@ -307,7 +307,7 @@ ModelManager::~ModelManager() {
     for (auto &pair : loaded_models_) {
       try {
         pair.second->unload();
-        updateModelStatus(pair.first, ModelStatus::NOT_LOADED);
+        updateModelStatus(pair.first, duorou::core::ModelStatus::NOT_LOADED);
       } catch (const std::exception &e) {
         std::cerr << "Error unloading model " << pair.first << ": " << e.what()
                   << std::endl;
@@ -357,7 +357,7 @@ bool ModelManager::initialize() {
   }
 }
 
-bool ModelManager::registerModel(const ModelInfo &model_info) {
+bool ModelManager::registerModel(const ModelManagerInfo &model_info) {
   if (!initialized_) {
     std::cerr << "ModelManager not initialized" << std::endl;
     return false;
@@ -397,13 +397,13 @@ bool ModelManager::loadModel(const std::string &model_id) {
         std::cout << "[DEBUG] Dynamically registering Ollama model: "
                   << model_id << std::endl;
         // Dynamically register Ollama model
-        ModelInfo ollama_model;
+        duorou::core::ModelManagerInfo ollama_model;
         ollama_model.id = model_id;
         ollama_model.name = model_id;
-        ollama_model.type = ModelType::LANGUAGE_MODEL;
+        ollama_model.type = duorou::core::ModelType::LANGUAGE_MODEL;
         ollama_model.path = model_id; // For Ollama models, path is the model_id
         ollama_model.memory_usage = 0;
-        ollama_model.status = ModelStatus::NOT_LOADED;
+        ollama_model.status = duorou::core::ModelStatus::NOT_LOADED;
         ollama_model.description = "Ollama model: " + model_id;
 
         registered_models_[model_id] = ollama_model;
@@ -441,13 +441,13 @@ bool ModelManager::loadModel(const std::string &model_id) {
     std::cerr << "[ERROR] Failed to create model instance: " << model_id
               << " (type: " << static_cast<int>(it->second.type) << ")"
               << std::endl;
-    updateModelStatus(model_id, ModelStatus::ERROR);
+    updateModelStatus(model_id, duorou::core::ModelStatus::LOAD_ERROR);
     return false;
   }
 
   // Update status to loading
   std::cout << "[DEBUG] Starting model load for: " << model_id << std::endl;
-  updateModelStatus(model_id, ModelStatus::LOADING);
+  updateModelStatus(model_id, duorou::core::ModelStatus::LOADING);
 
   // Record start time
   auto start_time = std::chrono::steady_clock::now();
@@ -477,7 +477,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
 
   if (success) {
     loaded_models_[model_id] = model;
-    updateModelStatus(model_id, ModelStatus::LOADED);
+    updateModelStatus(model_id, duorou::core::ModelStatus::LOADED);
 
     // Call callback function
     if (load_callback_) {
@@ -487,7 +487,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
     std::cout << "[SUCCESS] Model loaded successfully: " << model_id
               << " (took " << duration.count() << "ms)" << std::endl;
   } else {
-    updateModelStatus(model_id, ModelStatus::ERROR);
+    updateModelStatus(model_id, duorou::core::ModelStatus::LOAD_ERROR);
 
     // Call callback function
     if (load_callback_) {
@@ -525,7 +525,7 @@ bool ModelManager::unloadModel(const std::string &model_id) {
   loaded_models_.erase(it);
 
   // Update status
-  updateModelStatus(model_id, ModelStatus::NOT_LOADED);
+  updateModelStatus(model_id, duorou::core::ModelStatus::NOT_LOADED);
 
   std::cout << "Model unloaded: " << model_id << std::endl;
   return true;
@@ -537,7 +537,7 @@ void ModelManager::unloadAllModels() {
   for (auto &pair : loaded_models_) {
     try {
       pair.second->unload();
-      updateModelStatus(pair.first, ModelStatus::NOT_LOADED);
+      updateModelStatus(pair.first, duorou::core::ModelStatus::NOT_LOADED);
     } catch (const std::exception &e) {
       std::cerr << "Error unloading model " << pair.first << ": " << e.what()
                 << std::endl;
@@ -565,7 +565,7 @@ bool ModelManager::isModelLoaded(const std::string &model_id) const {
   return loaded_models_.find(model_id) != loaded_models_.end();
 }
 
-ModelInfo ModelManager::getModelInfo(const std::string &model_id) const {
+ModelManagerInfo ModelManager::getModelInfo(const std::string &model_id) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   auto it = registered_models_.find(model_id);
@@ -573,15 +573,15 @@ ModelInfo ModelManager::getModelInfo(const std::string &model_id) const {
     return it->second;
   }
 
-  return ModelInfo(); // Return empty ModelInfo
+  return ModelManagerInfo(); // Return empty ModelManagerInfo
 }
 
-std::vector<ModelInfo> ModelManager::getAllModels() const {
+std::vector<ModelManagerInfo> ModelManager::getAllModels() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::cout << "[DEBUG] ModelManager::getAllModels() called" << std::endl;
 
-  std::vector<ModelInfo> models;
+  std::vector<ModelManagerInfo> models;
 
   // Add registered models
   std::cout << "[DEBUG] Registered models count: " << registered_models_.size()
@@ -601,13 +601,13 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
       for (const auto &model_name : local_models) {
         std::cout << "[DEBUG] Processing ollama model: " << model_name
                   << std::endl;
-        ModelInfo ollama_model;
+        ModelManagerInfo ollama_model;
         ollama_model.id = model_name;
         ollama_model.name = model_name;
-        ollama_model.type = ModelType::LANGUAGE_MODEL;
+        ollama_model.type = duorou::core::ModelType::LANGUAGE_MODEL;
         ollama_model.path = "";
         ollama_model.memory_usage = 0;
-        ollama_model.status = ModelStatus::NOT_LOADED;
+        ollama_model.status = duorou::core::ModelStatus::NOT_LOADED;
         ollama_model.description = "Ollama model: " + model_name;
         models.push_back(ollama_model);
         std::cout << "[DEBUG] Added ollama model: " << model_name << std::endl;
@@ -623,43 +623,43 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
 
   // If no models exist, return some default example models
   if (models.empty()) {
-    ModelInfo llama_example;
+    duorou::core::ModelManagerInfo llama_example;
     llama_example.id = "llama-7b-example";
     llama_example.name = "LLaMA 7B (Example)";
-    llama_example.type = ModelType::LANGUAGE_MODEL;
+    llama_example.type = duorou::core::ModelType::LANGUAGE_MODEL;
     llama_example.path = "";
     llama_example.memory_usage = 0;
-    llama_example.status = ModelStatus::NOT_LOADED;
+    llama_example.status = duorou::core::ModelStatus::NOT_LOADED;
     llama_example.description = "Example LLaMA model - download required";
     models.push_back(llama_example);
 
-    ModelInfo gpt_example;
+    duorou::core::ModelManagerInfo gpt_example;
     gpt_example.id = "gpt-3.5-turbo";
     gpt_example.name = "GPT-3.5 Turbo";
-    gpt_example.type = ModelType::LANGUAGE_MODEL;
+    gpt_example.type = duorou::core::ModelType::LANGUAGE_MODEL;
     gpt_example.path = "";
     gpt_example.memory_usage = 0;
-    gpt_example.status = ModelStatus::NOT_LOADED;
+    gpt_example.status = duorou::core::ModelStatus::NOT_LOADED;
     gpt_example.description = "OpenAI GPT-3.5 Turbo model";
     models.push_back(gpt_example);
 
-    ModelInfo claude_example;
+    duorou::core::ModelManagerInfo claude_example;
     claude_example.id = "claude-3-sonnet";
     claude_example.name = "Claude 3 Sonnet";
-    claude_example.type = ModelType::LANGUAGE_MODEL;
+    claude_example.type = duorou::core::ModelType::LANGUAGE_MODEL;
     claude_example.path = "";
     claude_example.memory_usage = 0;
-    claude_example.status = ModelStatus::NOT_LOADED;
+    claude_example.status = duorou::core::ModelStatus::NOT_LOADED;
     claude_example.description = "Anthropic Claude 3 Sonnet model";
     models.push_back(claude_example);
 
-    ModelInfo llama2_example;
+    duorou::core::ModelManagerInfo llama2_example;
     llama2_example.id = "llama2";
     llama2_example.name = "Llama2";
-    llama2_example.type = ModelType::LANGUAGE_MODEL;
+    llama2_example.type = duorou::core::ModelType::LANGUAGE_MODEL;
     llama2_example.path = "";
     llama2_example.memory_usage = 0;
-    llama2_example.status = ModelStatus::NOT_LOADED;
+    llama2_example.status = duorou::core::ModelStatus::NOT_LOADED;
     llama2_example.description = "Meta Llama 2 model";
     models.push_back(llama2_example);
   }
@@ -872,13 +872,13 @@ ModelManager::downloadModelSync(const std::string &model_name,
   return result;
 }
 
-ModelInfo ModelManager::getModelInfo(const std::string &model_name) {
+ModelManagerInfo ModelManager::getModelInfo(const std::string &model_name) {
   if (model_downloader_) {
     // Get downloader's ModelInfo (duorou namespace)
     auto downloader_info = model_downloader_->getModelInfo(model_name);
 
-    // Convert to ModelManager's ModelInfo (duorou::core namespace)
-    ModelInfo manager_info;
+    // Convert to ModelManager's ModelManagerInfo (duorou::core namespace)
+    ModelManagerInfo manager_info;
     manager_info.id = downloader_info.name;
     manager_info.name = downloader_info.name;
     manager_info.description = downloader_info.description;
@@ -889,7 +889,7 @@ ModelInfo ModelManager::getModelInfo(const std::string &model_name) {
     return manager_info;
   }
 
-  return ModelInfo{};
+  return ModelManagerInfo{};
 }
 
 bool ModelManager::isModelDownloaded(const std::string &model_name) {
@@ -947,7 +947,7 @@ void ModelManager::setMaxModelCacheSize(size_t max_size) {
 }
 
 std::shared_ptr<BaseModel>
-ModelManager::createModel(const ModelInfo &model_info) {
+ModelManager::createModel(const ModelManagerInfo &model_info) {
   std::cout << "[DEBUG] ModelManager::createModel called for: "
             << model_info.name
             << ", type: " << static_cast<int>(model_info.type) << std::endl;
@@ -975,8 +975,8 @@ ModelManager::createModel(const ModelInfo &model_info) {
     if ((model_downloader_ && isOllama) || hasOllamaPattern) {
       std::cout << "[DEBUG] Creating OllamaModelImpl for: " << model_info.name
                 << std::endl;
-      Logger logger;
-      logger.info("Creating Ollama model for: " + model_info.name);
+      duorou::core::Logger logger;
+    logger.info("Creating Ollama model for: " + model_info.name);
       auto model = std::make_shared<OllamaModelImpl>(model_info.name);
       std::cout << "[DEBUG] OllamaModelImpl created successfully" << std::endl;
       return model;
@@ -985,8 +985,8 @@ ModelManager::createModel(const ModelInfo &model_info) {
       // llama.h not found
       std::cout << "[DEBUG] Not an Ollama model, LlamaModel creation disabled"
                 << std::endl;
-      Logger logger;
-      logger.warning("LlamaModel creation disabled - llama.h not found");
+      duorou::core::Logger logger;
+    logger.warning("LlamaModel creation disabled - llama.h not found");
       return nullptr;
     }
   } else if (model_info.type == ModelType::DIFFUSION_MODEL) {
@@ -997,8 +997,8 @@ ModelManager::createModel(const ModelInfo &model_info) {
 
   std::cout << "[DEBUG] Unknown model type: "
             << static_cast<int>(model_info.type) << std::endl;
-  Logger logger;
-  logger.error("Unknown model type");
+  duorou::core::Logger logger;
+    logger.error("Unknown model type");
   return nullptr;
 }
 
@@ -1019,7 +1019,7 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
         std::string extension = entry.path().extension().string();
 
         // Check file extension to determine model type
-        ModelInfo info;
+        ModelManagerInfo info;
         info.path = path;
         info.name = entry.path().stem().string();
         info.status = ModelStatus::NOT_LOADED;

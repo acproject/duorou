@@ -134,7 +134,7 @@ void Logger::warning(const std::string& message) {
 }
 
 void Logger::error(const std::string& message) {
-    writeLog(LogLevel::ERROR, message);
+    writeLog(LogLevel::LOAD_ERROR, message);
 }
 
 void Logger::fatal(const std::string& message) {
@@ -183,7 +183,7 @@ void Logger::writeLog(LogLevel level, const std::string& message) {
     // Output to console
     if (console_output_) {
         std::cout << "writeLog: Outputting to console" << std::endl;
-        if (level >= LogLevel::ERROR) {
+        if (level >= LogLevel::LOAD_ERROR) {
             std::cerr << log_line << std::endl;
         } else {
             std::cout << log_line << std::endl;
@@ -197,7 +197,7 @@ void Logger::writeLog(LogLevel level, const std::string& message) {
         *log_file_ << log_line << std::endl;
         
         // For errors and fatal errors, flush immediately
-        if (level >= LogLevel::ERROR) {
+        if (level >= LogLevel::LOAD_ERROR) {
             log_file_->flush();
         }
         std::cout << "writeLog: File output completed" << std::endl;
@@ -224,7 +224,7 @@ std::string Logger::getLevelString(LogLevel level) const {
         case LogLevel::DEBUG:   return "DEBUG";
         case LogLevel::INFO:    return "INFO ";
         case LogLevel::WARNING: return "WARN ";
-        case LogLevel::ERROR:   return "ERROR";
+        case LogLevel::LOAD_ERROR:   return "ERROR";
         case LogLevel::FATAL:   return "FATAL";
         default:                return "UNKNW";
     }

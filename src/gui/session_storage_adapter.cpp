@@ -1,13 +1,21 @@
 #include "session_storage_adapter.h"
 #include <algorithm>
-#include <arpa/inet.h>
 #include <cstring>
 #include <iostream>
-#include <netinet/in.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int ssize_t;
+#define close closesocket
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 using json = nlohmann::json;
 

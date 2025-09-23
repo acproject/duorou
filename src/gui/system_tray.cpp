@@ -1,6 +1,7 @@
 #include "system_tray.h"
 #include "../core/logger.h"
 
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <mutex>

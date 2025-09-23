@@ -466,8 +466,8 @@ void ChatView::create_input_area() {
   gtk_widget_set_halign(model_container, GTK_ALIGN_CENTER);
 
   // Create model selector (initially empty, filled later via update_model_selector)
-  model_selector_ = gtk_drop_down_new_from_strings(
-      (const char *[]){"No models available", NULL});
+  const char* model_options[] = {"No models available", NULL};
+  model_selector_ = gtk_drop_down_new_from_strings(model_options);
   gtk_widget_add_css_class(model_selector_, "model-selector");
 
   // Create model label
@@ -533,10 +533,10 @@ void ChatView::create_input_area() {
     std::cout << "Warning: Unable to load recording button icon, using text alternative" << std::endl;
     // If icon loading fails, create text label as alternative
     if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("⏹");
+      video_off_image_ = gtk_label_new("stop");
     }
     if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("⏺");
+      video_off_image_ = gtk_label_new("start");
     }
   }
 
@@ -557,7 +557,7 @@ void ChatView::create_input_area() {
                    G_CALLBACK(on_video_record_button_toggled), this);
 
   // Create send button
-  send_button_ = gtk_button_new_with_label("↑");
+  send_button_ = gtk_button_new_with_label("up");
   gtk_widget_add_css_class(send_button_, "send-button");
   gtk_widget_set_size_request(send_button_, 40, 40);
 
@@ -1593,7 +1593,7 @@ void ChatView::stop_recording() {
       video_off_image_ = gtk_picture_new_for_filename(
           (icon_path_base + "video-off.png").c_str());
       if (!video_off_image_) {
-        video_off_image_ = gtk_label_new("⏹");
+        video_off_image_ = gtk_label_new("stop");
       }
       gtk_widget_set_size_request(video_off_image_, 24, 24);
       gtk_widget_set_visible(video_off_image_, TRUE);
