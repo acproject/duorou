@@ -43,7 +43,7 @@ duorou::MacOSTray::MacOSTray()
 
 duorou::MacOSTray::~MacOSTray() {
   @autoreleasepool {
-    // 释放所有menuItem
+    // Release all menuItems
     for (auto &info : menu_items_) {
       if (info.menuItem) {
         [info.menuItem release];
@@ -59,7 +59,7 @@ duorou::MacOSTray::~MacOSTray() {
       statusItem_ = nil;
     }
 
-    // 清理menu_ (menu items will be automatically released)
+    // Clean up menu_ (menu items will be automatically released)
     if (menu_) {
       [menu_ release];
       menu_ = nil;
@@ -259,12 +259,12 @@ void duorou::MacOSTray::show() {
     return;
   }
 
-  // 如果statusItem_已存在，直接返回
+  // If statusItem_ already exists, return directly
   if (statusItem_) {
     return;
   }
 
-  // 重新创建statusItem
+  // Recreate statusItem
   @autoreleasepool {
     NSStatusBar *systemStatusBar = [NSStatusBar systemStatusBar];
     statusItem_ =
@@ -309,7 +309,7 @@ void duorou::MacOSTray::removeMenuItem(const std::string &item_id) {
     @autoreleasepool {
       if (it->menuItem) {
         [menu_ removeItem:it->menuItem];
-        [it->menuItem release]; // 释放menuItem
+        [it->menuItem release]; // Release menuItem
       }
     }
     menu_item_map_.erase(item_id);
@@ -353,7 +353,7 @@ void duorou::MacOSTray::addMenuItemWithId(const std::string &item_id,
     return;
   }
 
-  // 检查是否已存在相同ID的菜单项
+  // Check if menu item with same ID already exists
   if (hasMenuItem(item_id)) {
     std::cerr << "Menu item with ID '" << item_id << "' already exists"
               << std::endl;
@@ -370,11 +370,11 @@ void duorou::MacOSTray::addMenuItemWithId(const std::string &item_id,
 
   @autoreleasepool {
     info.menuItem = createNSMenuItem(info);
-    [info.menuItem retain]; // 保持对menuItem的引用
+    [info.menuItem retain]; // Keep reference to menuItem
     [menu_ addItem:info.menuItem];
   }
 
-  // 使用list，指针不会因为容器重新分配而失效
+  // Use list, pointers won't become invalid due to container reallocation
   menu_items_.push_back(info);
   menu_item_map_[item_id] = &menu_items_.back();
 }
@@ -432,13 +432,13 @@ NSMenuItem *duorou::MacOSTray::createNSMenuItem(const MenuItemInfo &info) {
                                    action:@selector(menuItemClicked:)
                             keyEquivalent:@""];
 
-    // 创建target对象处理回调
+    // Create target object to handle callback
     if (info.callback) {
       MenuItemTarget *target =
           [[MenuItemTarget alloc] initWithCallback:info.callback];
       [menuItem setTarget:target];
-      // 不要释放target，让menuItem保持对它的引用
-      // target会在menuItem被释放时自动释放
+      // Don't release target, let menuItem keep reference to it
+      // target will be automatically released when menuItem is released
     }
 
     [menuItem setEnabled:info.enabled];

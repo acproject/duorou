@@ -22,7 +22,7 @@ void CausalCache::setLayer(int layer) {
 }
 
 std::tuple<Tensor, Tensor> CausalCache::get(Context& ctx, int seq, int32_t startPos, int32_t endPos) {
-    // 创建空的键值张量作为占位符
+    // Create empty key-value tensors as placeholders
     std::vector<int> shape = {1, 1, 1};
     Tensor key(shape, DType::FLOAT32);
     Tensor value(shape, DType::FLOAT32);
@@ -30,12 +30,12 @@ std::tuple<Tensor, Tensor> CausalCache::get(Context& ctx, int seq, int32_t start
 }
 
 void CausalCache::put(Context& ctx, const Tensor& key, const Tensor& value) {
-    // 存储键值对的实现
-    // 这里是简化实现
+    // Implementation for storing key-value pairs
+    // This is a simplified implementation
 }
 
 void CausalCache::startForward(Context& ctx, const Batch& batch, bool reserve) {
-    // 开始前向传播的实现
+    // Implementation for starting forward propagation
     for (int seq : batch.seqs) {
         if (sequences_.find(seq) == sequences_.end()) {
             addSequence(seq, config_.maxSeqLen);
@@ -44,10 +44,10 @@ void CausalCache::startForward(Context& ctx, const Batch& batch, bool reserve) {
 }
 
 void CausalCache::copyPrefix(Context& ctx, int srcSeq, int dstSeq, int32_t length) {
-    // 复制前缀的实现
+    // Implementation for copying prefix
     if (sequences_.find(srcSeq) != sequences_.end() && 
         sequences_.find(dstSeq) != sequences_.end()) {
-        // 简化实现：复制序列信息
+        // Simplified implementation: copy sequence information
         sequences_[dstSeq].length = std::min(length, sequences_[srcSeq].length);
     }
 }
@@ -66,14 +66,14 @@ void CausalCache::remove(int seq, int32_t beginIndex, int32_t endIndex) {
         if (endIndex == std::numeric_limits<int32_t>::max()) {
             it->second.length = beginIndex;
         } else {
-            // 简化实现：调整序列长度
+            // Simplified implementation: adjust sequence length
             it->second.length = std::max(0, static_cast<int32_t>(it->second.length) - (endIndex - beginIndex));
         }
     }
 }
 
 std::tuple<Tensor, Tensor, Tensor> CausalCache::buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs) {
-    // 构建输出张量的实现
+    // Implementation for building output tensors
     std::vector<int> shape = {static_cast<int>(activeSeqs.size()), config_.numHeads, config_.headDim};
     Tensor key(shape, DType::FLOAT32);
     Tensor value(shape, DType::FLOAT32);
@@ -81,7 +81,7 @@ std::tuple<Tensor, Tensor, Tensor> CausalCache::buildOutputTensors(Context& ctx,
     return std::make_tuple(key, value, mask);
 }
 
-// CausalCache特有方法实现
+// Implementation of CausalCache-specific methods
 void CausalCache::setSlidingWindow(int window) {
     options_.slidingWindow = window;
     options_.enableSlidingWindow = (window > 0);
@@ -120,7 +120,7 @@ int32_t CausalCache::getSequenceLength(int seq) const {
     return (it != sequences_.end()) ? it->second.length : 0;
 }
 
-// 私有方法实现
+// Implementation of private methods
 void CausalCache::validateSequence(int seq) const {
     if (sequences_.find(seq) == sequences_.end()) {
         throw CacheError("Sequence " + std::to_string(seq) + " not found");

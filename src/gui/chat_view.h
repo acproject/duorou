@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-// 前向声明
 namespace duorou {
   namespace media {
     class VideoCapture;
@@ -29,156 +28,156 @@ namespace duorou {
 class ChatSessionManager;
 
 /**
- * 聊天视图类 - 处理文本生成模型的交互界面
+ * Chat view class - handles text generation model interaction interface
  */
 class ChatView {
 public:
   ChatView();
   ~ChatView();
 
-  // 禁用拷贝构造和赋值
+  // Disable copy constructor and assignment
   ChatView(const ChatView &) = delete;
   ChatView &operator=(const ChatView &) = delete;
 
   /**
-   * 初始化聊天视图
-   * @return 成功返回true，失败返回false
+   * Initialize chat view
+   * @return true on success, false on failure
    */
   bool initialize();
 
   /**
-   * 获取主要的GTK组件
-   * @return GTK组件指针
+   * Get main GTK widget
+   * @return GTK widget pointer
    */
   GtkWidget *get_widget() const { return main_widget_; }
 
   /**
-   * 发送消息
-   * @param message 用户输入的消息
+   * Send message
+   * @param message user input message
    */
   void send_message(const std::string &message);
 
   /**
-   * 添加消息到聊天历史
-   * @param message 消息内容
-   * @param is_user 是否为用户消息
+   * Add message to chat history
+   * @param message message content
+   * @param is_user whether it's a user message
    */
   void add_message(const std::string &message, bool is_user);
 
   /**
-   * 移除最后一条消息
+   * Remove last message
    */
   void remove_last_message();
 
   /**
-   * 清空聊天历史
+   * Clear chat history
    */
   void clear_chat();
 
   /**
-   * 设置当前会话管理器
-   * @param session_manager 会话管理器指针
+   * Set current session manager
+   * @param session_manager session manager pointer
    */
   void set_session_manager(ChatSessionManager *session_manager);
 
   /**
-   * 设置模型管理器
-   * @param model_manager 模型管理器指针
+   * Set model manager
+   * @param model_manager model manager pointer
    */
   void set_model_manager(core::ModelManager *model_manager);
 
   /**
-   * 加载并显示指定会话的消息
-   * @param session_id 会话ID
+   * Load and display messages for specified session
+   * @param session_id session ID
    */
   void load_session_messages(const std::string &session_id);
 
   /**
-   * 更新模型选择器
+   * Update model selector
    */
   void update_model_selector();
 
 private:
   /**
-   * 生成AI回复
-   * @param message 用户输入的消息
-   * @return AI生成的回复
+   * Generate AI response
+   * @param message user input message
+   * @return AI generated response
    */
   std::string generate_ai_response(const std::string &message);
-  GtkWidget *main_widget_;         // 主容器
-  GtkWidget *chat_scrolled_;       // 滚动窗口
-  GtkWidget *chat_box_;            // 聊天消息容器
-  GtkWidget *input_box_;           // 输入区域容器
-  GtkWidget *input_entry_;         // 输入框
-  GtkWidget *send_button_;         // 发送按钮
-  GtkWidget *upload_image_button_; // 上传图片按钮
-  GtkWidget *upload_file_button_;  // 上传文件按钮
-  GtkWidget *video_record_button_; // 录制视频按钮 (GtkToggleButton)
+  GtkWidget *main_widget_;         // Main container
+  GtkWidget *chat_scrolled_;       // Scrolled window
+  GtkWidget *chat_box_;            // Chat message container
+  GtkWidget *input_box_;           // Input area container
+  GtkWidget *input_entry_;         // Input entry
+  GtkWidget *send_button_;         // Send button
+  GtkWidget *upload_image_button_; // Upload image button
+  GtkWidget *upload_file_button_;  // Upload file button
+  GtkWidget *video_record_button_; // Video record button (GtkToggleButton)
 
-  // 存储选择的文件路径
+  // Store selected file paths
   std::string selected_image_path_;
   std::string selected_file_path_;
-  GtkWidget *model_selector_;  // 模型选择器
-  GtkWidget *input_container_; // 输入框容器
+  GtkWidget *model_selector_;  // Model selector
+  GtkWidget *input_container_; // Input container
 
-  bool welcome_cleared_; // 标记是否已清除欢迎界面
+  bool welcome_cleared_; // Flag indicating whether welcome screen has been cleared
 
-  // 媒体捕获相关
+  // Media capture related
   std::unique_ptr<media::VideoCapture> video_capture_;
   std::unique_ptr<media::AudioCapture> audio_capture_;
   std::unique_ptr<EnhancedVideoCaptureWindow> enhanced_video_window_;
   std::unique_ptr<VideoSourceDialog> video_source_dialog_;
-  bool is_recording_; // 录制状态标记
+  bool is_recording_; // Recording status flag
 
-  // 录制按钮图标
-  GtkWidget *video_off_image_; // 录制关闭图标
-  GtkWidget *video_on_image_;  // 录制开启图标
+  // Recording button icons
+  GtkWidget *video_off_image_; // Recording off icon
+  GtkWidget *video_on_image_;  // Recording on icon
 
-  // 防止递归调用的标志
-  bool updating_button_state_; // 标记是否正在更新按钮状态
+  // Flag to prevent recursive calls
+  bool updating_button_state_; // Flag indicating whether button state is being updated
 
-  // 会话管理器指针
-  ChatSessionManager *session_manager_; // 会话管理器指针
-  core::ModelManager *model_manager_;   // 模型管理器指针
+  // Session manager pointer
+  ChatSessionManager *session_manager_; // Session manager pointer
+  core::ModelManager *model_manager_;   // Model manager pointer
 
-  // 视频帧缓存相关
+  // Video frame cache related
   std::shared_ptr<duorou::media::VideoFrame>
-      cached_video_frame_;                                  // 缓存的视频帧
-  std::chrono::steady_clock::time_point last_video_update_; // 上次视频更新时间
+      cached_video_frame_;                                  // Cached video frame
+  std::chrono::steady_clock::time_point last_video_update_; // Last video update time
   static constexpr int VIDEO_UPDATE_INTERVAL_MS =
-      66; // 视频更新间隔(约15fps，减少闪烁)
+      66; // Video update interval (about 15fps, reduce flicker)
 
-  // 音频帧缓存相关
-  std::vector<duorou::media::AudioFrame> cached_audio_frames_; // 缓存的音频帧
-  std::chrono::steady_clock::time_point last_audio_update_; // 上次音频更新时间
-  static constexpr int AUDIO_UPDATE_INTERVAL_MS = 100;      // 音频更新间隔
+  // Audio frame cache related
+  std::vector<duorou::media::AudioFrame> cached_audio_frames_; // Cached audio frames
+  std::chrono::steady_clock::time_point last_audio_update_; // Last audio update time
+  static constexpr int AUDIO_UPDATE_INTERVAL_MS = 100;      // Audio update interval
 
   /**
-   * 创建聊天显示区域
+   * Create chat display area
    */
   void create_chat_area();
 
   /**
-   * 创建欢迎界面
+   * Create welcome screen
    */
   void create_welcome_screen();
 
   /**
-   * 创建输入区域
+   * Create input area
    */
   void create_input_area();
 
   /**
-   * 连接信号
+   * Connect signals
    */
   void connect_signals();
 
   /**
-   * 滚动到底部
+   * Scroll to bottom
    */
   void scroll_to_bottom();
 
-  // 静态回调函数
+  // Static callback functions
   static void on_send_button_clicked(GtkWidget *widget, gpointer user_data);
   static void on_upload_image_button_clicked(GtkWidget *widget,
                                              gpointer user_data);
@@ -194,21 +193,21 @@ private:
   static void on_file_dialog_response(GtkDialog *dialog, gint response_id,
                                       gpointer user_data);
 
-  // 视频捕获方法
+  // Video capture methods
   void show_video_source_dialog();
   void start_desktop_capture();
   void start_camera_capture();
   void stop_recording();
 
-  // 视频源选择回调
+  // Video source selection callback
   void on_video_source_selected(VideoSourceDialog::VideoSource source);
 
-  // 状态管理方法
+  // State management methods
   void verify_button_state();
 
   /**
-   * 重置所有状态，防止段错误
-   * 清理录制状态、按钮状态等
+   * Reset all states to prevent segmentation faults
+   * Clean up recording state, button state, etc.
    */
   void reset_state();
 

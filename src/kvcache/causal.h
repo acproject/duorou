@@ -9,7 +9,7 @@
 namespace duorou {
 namespace kvcache {
 
-// 因果缓存选项
+// Causal cache options
 struct CausalOptions {
     int slidingWindow;
     bool enableSlidingWindow;
@@ -17,7 +17,7 @@ struct CausalOptions {
     CausalOptions() : slidingWindow(-1), enableSlidingWindow(false) {}
 };
 
-// 序列信息结构
+// Sequence information structure
 struct SequenceInfo {
     int32_t length;
     int32_t capacity;
@@ -26,7 +26,7 @@ struct SequenceInfo {
     SequenceInfo() : length(0), capacity(0), active(false) {}
 };
 
-// 因果注意力缓存类
+// Causal attention cache class
 class CausalCache : public Cache {
 private:
     CausalOptions options_;
@@ -36,13 +36,13 @@ private:
     bool initialized_;
 
 public:
-    // 构造函数
+    // Constructor
     explicit CausalCache(const CausalOptions& options = CausalOptions());
     
-    // 析构函数
+    // Destructor
     virtual ~CausalCache() = default;
     
-    // Cache接口实现
+    // Cache interface implementation
     virtual void init(Context& ctx, const CacheConfig& config) override;
     virtual void close() override;
     virtual void setLayer(int layer) override;
@@ -54,20 +54,20 @@ public:
     virtual void remove(int seq, int32_t beginIndex, int32_t endIndex) override;
     virtual std::tuple<Tensor, Tensor, Tensor> buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs) override;
     
-    // CausalCache特有方法
+    // CausalCache-specific methods
     void setSlidingWindow(int window);
     int getSlidingWindow() const;
     void enableSlidingWindow(bool enable);
     bool isSlidingWindowEnabled() const;
     
-    // 序列管理
+    // Sequence management
     void addSequence(int seq, int32_t capacity);
     void removeSequence(int seq);
     bool hasSequence(int seq) const;
     int32_t getSequenceLength(int seq) const;
     
 private:
-    // 内部辅助方法
+    // Internal helper methods
     void validateSequence(int seq) const;
     void updateSequenceLength(int seq, int32_t newLength);
     bool isWithinSlidingWindow(int seq, int32_t pos) const;

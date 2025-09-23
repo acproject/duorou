@@ -48,22 +48,22 @@ Tensor LayerNorm::forward(Context &ctx, const Tensor &input) {
   // Calculate mean
   Tensor mean = input.mean(ctx, -1, true);
 
-  // 计算方差
+  // Calculate variance
   Tensor centered = input.sub(ctx, mean);
   Tensor squared = centered.mul(ctx, centered);
   Tensor variance = squared.mean(ctx, -1, true);
 
-  // 添加epsilon避免除零
+  // Add epsilon to avoid division by zero
   Tensor eps_tensor = Tensor::ones(variance.shape(), variance.dtype());
   eps_tensor.allocate();
-  // 手动设置epsilon值
+  // Manually set epsilon value
   float *eps_data = static_cast<float *>(eps_tensor.data());
   for (int64_t i = 0; i < eps_tensor.numel(); ++i) {
     eps_data[i] = eps_;
   }
   Tensor var_with_eps = variance.add(ctx, eps_tensor);
 
-  // 计算标准差 (手动实现sqrt)
+  // Calculate standard deviation (manual sqrt implementation)
   Tensor std_dev = Tensor::zeros(var_with_eps.shape(), var_with_eps.dtype());
   std_dev.allocate();
   float *var_data = static_cast<float *>(var_with_eps.data());
@@ -72,10 +72,10 @@ Tensor LayerNorm::forward(Context &ctx, const Tensor &input) {
     std_data[i] = std::sqrt(var_data[i]);
   }
 
-  // 归一化
+  // Normalization
   Tensor normalized = centered.div(ctx, std_dev);
 
-  // 应用权重和偏置
+  // Apply weight and bias
   Tensor result = normalized.mul(ctx, weight_);
   if (bias_.data()) {
     result = result.add(ctx, bias_);
@@ -88,7 +88,7 @@ void LayerNorm::initializeWeights(Context &ctx) {
   if (elementwiseAffine_) {
     weight_.allocate();
 
-    // 初始化为1
+    // Initialize to 1
     float *weightData = weight_.data<float>();
     int64_t numel = weight_.numel();
     for (int64_t i = 0; i < numel; ++i) {
@@ -101,7 +101,7 @@ void LayerNorm::initializeBias(Context &ctx) {
   if (elementwiseAffine_) {
     bias_.allocate();
 
-    // 初始化为0
+    // Initialize to 0
     float *biasData = bias_.data<float>();
     int64_t numel = bias_.numel();
     for (int64_t i = 0; i < numel; ++i) {
@@ -122,7 +122,7 @@ int64_t LayerNorm::getNormalizedSize() const {
                          std::multiplies<int64_t>());
 }
 
-// RMSNorm 实现
+// RMSNorm implementation
 RMSNorm::RMSNorm(int64_t normalizedShape, float eps)
     : normalizedShape_({normalizedShape}), eps_(eps),
       weight_(normalizedShape_) {}
@@ -146,13 +146,13 @@ RMSNorm &RMSNorm::operator=(RMSNorm &&other) noexcept {
 Tensor RMSNorm::forward(Context &ctx, const Tensor &input) {
   // RMS normalization: x / sqrt(mean(x^2) + eps) * weight
 
-  // 计算平方
+  // Calculate square
   Tensor squared = input.mul(ctx, input);
 
-  // 计算均值
+  // Calculate mean
   Tensor mean_squared = squared.mean(ctx, -1, true);
 
-  // 添加epsilon
+  // Add epsilon
   Tensor eps_tensor = Tensor::ones(mean_squared.shape(), mean_squared.dtype());
   eps_tensor.allocate();
   float *eps_data = static_cast<float *>(eps_tensor.data());
@@ -161,7 +161,7 @@ Tensor RMSNorm::forward(Context &ctx, const Tensor &input) {
   }
   Tensor mean_with_eps = mean_squared.add(ctx, eps_tensor);
 
-  // 计算RMS (手动实现sqrt)
+  // Calculate RMS (manual sqrt implementation)
   Tensor rms = Tensor::zeros(mean_with_eps.shape(), mean_with_eps.dtype());
   rms.allocate();
   float *mean_data = static_cast<float *>(mean_with_eps.data());
@@ -170,17 +170,17 @@ Tensor RMSNorm::forward(Context &ctx, const Tensor &input) {
     rms_data[i] = std::sqrt(mean_data[i]);
   }
 
-  // 归一化
+  // Normalization
   Tensor normalized = input.div(ctx, rms);
 
-  // 应用权重
+  // Apply weight
   return normalized.mul(ctx, weight_);
 }
 
 void RMSNorm::initializeWeights(Context &ctx) {
   weight_.allocate();
 
-  // 初始化为1
+  // Initialize to 1
   float *weightData = weight_.data<float>();
   int64_t numel = weight_.numel();
   for (int64_t i = 0; i < numel; ++i) {

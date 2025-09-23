@@ -51,14 +51,14 @@ void Linear::initializeWeights(Context& /*ctx*/, const std::string& method) {
         std::mt19937 gen(rd());
         std::uniform_real_distribution<float> dis(-limit, limit);
         
-        // 填充权重数据
+        // Fill weight data
         float* weightData = weight_.data<float>();
         int64_t numel = weight_.numel();
         for (int64_t i = 0; i < numel; ++i) {
             weightData[i] = dis(gen);
         }
     } else if (method == "kaiming_uniform") {
-        // Kaiming均匀初始化
+        // Kaiming uniform initialization
         float limit = std::sqrt(6.0f / inFeatures_);
         
         std::random_device rd;
@@ -93,7 +93,7 @@ int64_t Linear::getParameterCount() const {
     return count;
 }
 
-// LinearBatch 实现
+// LinearBatch implementation
 LinearBatch::LinearBatch(int64_t inFeatures, int64_t outFeatures, int64_t batchSize, bool bias)
     : inFeatures_(inFeatures), outFeatures_(outFeatures), batchSize_(batchSize), hasBias_(bias),
       weight_({batchSize, outFeatures, inFeatures}), 
@@ -101,8 +101,8 @@ LinearBatch::LinearBatch(int64_t inFeatures, int64_t outFeatures, int64_t batchS
 }
 
 Tensor LinearBatch::forward(Context& ctx, const Tensor& input, const Tensor& /*indices*/) {
-    // 简化实现：选择对应批次的权重和偏置
-    // 实际实现需要根据indices选择相应的参数
+    // Simplified implementation: select corresponding batch weights and biases
+    // Actual implementation needs to select appropriate parameters based on indices
     Tensor output = input.matmul(ctx, weight_.transpose(1, 2));
     
     if (hasBias_) {

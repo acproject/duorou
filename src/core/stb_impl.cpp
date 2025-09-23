@@ -1,5 +1,5 @@
-// STB库实现文件
-// 这个文件专门用于提供STB库的实现，避免在多个文件中重复定义
+// STB library implementation file
+// This file is specifically used to provide STB library implementation, avoiding duplicate definitions in multiple files
 
 #include <algorithm>
 #include <cmath>

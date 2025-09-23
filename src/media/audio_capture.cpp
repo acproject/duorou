@@ -9,23 +9,24 @@
 namespace duorou {
 namespace media {
 
-// 全局PortAudio管理
+// Global PortAudio management
 static std::mutex g_pa_mutex;
 static std::atomic<int> g_pa_ref_count{0};
 static bool g_pa_initialized = false;
 
 static bool ensure_portaudio_initialized() {
+  // Initialize PortAudio
 #ifdef HAVE_PORTAUDIO
   std::lock_guard<std::mutex> lock(g_pa_mutex);
   if (!g_pa_initialized) {
     PaError err = Pa_Initialize();
     if (err != paNoError) {
-      std::cout << "PortAudio 初始化失败: " << Pa_GetErrorText(err)
+      std::cout << "PortAudio initialization failed: " << Pa_GetErrorText(err)
                 << std::endl;
       return false;
     }
     g_pa_initialized = true;
-    std::cout << "PortAudio 初始化成功" << std::endl;
+    std::cout << "PortAudio initialized successfully" << std::endl;
   }
   g_pa_ref_count++;
   return true;
@@ -35,6 +36,7 @@ static bool ensure_portaudio_initialized() {
 }
 
 static void release_portaudio() {
+  // Release PortAudio
 #ifdef HAVE_PORTAUDIO
   std::lock_guard<std::mutex> lock(g_pa_mutex);
   if (g_pa_ref_count > 0) {
@@ -42,7 +44,7 @@ static void release_portaudio() {
     if (g_pa_ref_count == 0 && g_pa_initialized) {
       Pa_Terminate();
       g_pa_initialized = false;
-      std::cout << "PortAudio 已终止" << std::endl;
+      std::cout << "PortAudio terminated" << std::endl;
     }
   }
 #endif
@@ -56,7 +58,7 @@ public:
   std::function<void(const AudioFrame &)> frame_callback;
   std::mutex mutex;
 
-  // 音频参数
+  // Audio parameters
   int sample_rate = 44100;
   int channels = 2;
   int frames_per_buffer = 1024;
@@ -82,7 +84,7 @@ public:
                             .count() /
                         1000.0;
 
-      // 复制音频数据
+      // Copy audio data
       const float *input = static_cast<const float *>(input_buffer);
       size_t sample_count = frame_count * impl->channels;
       frame.data.resize(sample_count);
@@ -95,7 +97,7 @@ public:
   }
 #endif
 
-  // initialize_portaudio方法已移除，现在使用全局PortAudio管理
+  // initialize_portaudio method removed, now using global PortAudio management
 
   bool setup_input_stream() {
 #ifdef HAVE_PORTAUDIO
@@ -108,26 +110,26 @@ public:
     }
 
     if (input_params.device == paNoDevice) {
-      std::cout << "没有找到可用的音频输入设备" << std::endl;
+      std::cout << "No available audio input device found" << std::endl;
       return false;
     }
 
-    // 获取设备信息并检查支持的通道数
+    // Get device info and check supported channel count
     const PaDeviceInfo *device_info = Pa_GetDeviceInfo(input_params.device);
     if (!device_info) {
-      std::cout << "无法获取音频设备信息" << std::endl;
+      std::cout << "Unable to get audio device information" << std::endl;
       return false;
     }
 
-    // 调整通道数以匹配设备支持的最大输入通道数
+    // Adjust channel count to match device's maximum input channels
     int max_input_channels = device_info->maxInputChannels;
     if (channels > max_input_channels) {
       channels = max_input_channels;
-      std::cout << "调整音频通道数为: " << channels
-                << " (设备最大支持: " << max_input_channels << ")" << std::endl;
+      std::cout << "Adjusted audio channel count to: " << channels
+                << " (device maximum support: " << max_input_channels << ")" << std::endl;
     }
 
-    // 确保至少有1个通道
+    // Ensure at least 1 channel
     if (channels <= 0) {
       channels = 1;
     }
@@ -138,16 +140,16 @@ public:
     input_params.hostApiSpecificStreamInfo = nullptr;
 
     PaError err = Pa_OpenStream(&pa_stream, &input_params,
-                                nullptr, // 没有输出
+                                nullptr, // No output
                                 sample_rate, frames_per_buffer, paClipOff,
                                 audio_callback, this);
 
     if (err != paNoError) {
-      std::cout << "打开音频流失败: " << Pa_GetErrorText(err) << std::endl;
+      std::cout << "Failed to open audio stream: " << Pa_GetErrorText(err) << std::endl;
       return false;
     }
 
-    std::cout << "音频输入流设置成功" << std::endl;
+    std::cout << "Audio input stream setup successful" << std::endl;
     return true;
 #else
     return false;
@@ -156,7 +158,7 @@ public:
 };
 
 AudioCapture::AudioCapture() : pImpl(std::make_unique<Impl>()) {
-  // 在构造时确保PortAudio已初始化
+  // Ensure PortAudio is initialized during construction
   ensure_portaudio_initialized();
 }
 
@@ -164,7 +166,7 @@ AudioCapture::~AudioCapture() {
   stop_capture();
 
 #ifdef HAVE_PORTAUDIO
-  // 关闭流并释放PortAudio引用
+  // Close stream and release PortAudio reference
   if (pImpl && pImpl->pa_stream) {
     Pa_CloseStream(pImpl->pa_stream);
     pImpl->pa_stream = nullptr;
@@ -177,7 +179,7 @@ bool AudioCapture::initialize(AudioSource source, int device_id) {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
 
   if (pImpl->capturing) {
-    std::cout << "音频捕获已在运行，请先停止" << std::endl;
+    std::cout << "Audio capture is already running, please stop first" << std::endl;
     return false;
   }
 
@@ -189,7 +191,7 @@ bool AudioCapture::initialize(AudioSource source, int device_id) {
   case AudioSource::SYSTEM_AUDIO:
     return pImpl->setup_input_stream();
   default:
-    std::cout << "未知的音频源类型" << std::endl;
+    std::cout << "Unknown audio source type" << std::endl;
     return false;
   }
 }
@@ -198,12 +200,12 @@ bool AudioCapture::start_capture() {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
 
   if (pImpl->capturing) {
-    std::cout << "音频捕获已在运行" << std::endl;
+    std::cout << "Audio capture is already running" << std::endl;
     return true;
   }
 
   if (pImpl->source == AudioSource::NONE) {
-    std::cout << "请先初始化音频源" << std::endl;
+    std::cout << "Please initialize audio source first" << std::endl;
     return false;
   }
 
@@ -211,12 +213,12 @@ bool AudioCapture::start_capture() {
   if (pImpl->pa_stream) {
     PaError err = Pa_StartStream(pImpl->pa_stream);
     if (err != paNoError) {
-      std::cout << "启动音频流失败: " << Pa_GetErrorText(err) << std::endl;
+      std::cout << "Failed to start audio stream: " << Pa_GetErrorText(err) << std::endl;
       return false;
     }
 
     pImpl->capturing = true;
-    std::cout << "开始音频捕获" << std::endl;
+    std::cout << "Starting audio capture" << std::endl;
     return true;
   }
 #endif
@@ -232,9 +234,9 @@ void AudioCapture::stop_capture() {
 
 #ifdef HAVE_PORTAUDIO
   if (pImpl->pa_stream) {
-    // 安全地停止和关闭流
+    // Safely stop and close stream
     PaError err = Pa_IsStreamActive(pImpl->pa_stream);
-    if (err == 1) { // 流正在运行
+    if (err == 1) { // Stream is running
       Pa_StopStream(pImpl->pa_stream);
     }
 
@@ -243,7 +245,7 @@ void AudioCapture::stop_capture() {
   }
 #endif
 
-  std::cout << "停止音频捕获" << std::endl;
+  std::cout << "Stopping audio capture" << std::endl;
 }
 
 bool AudioCapture::is_capturing() const {
@@ -270,7 +272,7 @@ std::vector<std::string> AudioCapture::get_input_devices() {
     const PaDeviceInfo *device_info = Pa_GetDeviceInfo(i);
     if (device_info && device_info->maxInputChannels > 0) {
       std::string device_name = device_info->name;
-      devices.push_back(device_name + " (设备 " + std::to_string(i) + ")");
+      devices.push_back(device_name + " (Device " + std::to_string(i) + ")");
     }
   }
 

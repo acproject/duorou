@@ -10,7 +10,7 @@ namespace duorou {
 namespace core {
 
 /**
- * @brief 日志级别枚举
+ * @brief Log level enumeration
  */
 enum class LogLevel {
     DEBUG = 0,
@@ -21,117 +21,117 @@ enum class LogLevel {
 };
 
 /**
- * @brief 日志管理器类
+ * @brief Logger manager class
  * 
- * 提供线程安全的日志记录功能，支持多种日志级别和输出目标
+ * Provides thread-safe logging functionality with support for multiple log levels and output targets
  */
 class Logger {
 public:
     /**
-     * @brief 构造函数
+     * @brief Constructor
      */
     Logger();
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~Logger();
     
     /**
-     * @brief 初始化日志系统
-     * @return 成功返回true，失败返回false
+     * @brief Initialize logging system
+     * @return Returns true on success, false on failure
      */
     bool initialize();
     
     /**
-     * @brief 设置日志级别
-     * @param level 日志级别
+     * @brief Set log level
+     * @param level Log level
      */
     void setLogLevel(LogLevel level);
     
     /**
-     * @brief 设置日志文件路径
-     * @param file_path 日志文件路径
-     * @return 成功返回true，失败返回false
+     * @brief Set log file path
+     * @param file_path Log file path
+     * @return Returns true on success, false on failure
      */
     bool setLogFile(const std::string& file_path);
     
     /**
-     * @brief 启用/禁用控制台输出
-     * @param enable 是否启用控制台输出
+     * @brief Enable/disable console output
+     * @param enable Whether to enable console output
      */
     void setConsoleOutput(bool enable);
     
     /**
-     * @brief 记录调试信息
-     * @param message 日志消息
+     * @brief Log debug information
+     * @param message Log message
      */
     void debug(const std::string& message);
     
     /**
-     * @brief 记录一般信息
-     * @param message 日志消息
+     * @brief Log general information
+     * @param message Log message
      */
     void info(const std::string& message);
     
     /**
-     * @brief 记录警告信息
-     * @param message 日志消息
+     * @brief Log warning information
+     * @param message Log message
      */
     void warning(const std::string& message);
     
     /**
-     * @brief 记录错误信息
-     * @param message 日志消息
+     * @brief Log error information
+     * @param message Log message
      */
     void error(const std::string& message);
     
     /**
-     * @brief 记录致命错误信息
-     * @param message 日志消息
+     * @brief Log fatal error information
+     * @param message Log message
      */
     void fatal(const std::string& message);
     
     /**
-     * @brief 刷新日志缓冲区
+     * @brief Flush log buffer
      */
     void flush();
     
     /**
-     * @brief 获取默认日志文件路径
-     * @return 默认日志文件路径
+     * @brief Get default log file path
+     * @return Default log file path
      */
     std::string getDefaultLogPath() const;
     
 private:
     /**
-     * @brief 写入日志
-     * @param level 日志级别
-     * @param message 日志消息
+     * @brief Write log
+     * @param level Log level
+     * @param message Log message
      */
     void writeLog(LogLevel level, const std::string& message);
     
     /**
-     * @brief 获取当前时间戳字符串
-     * @return 时间戳字符串
+     * @brief Get current timestamp string
+     * @return Timestamp string
      */
     std::string getCurrentTimestamp() const;
     
     /**
-     * @brief 获取日志级别字符串表示
-     * @param level 日志级别
-     * @return 级别字符串
+     * @brief Get log level string representation
+     * @param level Log level
+     * @return Level string
      */
     std::string getLevelString(LogLevel level) const;
     
 private:
-    LogLevel current_level_;        ///< 当前日志级别
-    bool console_output_;           ///< 是否输出到控制台
-    bool file_output_;              ///< 是否输出到文件
-    std::string log_file_path_;     ///< 日志文件路径
-    std::unique_ptr<std::ofstream> log_file_;  ///< 日志文件流
-    mutable std::mutex mutex_;      ///< 线程安全互斥锁
-    bool initialized_;              ///< 是否已初始化
+    LogLevel current_level_;        ///< Current log level
+    bool console_output_;           ///< Whether to output to console
+    bool file_output_;              ///< Whether to output to file
+    std::string log_file_path_;     ///< Log file path
+    std::unique_ptr<std::ofstream> log_file_;  ///< Log file stream
+    mutable std::mutex mutex_;      ///< Thread-safe mutex
+    bool initialized_;              ///< Whether initialized
 };
 
 } // namespace core

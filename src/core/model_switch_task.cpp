@@ -6,7 +6,7 @@
 namespace duorou {
 namespace core {
 
-// ModelSwitchTask 实现
+// ModelSwitchTask implementation
 ModelSwitchTask::ModelSwitchTask(const std::string& id, const std::string& name, 
                                const std::string& target_model, TaskPriority priority)
     : BaseTask(id, name, priority)
@@ -20,26 +20,26 @@ TaskResult ModelSwitchTask::execute() {
     try {
         std::cout << "[ModelSwitchTask] Starting model switch to: " << target_model_ << std::endl;
         
-        // 检查是否被取消
+        // Check if cancelled
         if (isCancelled()) {
             result.success = false;
             result.message = "Task was cancelled before execution";
             return result;
         }
         
-        // 模拟模型切换过程
+        // Simulate model switching process
         auto start_time = std::chrono::steady_clock::now();
         auto end_time = start_time + simulated_duration_;
         
         while (std::chrono::steady_clock::now() < end_time) {
-            // 检查取消状态
+            // Check cancellation status
             if (isCancelled()) {
                 result.success = false;
                 result.message = "Task was cancelled during execution";
                 return result;
             }
             
-            // 模拟工作进度
+            // Simulate work progress
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         
@@ -62,7 +62,7 @@ TaskResult ModelSwitchTask::execute() {
     return result;
 }
 
-// TextGenerationTask 实现
+// TextGenerationTask implementation
 TextGenerationTask::TextGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority)
     : BaseTask(id, "TextGeneration_" + id, priority)
     , prompt_(prompt)
@@ -75,14 +75,14 @@ TaskResult TextGenerationTask::execute() {
     try {
         std::cout << "[TextGenerationTask] Starting text generation with prompt: " << prompt_ << std::endl;
         
-        // 检查是否被取消
+        // Check if cancelled
         if (isCancelled()) {
             result.success = false;
             result.message = "Task was cancelled before execution";
             return result;
         }
         
-        // 模拟文本生成过程
+        // Simulate text generation process
         auto start_time = std::chrono::steady_clock::now();
         auto end_time = start_time + simulated_duration_;
         
@@ -90,14 +90,14 @@ TaskResult TextGenerationTask::execute() {
         generated_text << "Generated response for: \"" << prompt_ << "\"";
         
         while (std::chrono::steady_clock::now() < end_time) {
-            // 检查取消状态
+            // Check cancellation status
             if (isCancelled()) {
                 result.success = false;
                 result.message = "Task was cancelled during execution";
                 return result;
             }
             
-            // 模拟生成进度
+            // Simulate generation progress
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         
@@ -120,7 +120,7 @@ TaskResult TextGenerationTask::execute() {
     return result;
 }
 
-// ImageGenerationTask 实现
+// ImageGenerationTask implementation
 ImageGenerationTask::ImageGenerationTask(const std::string& id, const std::string& prompt, TaskPriority priority)
     : BaseTask(id, "ImageGeneration_" + id, priority)
     , prompt_(prompt)
@@ -133,14 +133,14 @@ TaskResult ImageGenerationTask::execute() {
     try {
         std::cout << "[ImageGenerationTask] Starting image generation with prompt: " << prompt_ << std::endl;
         
-        // 检查是否被取消
+        // Check if cancelled
         if (isCancelled()) {
             result.success = false;
             result.message = "Task was cancelled before execution";
             return result;
         }
         
-        // 模拟图像生成过程
+        // Simulate image generation process
         auto start_time = std::chrono::steady_clock::now();
         auto end_time = start_time + simulated_duration_;
         
@@ -148,14 +148,14 @@ TaskResult ImageGenerationTask::execute() {
         image_path << "generated_image_" << getId() << ".png";
         
         while (std::chrono::steady_clock::now() < end_time) {
-            // 检查取消状态
+            // Check cancellation status
             if (isCancelled()) {
                 result.success = false;
                 result.message = "Task was cancelled during execution";
                 return result;
             }
             
-            // 模拟生成进度
+            // Simulate generation progress
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         

@@ -11,7 +11,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #else
-// 占位符定义，当没有GTK时使用
+// Placeholder definitions for when GTK is not available
 typedef void* gpointer;
 typedef unsigned int guint;
 typedef int gboolean;
@@ -134,10 +134,10 @@ public:
         TrayStatus old_status = status_;
         status_ = status;
         
-        // 更新图标
+        // Update icon
         updateStatusIcon();
         
-        // 触发状态变化回调
+        // Trigger status change callback
         if (status_change_callback_) {
             status_change_callback_(status);
         }
@@ -239,12 +239,12 @@ public:
     }
     
     void updateWindowStateMenu(bool window_visible) {
-        // 根据窗口状态更新显示/隐藏菜单项的可见性
+        // Update visibility of show/hide menu items based on window state
         for (auto& item : menu_items_) {
             if (item.id == "show") {
-                item.visible = !window_visible;  // 窗口隐藏时显示"显示窗口"
+                item.visible = !window_visible;  // Show "Show Window" when window is hidden
             } else if (item.id == "hide") {
-                item.visible = window_visible;   // 窗口显示时显示"隐藏窗口"
+                item.visible = window_visible;   // Show "Hide Window" when window is visible
             }
         }
         markMenuForRebuild();
@@ -410,10 +410,10 @@ public:
     void sortMenuItemsByPriority() {
         std::sort(menu_items_.begin(), menu_items_.end(), 
                   [](const TrayMenuItem& a, const TrayMenuItem& b) {
-                      return a.priority > b.priority; // 高优先级在前
+                      return a.priority > b.priority; // Higher priority first
                   });
         
-        // 递归排序子菜单
+        // Recursively sort submenus
         for (auto& item : menu_items_) {
             if (!item.submenu.empty()) {
                 std::sort(item.submenu.begin(), item.submenu.end(),
@@ -427,9 +427,9 @@ public:
     // Performance optimization methods
     void batchUpdateMenuItems(std::function<void()> updates) {
         bool old_rebuild_flag = menu_needs_rebuild_;
-        menu_needs_rebuild_ = false; // 暂时禁用重建
+        menu_needs_rebuild_ = false; // Temporarily disable rebuild
         
-        updates(); // 执行批量更新
+        updates(); // Execute batch updates
         
         if (old_rebuild_flag || menu_needs_rebuild_) {
             markMenuForRebuild();
@@ -446,18 +446,18 @@ public:
 
     void showNotification(const std::string& title, const std::string& message,
                          const std::string& icon_name, int timeout_ms) {
-        // 在控制台显示通知（简化实现）
+        // Display notification in console (simplified implementation)
         std::cout << "[NOTIFICATION] " << title << ": " << message << std::endl;
         
-        // 这里可以集成libnotify或其他通知系统
-        // 暂时使用简单的控制台输出
+        // Here you can integrate libnotify or other notification systems
+        // Currently using simple console output
     }
 
     void updateProgress(double progress, const std::string& text) {
         progress_ = std::max(0.0, std::min(1.0, progress));
         progress_text_ = text;
         
-        // 更新提示文本
+        // Update tooltip text
         std::string tooltip = app_name_;
         if (!progress_text_.empty()) {
             tooltip += " - " + progress_text_;
@@ -476,14 +476,14 @@ public:
     std::function<void()> right_click_callback_;
     std::function<void()> double_click_callback_;
     std::function<void(TrayStatus)> status_change_callback_;
-    std::function<void()> quit_callback_;  // 退出回调函数
+    std::function<void()> quit_callback_;  // Quit callback function
     bool menu_needs_rebuild_;
 
 private:
     void createDefaultMenu() {
         menu_items_.clear();
         
-        // Show Window 菜单项
+        // Show Window menu item
         TrayMenuItem show_window_item;
         show_window_item.id = "show_window";
         show_window_item.label = "Show Window";
@@ -498,7 +498,7 @@ private:
         
         TrayMenuItem show_item;
         show_item.id = "show";
-        show_item.label = "显示主窗口";
+        show_item.label = "Show Main Window";
         show_item.icon = "";
         show_item.enabled = true;
         show_item.separator = false;
@@ -510,11 +510,11 @@ private:
         
         TrayMenuItem hide_item;
         hide_item.id = "hide";
-        hide_item.label = "隐藏窗口";
+        hide_item.label = "Hide Window";
         hide_item.icon = "";
         hide_item.enabled = true;
         hide_item.separator = false;
-        hide_item.visible = false;  // 初始时隐藏，根据窗口状态动态显示
+        hide_item.visible = false;  // Initially hidden, dynamically shown based on window state
         hide_item.callback = [this]() {
             if (right_click_callback_) right_click_callback_();
         };
@@ -530,7 +530,7 @@ private:
         
         TrayMenuItem status_item;
         status_item.id = "status";
-        status_item.label = "状态: 空闲";
+        status_item.label = "Status: Idle";
         status_item.icon = "";
         status_item.enabled = false;
         status_item.separator = false;
@@ -551,11 +551,11 @@ private:
         quit_item.enabled = true;
         quit_item.separator = false;
         quit_item.callback = [this]() {
-            // 调用退出回调函数，而不是直接调用std::exit
+            // Call quit callback function instead of directly calling std::exit
             if (quit_callback_) {
                 quit_callback_();
             } else {
-                // 如果没有设置退出回调，则使用默认退出方式
+                // If no quit callback is set, use default exit method
                 std::exit(0);
             }
         };
@@ -576,12 +576,12 @@ private:
     }
     
     void rebuildMenu() {
-        // 清理旧菜单
+        // Clean up old menu
         if (menu_) {
             g_object_unref(menu_);
         }
 
-        // GTK4: 创建简化菜单
+        // GTK4: Create simplified menu
         menu_ = gtk_popover_menu_new_from_model(nullptr);
         menu_item_map_.clear();
 
@@ -601,7 +601,7 @@ private:
             GtkWidget* menu_item;
             
             if (item.separator) {
-                // GTK4: 简化分隔符处理
+                // GTK4: Simplified separator handling
                 continue;
             } else {
                 std::string label = item.label;
@@ -623,7 +623,7 @@ private:
                 
                 menu_item = gtk_button_new_with_label(label.c_str());
                 
-                // 设置启用状态
+                // Set enabled state
                 gtk_widget_set_sensitive(menu_item, item.enabled);
                 
                 // Set tooltip if present
@@ -631,14 +631,14 @@ private:
                     gtk_widget_set_tooltip_text(menu_item, item.tooltip.c_str());
                 }
                 
-                // 如果有子菜单，创建子菜单
+                // If there's a submenu, create submenu
                 if (!item.submenu.empty()) {
                     GtkWidget* submenu = gtk_popover_menu_new_from_model(nullptr);
                     buildMenuItems(item.submenu, submenu);
-                    // GTK4: 简化子菜单设置
+                    // GTK4: Simplified submenu setup
                     g_object_set_data(G_OBJECT(menu_item), "submenu", submenu);
                 } else if (item.callback) {
-                    // 连接回调（只有叶子节点才有回调）
+                    // Connect callback (only leaf nodes have callbacks)
                     g_object_set_data(G_OBJECT(menu_item), "callback_ptr", 
                                      const_cast<std::function<void()>*>(&item.callback));
                     g_signal_connect(menu_item, "clicked", 
@@ -674,31 +674,31 @@ private:
         
         setIconFromTheme(icon_name);
         
-        // 更新状态菜单项
+        // Update status menu item
         updateStatusMenuItem();
     }
 
     void updateStatusMenuItem() {
-        std::string status_text = "状态: ";
+        std::string status_text = "Status: ";
         switch (status_) {
             case TrayStatus::Idle:
-                status_text += "空闲";
+                status_text += "Idle";
                 break;
             case TrayStatus::Working:
-                status_text += "工作中";
+                status_text += "Working";
                 break;
             case TrayStatus::Error:
-                status_text += "错误";
+                status_text += "Error";
                 break;
             case TrayStatus::Generating:
-                status_text += "生成中";
+                status_text += "Generating";
                 break;
             case TrayStatus::Loading:
-                status_text += "加载中";
+                status_text += "Loading";
                 break;
         }
         
-        // 查找并更新状态菜单项
+        // Find and update status menu item
         for (auto& item : menu_items_) {
             if (item.id == "status") {
                 item.label = status_text;
@@ -721,7 +721,7 @@ private:
         }
     }
 
-    // 静态回调函数
+    // Static callback functions
     static void onActivateStatic(GtkWidget* widget, gpointer user_data) {
         auto* impl = static_cast<Impl*>(user_data);
         if (impl && impl->left_click_callback_) {
@@ -732,7 +732,7 @@ private:
     static void onPopupMenuStatic(GtkWidget* widget, gpointer user_data) {
         auto* impl = static_cast<Impl*>(user_data);
         if (impl && impl->menu_) {
-            // GTK4: 使用popover menu替代popup menu
+            // GTK4: Use popover menu instead of popup menu
             gtk_widget_show(impl->menu_);
         }
     }
@@ -745,9 +745,9 @@ private:
         }
     }
 
-    // 成员变量
+    // Member variables
     std::string app_name_;
-    GtkWidget* tray_widget_;  // GTK4: 使用普通widget替代status icon
+    GtkWidget* tray_widget_;  // GTK4: Use regular widget instead of status icon
     GtkWidget* menu_;
     std::vector<TrayMenuItem> menu_items_;
     std::map<std::string, GtkWidget*> menu_item_map_;
@@ -1014,7 +1014,7 @@ SystemTrayManager& SystemTrayManager::getInstance() {
 
 bool SystemTrayManager::initialize(const std::string& app_name, const std::string& icon_path) {
     if (tray_) {
-        return true; // 已经初始化
+        return true; // Already initialized
     }
     
     tray_ = std::make_unique<SystemTray>();

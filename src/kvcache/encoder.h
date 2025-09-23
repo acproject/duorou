@@ -10,7 +10,7 @@
 namespace duorou {
 namespace kvcache {
 
-// 编码器缓存配置
+// Encoder cache configuration
 struct EncoderConfig {
     int maxSeqLen;
     int numLayers;
@@ -22,7 +22,7 @@ struct EncoderConfig {
                      headDim(64), enableOptimization(true) {}
 };
 
-// 编码器缓存类
+// Encoder cache class
 class EncoderCache : public Cache {
 private:
     EncoderConfig encoderConfig_;
@@ -30,18 +30,18 @@ private:
     int currentLayer_;
     bool initialized_;
     
-    // 缓存存储
+    // Cache storage
     std::unordered_map<int, std::vector<Tensor>> keyCache_;
     std::unordered_map<int, std::vector<Tensor>> valueCache_;
 
 public:
-    // 构造函数
+    // Constructor
     explicit EncoderCache(const EncoderConfig& config = EncoderConfig());
     
-    // 析构函数
+    // Destructor
     virtual ~EncoderCache() = default;
     
-    // Cache接口实现
+    // Cache interface implementation
     virtual void init(Context& ctx, const CacheConfig& config) override;
     virtual void close() override;
     virtual void setLayer(int layer) override;
@@ -53,14 +53,14 @@ public:
     virtual void remove(int seq, int32_t beginIndex, int32_t endIndex) override;
     virtual std::tuple<Tensor, Tensor, Tensor> buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs) override;
     
-    // EncoderCache特有方法
+    // EncoderCache-specific methods
     void setEncoderConfig(const EncoderConfig& config);
     const EncoderConfig& getEncoderConfig() const;
     void clearCache();
     size_t getCacheSize() const;
     
 private:
-    // 内部辅助方法
+    // Internal helper methods
     void validateLayer(int layer) const;
     void ensureLayerExists(int layer);
     void allocateLayerCache(int layer);

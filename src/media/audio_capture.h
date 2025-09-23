@@ -32,28 +32,28 @@ public:
     AudioCapture();
     ~AudioCapture();
     
-    // 初始化音频捕获
+    // Initialize audio capture
     bool initialize(AudioSource source, int device_id = -1);
     
-    // 开始捕获
+    // Start capture
     bool start_capture();
     
-    // 停止捕获
+    // Stop capture
     void stop_capture();
     
-    // 检查是否正在捕获
+    // Check if capturing
     bool is_capturing() const;
     
-    // 设置音频帧回调函数
+    // Set audio frame callback function
     void set_frame_callback(std::function<void(const AudioFrame&)> callback);
     
-    // 获取可用的音频输入设备列表
+    // Get list of available audio input devices
     static std::vector<std::string> get_input_devices();
     
-    // 检查麦克风是否可用
+    // Check if microphone is available
     static bool is_microphone_available();
     
-    // 设置音频参数
+    // Set audio parameters
     void set_sample_rate(int sample_rate);
     void set_channels(int channels);
     void set_frames_per_buffer(int frames);

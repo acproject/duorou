@@ -14,8 +14,8 @@ namespace core {
 
 // ModelPath implementation
 bool ModelPath::parseFromString(const std::string& path) {
-    // 正则表达式匹配格式：[scheme://]registry/namespace/repository:tag
-    // 支持registry域名包含点号，如registry.ollama.ai
+    // Regular expression matching format: [scheme://]registry/namespace/repository:tag
+    // Supports registry domains containing dots, such as registry.ollama.ai
     std::regex path_regex(R"(^(?:([^:/]+)://)?([^/]+(?:\.[^/]+)*)/([^/]+)/([^:]+)(?::([^:]+))?$)");
     std::smatch matches;
     
@@ -26,7 +26,7 @@ bool ModelPath::parseFromString(const std::string& path) {
         repository = matches[4].str();
         tag = matches[5].str();
         
-        // 设置默认值
+        // Set default values
         if (scheme.empty()) {
             scheme = "registry";
         }
@@ -65,17 +65,17 @@ std::string ModelPath::getBaseURL() const {
 ModelPathManager::ModelPathManager(const std::string& base_path) 
     : base_path_(base_path), initialized_(false) {
     if (base_path_.empty()) {
-        // 首先检查OLLAMA_MODELS环境变量
+        // First check OLLAMA_MODELS environment variable
         const char* ollama_models = std::getenv("OLLAMA_MODELS");
         if (ollama_models && strlen(ollama_models) > 0) {
             base_path_ = std::string(ollama_models);
         } else {
-            // 使用ollama的默认模型存储路径
+            // Use ollama's default model storage path
             const char* home = std::getenv("HOME");
             if (home) {
                 base_path_ = std::filesystem::path(home) / ".ollama" / "models";
             } else {
-                // 如果无法获取HOME环境变量，使用当前目录下的models作为备选
+                // If unable to get HOME environment variable, use models under current directory as fallback
                 base_path_ = std::filesystem::current_path() / "models";
             }
         }
@@ -90,13 +90,13 @@ bool ModelPathManager::initialize() {
     }
     
     try {
-        // 确保基础目录存在
+        // Ensure base directory exists
         if (!ensureDirectoryExists(base_path_)) {
             std::cerr << "Error: Failed to create base directory: " << base_path_ << std::endl;
             return false;
         }
         
-        // 确保manifests和blobs目录存在
+        // Ensure manifests and blobs directories exist
         if (!ensureDirectoryExists(getManifestPath()) || 
             !ensureDirectoryExists(getBlobsPath())) {
             std::cerr << "Error: Failed to create manifests or blobs directory" << std::endl;
@@ -134,9 +134,9 @@ std::string ModelPathManager::getBlobFilePath(const std::string& digest) const {
         return "";
     }
     
-    // Ollama使用sha256-格式存储blob文件
+    // Ollama uses sha256- format to store blob files
     std::string blob_name = digest;
-    // 将sha256:替换为sha256-
+    // Replace sha256: with sha256-
     if (blob_name.substr(0, 7) == "sha256:") {
         blob_name = "sha256-" + blob_name.substr(7);
     }
@@ -145,7 +145,7 @@ std::string ModelPathManager::getBlobFilePath(const std::string& digest) const {
 }
 
 bool ModelPathManager::isValidDigest(const std::string& digest) {
-    // 检查SHA256格式：sha256:64位十六进制字符
+    // Check SHA256 format: sha256:64-bit hexadecimal characters
     std::regex sha256_regex(R"(^sha256:[a-fA-F0-9]{64}$)");
     return std::regex_match(digest, sha256_regex);
 }
@@ -179,7 +179,7 @@ bool ModelPathManager::writeManifest(const ModelPath& model_path, const ModelMan
     std::string manifest_file = getManifestFilePath(model_path);
     
     try {
-        // 确保目录存在
+        // Ensure directory exists
         std::filesystem::path parent_dir = std::filesystem::path(manifest_file).parent_path();
         if (!ensureDirectoryExists(parent_dir.string())) {
             std::cerr << "Error: Failed to create manifest directory: " << parent_dir.string() << std::endl;
@@ -233,7 +233,7 @@ std::unordered_map<std::string, ModelManifest> ModelPathManager::enumerateManife
             if (entry.is_regular_file(ec) && !ec) {
                 std::string file_path = entry.path().string();
                 
-                // 解析模型路径
+                // Parse model path
                 std::string relative_path;
                 try {
                     relative_path = std::filesystem::relative(entry.path(), manifest_root).string();
@@ -243,13 +243,13 @@ std::unordered_map<std::string, ModelManifest> ModelPathManager::enumerateManife
                     continue;
                 }
                 
-                // 从相对路径构造ModelPath
-                // 路径格式: registry/namespace/repository/tag
+                // Construct ModelPath from relative path
+                // Path format: registry/namespace/repository/tag
                 std::replace(relative_path.begin(), relative_path.end(), '\\', '/');
                 
-                // 构造完整的模型路径字符串
+                // Construct complete model path string
                 std::string model_path_str = relative_path;
-                // 将最后一个/替换为:
+                // Replace the last / with :
                 size_t last_slash = model_path_str.find_last_of('/');
                 if (last_slash != std::string::npos) {
                     model_path_str[last_slash] = ':';
@@ -304,7 +304,7 @@ size_t ModelPathManager::deleteUnusedLayers(const std::vector<std::string>& used
         return 0;
     }
     
-    // 创建已使用摘要的集合
+    // Create set of used digests
     std::unordered_set<std::string> used_set;
     for (const auto& digest : used_digests) {
         std::string clean_digest = digest;
@@ -319,13 +319,13 @@ size_t ModelPathManager::deleteUnusedLayers(const std::vector<std::string>& used
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
                 
-                // 检查是否为有效的SHA256文件名
+                // Check if it's a valid SHA256 filename
                 if (filename.length() == 64 && 
                     std::all_of(filename.begin(), filename.end(), 
                                [](char c) { return std::isxdigit(c); })) {
                     
                     if (used_set.find(filename) == used_set.end()) {
-                        // 未使用的blob，删除它
+                        // Unused blob, delete it
                         std::filesystem::remove(entry.path());
                         deleted_count++;
                         std::cout << "Info: Deleted unused blob: " << filename << std::endl;
@@ -353,11 +353,11 @@ size_t ModelPathManager::pruneLayers() {
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
                 
-                // 检查文件名是否为有效的SHA256格式
+                // Check if filename is in valid SHA256 format
                 if (filename.length() != 64 || 
                     !std::all_of(filename.begin(), filename.end(), 
                                 [](char c) { return std::isxdigit(c); })) {
-                    // 无效的blob文件，删除它
+                    // Invalid blob file, delete it
                     std::filesystem::remove(entry.path());
                     pruned_count++;
                     std::cout << "Info: Pruned invalid blob: " << filename << std::endl;
@@ -409,7 +409,7 @@ std::string ModelPathManager::calculateSHA256(const std::string& file_path) {
 void ModelPathManager::setBasePath(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     base_path_ = path;
-    initialized_ = false;  // 需要重新初始化
+    initialized_ = false;  // Need to reinitialize
 }
 
 bool ModelPathManager::ensureDirectoryExists(const std::string& path) const {
@@ -429,7 +429,7 @@ bool ModelPathManager::loadManifestFromJson(const nlohmann::json& json_data, Mod
         manifest.schema_version = json_data.value("schemaVersion", 2);
         manifest.media_type = json_data.value("mediaType", "");
         
-        // 加载配置层
+        // Load config layer
         if (json_data.contains("config")) {
             const auto& config_json = json_data["config"];
             manifest.config.digest = config_json.value("digest", "");
@@ -437,7 +437,7 @@ bool ModelPathManager::loadManifestFromJson(const nlohmann::json& json_data, Mod
             manifest.config.size = config_json.value("size", 0);
         }
         
-        // 加载层列表
+        // Load layer list
         if (json_data.contains("layers")) {
             for (const auto& layer_json : json_data["layers"]) {
                 ModelLayer layer;
@@ -460,7 +460,7 @@ bool ModelPathManager::saveManifestToJson(const ModelManifest& manifest, nlohman
         json_data["schemaVersion"] = manifest.schema_version;
         json_data["mediaType"] = manifest.media_type;
         
-        // 保存配置层
+        // Save config layer
         if (!manifest.config.digest.empty()) {
             json_data["config"] = {
                 {"digest", manifest.config.digest},
@@ -469,7 +469,7 @@ bool ModelPathManager::saveManifestToJson(const ModelManifest& manifest, nlohman
             };
         }
         
-        // 保存层列表
+        // Save layer list
         json_data["layers"] = nlohmann::json::array();
         for (const auto& layer : manifest.layers) {
             json_data["layers"].push_back({

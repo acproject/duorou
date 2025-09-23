@@ -8,24 +8,24 @@
 namespace duorou {
 namespace core {
 
-// 简单的JSON解析器（用于基本配置）
+// Simple JSON parser (for basic configuration)
 class SimpleJsonParser {
 public:
     static bool parseValue(const std::string& json, const std::string& key, ConfigValue& value) {
-        // 查找键
+        // Find key
         std::string search_key = "\"" + key + "\"";
         size_t key_pos = json.find(search_key);
         if (key_pos == std::string::npos) {
             return false;
         }
         
-        // 查找冒号
+        // Find colon
         size_t colon_pos = json.find(':', key_pos);
         if (colon_pos == std::string::npos) {
             return false;
         }
         
-        // 跳过空白字符
+        // Skip whitespace
         size_t value_start = colon_pos + 1;
         while (value_start < json.length() && std::isspace(json[value_start])) {
             value_start++;
@@ -35,11 +35,11 @@ public:
             return false;
         }
         
-        // 解析值
+        // Parse value
         char first_char = json[value_start];
         
         if (first_char == '"') {
-            // 字符串值
+            // String value
             size_t end_quote = json.find('"', value_start + 1);
             if (end_quote == std::string::npos) {
                 return false;
@@ -47,7 +47,7 @@ public:
             value = json.substr(value_start + 1, end_quote - value_start - 1);
             return true;
         } else if (first_char == 't' || first_char == 'f') {
-            // 布尔值
+            // Boolean value
             if (json.substr(value_start, 4) == "true") {
                 value = true;
                 return true;
@@ -56,7 +56,7 @@ public:
                 return true;
             }
         } else if (std::isdigit(first_char) || first_char == '-') {
-            // 数字值
+            // Number value
             size_t value_end = value_start;
             bool has_dot = false;
             
@@ -118,7 +118,7 @@ public:
     }
 };
 
-// ConfigManager实现
+// ConfigManager implementation
 ConfigManager::ConfigManager()
     : initialized_(false)
     , modified_(false) {
@@ -140,17 +140,17 @@ bool ConfigManager::initialize() {
     std::cout << "ConfigManager::initialize: Acquired mutex lock" << std::endl;
     
     try {
-        // 设置默认配置文件路径
+        // Set default config file path
         std::cout << "ConfigManager::initialize: Getting default config path" << std::endl;
         config_file_path_ = getDefaultConfigPath();
         std::cout << "ConfigManager::initialize: Config path: " << config_file_path_ << std::endl;
         
-        // 创建默认配置
+        // Create default config
         std::cout << "ConfigManager::initialize: Creating default config" << std::endl;
         createDefaultConfig();
         std::cout << "ConfigManager::initialize: Default config created" << std::endl;
         
-        // 尝试加载现有配置文件
+        // Try to load existing config file
         std::cout << "ConfigManager::initialize: Checking if config file exists" << std::endl;
         if (std::filesystem::exists(config_file_path_)) {
             std::cout << "ConfigManager::initialize: Config file exists, loading" << std::endl;
@@ -159,7 +159,7 @@ bool ConfigManager::initialize() {
             }
         } else {
             std::cout << "ConfigManager::initialize: Config file doesn't exist, saving default" << std::endl;
-            // 保存默认配置
+            // Save default config
             if (!saveConfigInternal(config_file_path_)) {
                 std::cerr << "Failed to save default config" << std::endl;
                 return false;
@@ -188,12 +188,12 @@ bool ConfigManager::loadConfig(const std::string& config_path) {
             return false;
         }
         
-        // 读取文件内容
+        // Read file content
         std::string content((std::istreambuf_iterator<char>(file)),
                            std::istreambuf_iterator<char>());
         file.close();
         
-        // 解析JSON配置
+        // Parse JSON config
         if (!parseJsonConfig(content)) {
             std::cerr << "Failed to parse config file: " << config_path << std::endl;
             return false;
@@ -229,18 +229,18 @@ bool ConfigManager::saveConfigInternal(const std::string& config_path) const {
     
     try {
         std::cout << "saveConfigInternal: Creating directories" << std::endl;
-        // 确保目录存在
+        // Ensure directory exists
         std::filesystem::path file_path(path);
         std::filesystem::create_directories(file_path.parent_path());
         std::cout << "saveConfigInternal: Directories created" << std::endl;
         
         std::cout << "saveConfigInternal: Generating JSON content" << std::endl;
-        // 生成JSON内容
+        // Generate JSON content
         std::string json_content = generateJsonConfig();
         std::cout << "saveConfigInternal: JSON content generated" << std::endl;
         
         std::cout << "saveConfigInternal: Opening file for writing" << std::endl;
-        // 写入文件
+        // Write to file
         std::ofstream file(path);
         if (!file.is_open()) {
             std::cerr << "Cannot create config file: " << path << std::endl;
@@ -400,40 +400,40 @@ std::string ConfigManager::getDefaultConfigPath() const {
 }
 
 bool ConfigManager::parseJsonConfig(const std::string& content) {
-    // 清空现有配置
+    // Clear existing configuration
     config_map_.clear();
     
-    // 解析基本的JSON键值对
+    // Parse basic JSON key-value pairs
     std::istringstream iss(content);
     std::string line;
     
     while (std::getline(iss, line)) {
-        // 移除前后空白字符
+        // Remove leading and trailing whitespace
         line.erase(0, line.find_first_not_of(" \t"));
         line.erase(line.find_last_not_of(" \t") + 1);
         
-        // 跳过空行和注释
+        // Skip empty lines and comments
         if (line.empty() || line[0] == '{' || line[0] == '}' || line[0] == '/' || line[0] == '#') {
             continue;
         }
         
-        // 查找冒号
+        // Find colon
         size_t colon_pos = line.find(':');
         if (colon_pos == std::string::npos) {
             continue;
         }
         
-        // 提取键
+        // Extract key
         std::string key_part = line.substr(0, colon_pos);
         key_part.erase(0, key_part.find_first_not_of(" \t"));
         key_part.erase(key_part.find_last_not_of(" \t") + 1);
         
-        // 移除引号
+        // Remove quotes
         if (key_part.front() == '"' && key_part.back() == '"') {
             key_part = key_part.substr(1, key_part.length() - 2);
         }
         
-        // 解析值
+        // Parse value
         ConfigValue value;
         if (SimpleJsonParser::parseValue(content, key_part, value)) {
             config_map_[key_part] = value;
@@ -448,37 +448,37 @@ std::string ConfigManager::generateJsonConfig() const {
 }
 
 void ConfigManager::createDefaultConfig() {
-    // 应用程序基本设置
+    // Basic application settings
     config_map_["app.name"] = std::string("Duorou");
     config_map_["app.version"] = std::string("1.0.0");
     config_map_["app.language"] = std::string("zh_CN");
     
-    // 日志设置
+    // Log settings
     config_map_["log.level"] = std::string("INFO");
     config_map_["log.console_output"] = true;
     config_map_["log.file_output"] = true;
     config_map_["log.max_file_size"] = 10; // MB
     
-    // 模型设置
+    // Model settings
     config_map_["model.memory_limit"] = 4096; // MB
     config_map_["model.auto_unload"] = true;
     config_map_["model.default_language_model"] = std::string("");
     config_map_["model.default_diffusion_model"] = std::string("");
     
-    // 工作流设置
-    config_map_["workflow.worker_threads"] = 0; // 0表示自动检测
+    // Workflow settings
+    config_map_["workflow.worker_threads"] = 0; // 0 means auto-detect
     config_map_["workflow.max_queue_size"] = 100;
-    config_map_["workflow.task_timeout"] = 300; // 秒
+    config_map_["workflow.task_timeout"] = 300; // seconds
     
-    // UI设置
+    // UI settings
     config_map_["ui.theme"] = std::string("default");
     config_map_["ui.window_width"] = 1200;
     config_map_["ui.window_height"] = 800;
     config_map_["ui.remember_window_state"] = true;
     
-    // 性能设置
+    // Performance settings
     config_map_["performance.gpu_acceleration"] = true;
-    config_map_["performance.cpu_threads"] = 0; // 0表示自动检测
+    config_map_["performance.cpu_threads"] = 0; // 0 means auto-detect
     config_map_["performance.memory_optimization"] = true;
 }
 

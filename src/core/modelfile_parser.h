@@ -11,14 +11,14 @@ namespace duorou {
 namespace core {
 
 /**
- * @brief LoRA适配器信息
+ * @brief LoRA adapter information
  */
 struct LoRAAdapter {
-    std::string name;           ///< 适配器名称
-    std::string path;           ///< 适配器文件路径
-    float scale = 1.0f;         ///< 适配器缩放因子
-    std::string digest;         ///< SHA256摘要
-    size_t size = 0;           ///< 文件大小
+    std::string name;           ///< Adapter name
+    std::string path;           ///< Adapter file path
+    float scale = 1.0f;         ///< Adapter scaling factor
+    std::string digest;         ///< SHA256 digest
+    size_t size = 0;           ///< File size
     
     LoRAAdapter() = default;
     LoRAAdapter(const std::string& n, const std::string& p, float s = 1.0f)
@@ -26,69 +26,69 @@ struct LoRAAdapter {
 };
 
 /**
- * @brief Modelfile配置信息
+ * @brief Modelfile configuration information
  */
 struct ModelfileConfig {
-    std::string base_model;                        ///< 基础模型路径
-    std::vector<LoRAAdapter> lora_adapters;        ///< LoRA适配器列表
-    std::unordered_map<std::string, std::string> parameters;  ///< 模型参数
-    std::string system_prompt;                     ///< 系统提示
-    std::string template_format;                   ///< 模板格式
+    std::string base_model;                        ///< Base model path
+    std::vector<LoRAAdapter> lora_adapters;        ///< LoRA adapter list
+    std::unordered_map<std::string, std::string> parameters;  ///< Model parameters
+    std::string system_prompt;                     ///< System prompt
+    std::string template_format;                   ///< Template format
     
     ModelfileConfig() = default;
 };
 
 /**
- * @brief Ollama Modelfile解析器
- * 负责解析Ollama模型的manifest和相关配置，提取LoRA适配器信息
+ * @brief Ollama Modelfile parser
+ * Responsible for parsing Ollama model manifest and related configurations, extracting LoRA adapter information
  */
 class ModelfileParser {
 public:
     /**
-     * @brief 构造函数
-     * @param model_path_manager 模型路径管理器
+     * @brief Constructor
+     * @param model_path_manager Model path manager
      */
     explicit ModelfileParser(std::shared_ptr<ModelPathManager> model_path_manager);
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~ModelfileParser() = default;
     
     /**
-     * @brief 从manifest解析Modelfile配置
-     * @param manifest 模型manifest
-     * @param config 输出的配置信息
-     * @return 解析成功返回true
+     * @brief Parse Modelfile configuration from manifest
+     * @param manifest Model manifest
+     * @param config Output configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseFromManifest(const ModelManifest& manifest, ModelfileConfig& config);
     
     /**
-     * @brief 从JSON字符串解析Modelfile配置
-     * @param json_str JSON字符串
-     * @param config 输出的配置信息
-     * @return 解析成功返回true
+     * @brief Parse Modelfile configuration from JSON string
+     * @param json_str JSON string
+     * @param config Output configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseFromJson(const std::string& json_str, ModelfileConfig& config);
     
     /**
-     * @brief 从文件解析Modelfile配置
-     * @param file_path 文件路径
-     * @param config 输出的配置信息
-     * @return 解析成功返回true
+     * @brief Parse Modelfile configuration from file
+     * @param file_path File path
+     * @param config Output configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseFromFile(const std::string& file_path, ModelfileConfig& config);
     
     /**
-     * @brief 验证LoRA适配器文件
-     * @param adapter LoRA适配器信息
-     * @return 验证成功返回true
+     * @brief Validate LoRA adapter file
+     * @param adapter LoRA adapter information
+     * @return Returns true if validation is successful
      */
     bool validateLoRAAdapter(const LoRAAdapter& adapter);
     
     /**
-     * @brief 获取支持的媒体类型列表
-     * @return 支持的媒体类型
+     * @brief Get list of supported media types
+     * @return Supported media types
      */
     static std::vector<std::string> getSupportedMediaTypes();
     
@@ -96,96 +96,96 @@ private:
     std::shared_ptr<ModelPathManager> model_path_manager_;
     
     /**
-     * @brief 解析模板层
-     * @param layer_digest 层摘要
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse template layer
+     * @param layer_digest Layer digest
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseTemplateLayer(const std::string& layer_digest, ModelfileConfig& config);
     
     /**
-     * @brief 解析系统层
-     * @param layer_digest 层摘要
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse system layer
+     * @param layer_digest Layer digest
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseSystemLayer(const std::string& layer_digest, ModelfileConfig& config);
     
     /**
-     * @brief 解析参数层
-     * @param layer_digest 层摘要
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse parameters layer
+     * @param layer_digest Layer digest
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseParametersLayer(const std::string& layer_digest, ModelfileConfig& config);
     
     /**
-     * @brief 解析适配器层
-     * @param layer_digest 层摘要
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse adapter layer
+     * @param layer_digest Layer digest
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseAdapterLayer(const std::string& layer_digest, ModelfileConfig& config);
     
     /**
-     * @brief 从blob文件读取内容
-     * @param digest 文件摘要
-     * @return 文件内容，失败返回空字符串
+     * @brief Read content from blob file
+     * @param digest File digest
+     * @return File content, returns empty string on failure
      */
     std::string readBlobContent(const std::string& digest);
     
     /**
-     * @brief 解析Modelfile指令
-     * @param content Modelfile内容
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse Modelfile instructions
+     * @param content Modelfile content
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseModelfileInstructions(const std::string& content, ModelfileConfig& config);
     
     /**
-     * @brief 解析FROM指令
-     * @param line 指令行
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse FROM instruction
+     * @param line Instruction line
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseFromInstruction(const std::string& line, ModelfileConfig& config);
     
     /**
-     * @brief 解析ADAPTER指令
-     * @param line 指令行
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse ADAPTER instruction
+     * @param line Instruction line
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseAdapterInstruction(const std::string& line, ModelfileConfig& config);
     
     /**
-     * @brief 解析PARAMETER指令
-     * @param line 指令行
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse PARAMETER instruction
+     * @param line Instruction line
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseParameterInstruction(const std::string& line, ModelfileConfig& config);
     
     /**
-     * @brief 解析TEMPLATE指令
-     * @param line 指令行
-     * @param config 配置信息
-     * @return 解析成功返回true
+     * @brief Parse TEMPLATE instruction
+     * @param line Instruction line
+     * @param config Configuration information
+     * @return Returns true if parsing is successful
      */
     bool parseTemplateInstruction(const std::string& line, ModelfileConfig& config);
     
     /**
-     * @brief 解析SYSTEM指令
-     * @param line 指令行
-     * @param config 配置对象
-     * @return 解析成功返回true
+     * @brief Parse SYSTEM instruction
+     * @param line Instruction line
+     * @param config Configuration object
+     * @return Returns true if parsing is successful
      */
     bool parseSystemInstruction(const std::string& line, ModelfileConfig& config);
     
     /**
-     * @brief 验证GGUF文件头
-     * @param file_path 文件路径
-     * @return 验证成功返回true
+     * @brief Validate GGUF file header
+     * @param file_path File path
+     * @return Returns true if validation is successful
      */
     bool validateGGUFHeader(const std::string& file_path);
 };

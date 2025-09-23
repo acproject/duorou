@@ -38,37 +38,37 @@ public:
     VideoCapture();
     ~VideoCapture();
     
-    // 初始化视频捕获
+    // Initialize video capture
     bool initialize(VideoSource source, int device_id = 0);
     
-    // 开始捕获
+    // Start capture
     bool start_capture();
     
-    // 停止捕获
+    // Stop capture
     void stop_capture();
     
-    // 检查是否正在捕获
+    // Check if capturing
     bool is_capturing() const;
     
-    // 获取下一帧
+    // Get next frame
     bool get_next_frame(VideoFrame& frame);
     
-    // 设置帧回调函数
+    // Set frame callback function
     void set_frame_callback(std::function<void(const VideoFrame&)> callback);
     
-    // 获取可用的摄像头设备列表
+    // Get available camera devices list
     static std::vector<std::string> get_camera_devices();
     
-    // 检查摄像头是否可用
+    // Check if camera is available
     static bool is_camera_available();
     
-    // 获取桌面分辨率
+    // Get desktop resolution
     static std::pair<int, int> get_desktop_resolution();
     
-    // 设置桌面捕获的窗口ID（仅在桌面捕获模式下有效）
+    // Set capture window ID (only valid in desktop capture mode)
     void set_capture_window_id(int window_id);
     
-    // 设置摄像头设备索引（仅在摄像头模式下有效）
+    // Set camera device index (only valid in camera mode)
     void set_camera_device_index(int device_index);
     
 private:

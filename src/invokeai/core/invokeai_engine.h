@@ -46,47 +46,47 @@ struct ModelInfo {
 // 进度回调函数类型
 using ProgressCallback = std::function<void(int step, int total_steps, const std::string& status)>;
 
-// InvokeAI引擎核心类
+// InvokeAI engine core class
 class InvokeAIEngine {
 public:
     InvokeAIEngine();
     ~InvokeAIEngine();
 
-    // 初始化引擎
+    // Initialize engine
     bool initialize(const std::string& models_path = "");
     
-    // 关闭引擎
+    // Shutdown engine
     void shutdown();
     
-    // 模型管理
+    // Model management
     bool load_model(const std::string& model_name);
     bool unload_model();
     std::vector<ModelInfo> get_available_models() const;
     ModelInfo get_current_model() const;
     bool is_model_loaded() const;
     
-    // 图像生成
+    // Image generation
     ImageGenerationResult generate_image(const ImageGenerationParams& params);
     ImageGenerationResult generate_image_async(const ImageGenerationParams& params, 
                                               ProgressCallback progress_cb = nullptr);
     
-    // img2img功能
+    // img2img functionality
     ImageGenerationResult image_to_image(const ImageGenerationParams& params);
     
-    // 取消当前生成任务
+    // Cancel current generation task
     void cancel_generation();
     
-    // 获取引擎状态
+    // Get engine status
     bool is_busy() const;
     std::string get_status() const;
     
-    // 设置配置
+    // Set configuration
     void set_device(const std::string& device); // "cpu", "cuda", "mps"
     void set_precision(const std::string& precision); // "fp32", "fp16"
     void set_threads(int threads);
     void set_memory_limit(size_t limit_mb);
     
-    // 获取系统信息
+    // Get system information
     std::map<std::string, std::string> get_system_info() const;
     
 private:
@@ -94,7 +94,7 @@ private:
     std::unique_ptr<Impl> pimpl_;
 };
 
-// 工厂函数
+// Factory function
 std::unique_ptr<InvokeAIEngine> create_invokeai_engine();
 
 } // namespace invokeai

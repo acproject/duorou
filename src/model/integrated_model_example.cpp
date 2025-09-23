@@ -10,18 +10,18 @@ namespace duorou {
 namespace model {
 
 IntegratedModelExample::IntegratedModelExample() {
-    // 构造函数中初始化基本状态
+    // Initialize basic state in constructor
 }
 
 bool IntegratedModelExample::initialize() {
     try {
-        // 1. 初始化ML框架组件
+        // 1. Initialize ML framework components
         if (!initializeMLComponents()) {
             std::cerr << "Failed to initialize ML components" << std::endl;
             return false;
         }
         
-        // 2. 初始化KV缓存
+        // 2. Initialize KV cache
         if (!initializeKVCache()) {
             std::cerr << "Failed to initialize KV cache" << std::endl;
             return false;
@@ -44,14 +44,14 @@ bool IntegratedModelExample::loadFromGGUF(const std::string& modelPath) {
     }
     
     try {
-        // 使用GGUF模块加载模型文件
+        // Load model file using GGUF module
         ggufFile_ = std::make_unique<extensions::ollama::gguf::File>();
         if (!ggufFile_->open(modelPath)) {
             std::cerr << "Failed to open GGUF file: " << modelPath << std::endl;
             return false;
         }
         
-        // 加载模型权重到ML框架的Tensor中
+        // Load model weights into ML framework Tensors
         if (!loadModelWeights()) {
             std::cerr << "Failed to load model weights" << std::endl;
             return false;
@@ -71,13 +71,13 @@ ml::Tensor IntegratedModelExample::forward(const ml::Tensor& input) {
         throw std::runtime_error("Model not initialized");
     }
     
-    // 1. 预处理输入
+    // 1. Preprocess input
     ml::Tensor processed = preprocessInput(input);
     
-    // 2. 使用ML框架的注意力机制
+    // 2. Use ML framework attention mechanism
     ml::Tensor attended = attention_->forward(*mlContext_, processed);
     
-    // 3. 后处理输出
+    // 3. Postprocess output
     ml::Tensor output = postprocessOutput(attended);
     
     return output;
@@ -89,15 +89,15 @@ ml::Tensor IntegratedModelExample::forwardWithCache(const ml::Tensor& input,
         throw std::runtime_error("Model not initialized");
     }
     
-    // 1. 预处理输入
+    // 1. Preprocess input
     ml::Tensor processed = preprocessInput(input);
     
-    // 2. 使用带缓存的注意力机制
+    // 2. Use attention mechanism with cache
     ml::Tensor attended = attention_->forward(*mlContext_, processed, 
                                              ml::Tensor(), ml::Tensor(), 
                                              kvCacheWrapper_->getCache());
     
-    // 3. 后处理输出
+    // 3. Postprocess output
     ml::Tensor output = postprocessOutput(attended);
     
     return output;
@@ -109,20 +109,20 @@ ml::Tensor IntegratedModelExample::multimodalForward(const ml::Tensor& textInput
         throw std::runtime_error("Model not initialized");
     }
     
-    // 1. 分别处理文本和图像输入
+    // 1. Process text and image inputs separately
     ml::Tensor processedText = preprocessInput(textInput);
     ml::Tensor processedImage = preprocessInput(imageInput);
     
-    // 2. 融合多模态特征
-    // 这里可以使用不同的融合策略
+    // 2. Fuse multimodal features
+    // Different fusion strategies can be used here
     ml::Tensor fused = processedText.add(*mlContext_, processedImage);
     
-    // 3. 使用注意力机制处理融合特征
+    // 3. Process fused features using attention mechanism
     ml::Tensor attended = attention_->forward(*mlContext_, fused, 
                                              ml::Tensor(), ml::Tensor(), 
                                              kvCacheWrapper_->getCache());
     
-    // 4. 后处理输出
+    // 4. Postprocess output
     ml::Tensor output = postprocessOutput(attended);
     
     return output;
@@ -130,16 +130,16 @@ ml::Tensor IntegratedModelExample::multimodalForward(const ml::Tensor& textInput
 
 bool IntegratedModelExample::initializeMLComponents() {
     try {
-        // 创建ML上下文
+        // Create ML context
         mlContext_ = std::make_unique<ml::Context>();
         
-        // 创建多头注意力层
-        // 参数：embed_dim=768, num_heads=12, kv_heads=12, bias=true, dropout=0.1
+        // Create multi-head attention layer
+        // Parameters: embed_dim=768, num_heads=12, kv_heads=12, bias=true, dropout=0.1
         attention_ = std::make_unique<ml::nn::MultiHeadAttention>(
             768, 12, 12, true, 0.1f
         );
         
-        // 初始化权重
+        // Initialize weights
         attention_->initializeWeights(*mlContext_, "xavier_uniform");
         
         return true;
@@ -151,7 +151,7 @@ bool IntegratedModelExample::initializeMLComponents() {
 
 bool IntegratedModelExample::initializeKVCache() {
     try {
-        // 创建KV缓存包装器，使用因果缓存
+        // Create KV cache wrapper using causal cache
         kvCacheWrapper_ = std::make_unique<kvcache::CacheWrapper>(kvcache::CacheType::CAUSAL);
         
         return true;
@@ -167,12 +167,12 @@ bool IntegratedModelExample::loadModelWeights() {
     }
     
     try {
-        // 从GGUF文件加载权重到ML框架的Tensor中
-        // 这里是示例实现，实际需要根据GGUF API调整
+        // Load weights from GGUF file into ML framework Tensors
+        // This is example implementation, actual needs adjustment based on GGUF API
         
-        // 创建示例权重张量
-        embeddings_ = ml::Tensor::randn({50000, 768});  // 词嵌入
-        weights_ = ml::Tensor::randn({768, 768});       // 线性层权重
+        // Create example weight tensors
+        embeddings_ = ml::Tensor::randn({50000, 768});  // Word embeddings
+        weights_ = ml::Tensor::randn({768, 768});       // Linear layer weights
         
         return true;
     } catch (const std::exception& e) {
@@ -182,16 +182,16 @@ bool IntegratedModelExample::loadModelWeights() {
 }
 
 ml::Tensor IntegratedModelExample::preprocessInput(const ml::Tensor& input) {
-    // 输入预处理：归一化、形状调整等
+    // Input preprocessing: normalization, shape adjustment, etc.
     return input;
 }
 
 ml::Tensor IntegratedModelExample::postprocessOutput(const ml::Tensor& output) {
-    // 输出后处理：softmax、形状调整等
+    // Output postprocessing: softmax, shape adjustment, etc.
     return output.softmax(*mlContext_, -1);
 }
 
-// 工厂函数实现
+// Factory function implementation
 std::unique_ptr<IntegratedModelExample> createIntegratedModel() {
     auto model = std::make_unique<IntegratedModelExample>();
     if (model->initialize()) {
@@ -200,19 +200,19 @@ std::unique_ptr<IntegratedModelExample> createIntegratedModel() {
     return nullptr;
 }
 
-// 工具函数实现
+// Utility function implementation
 namespace IntegrationUtils {
 
 bool checkModuleAvailability() {
     try {
-        // 检查ML模块
+        // Check ML module
         ml::Context testContext;
         
-        // 检查KV缓存模块
+        // Check KV cache module
         kvcache::CacheWrapper testCache(kvcache::CacheType::CAUSAL);
         
-        // 检查GGUF模块
-        // 这里可以尝试创建一个空的GGUF文件对象
+        // Check GGUF module
+        // Can try to create an empty GGUF file object here
         
         std::cout << "All modules are available" << std::endl;
         return true;
@@ -228,13 +228,13 @@ DataFlow processDataFlow(const ml::Tensor& input, IntegratedModelExample& model)
     flow.cacheKey = "default_flow";
     
     try {
-        // 使用集成模型处理数据
-        flow.processed = input;  // 预处理步骤
+        // Process data using integrated model
+        flow.processed = input;  // Preprocessing step
         flow.output = model.forwardWithCache(flow.processed, flow.cacheKey);
         
     } catch (const std::exception& e) {
         std::cerr << "Data flow processing failed: " << e.what() << std::endl;
-        // 返回空的数据流
+        // Return empty data flow
         flow.output = ml::Tensor();
     }
     

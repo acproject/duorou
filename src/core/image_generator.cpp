@@ -9,7 +9,7 @@
 #include <thread>
 #include "../../third_party/stable-diffusion.cpp/stable-diffusion.h"
 
-// 简单的图像处理函数（实际项目中可能需要使用专门的图像库）
+// Simple image processing functions (actual projects may need specialized image libraries)
 #include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image.h"
 #include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_write.h"
 #include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_resize.h"
@@ -23,24 +23,24 @@ ImageGenerator::ImageGenerator(sd_ctx_t* sd_ctx)
         throw std::invalid_argument("SD context cannot be null");
     }
     
-    // 初始化模型信息
+    // Initialize model information
     model_info_ = "Stable Diffusion Model";
-    max_size_ = {1024, 1024};  // 默认最大尺寸
+    max_size_ = {1024, 1024};  // Default maximum size
     
-    // 推荐的图像尺寸
+    // Recommended image sizes
     recommended_sizes_ = {
-        {512, 512},   // 标准正方形
-        {768, 768},   // 高质量正方形
-        {512, 768},   // 竖屏
-        {768, 512},   // 横屏
-        {1024, 1024}, // 高分辨率正方形
-        {512, 1024},  // 长竖屏
-        {1024, 512}   // 长横屏
+        {512, 512},   // Standard square
+        {768, 768},   // High quality square
+        {512, 768},   // Portrait
+        {768, 512},   // Landscape
+        {1024, 1024}, // High resolution square
+        {512, 1024},  // Long portrait
+        {1024, 512}   // Long landscape
     };
 }
 
 ImageGenerator::~ImageGenerator() {
-    // 清理资源
+    // Clean up resources
 }
 
 ImageGenerationResult ImageGenerator::textToImage(const std::string& prompt, 
@@ -51,23 +51,23 @@ ImageGenerationResult ImageGenerator::textToImage(const std::string& prompt,
     ImageGenerationResult result;
     
     try {
-        // 验证参数
+        // Validate parameters
         if (!validateParams(params)) {
             result.error_message = "Invalid generation parameters";
             return result;
         }
         
-        // 预处理提示词
+        // Preprocess prompt
         std::string processed_prompt = preprocessPrompt(prompt);
         
-        // 初始化随机种子
+        // Initialize random seed
         int64_t actual_seed = initializeRNG(params.seed);
         result.seed_used = actual_seed;
         
-        // 转换采样器
+        // Convert sampler
         sample_method_t sampler = convertSampler(params.sampler);
         
-        // 设置图像生成参数
+        // Set image generation parameters
         sd_img_gen_params_t gen_params;
         sd_img_gen_params_init(&gen_params);
         
@@ -82,7 +82,7 @@ ImageGenerationResult ImageGenerator::textToImage(const std::string& prompt,
         gen_params.seed = actual_seed;
         gen_params.batch_count = 1;
         
-        // 调用stable-diffusion.cpp生成图像
+        // Call stable-diffusion.cpp to generate image
         sd_image_t* sd_image = generate_image(sd_ctx_, &gen_params);
         
         if (!sd_image) {
@@ -90,10 +90,10 @@ ImageGenerationResult ImageGenerator::textToImage(const std::string& prompt,
             return result;
         }
         
-        // 转换结果
+        // Convert result
         result = convertSDImage(sd_image);
         
-        // 清理SD图像
+        // Clean up SD image
         if (sd_image->data) {
             free(sd_image->data);
         }

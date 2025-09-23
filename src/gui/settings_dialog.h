@@ -11,7 +11,7 @@ class Application;
 namespace gui {
 
 /**
- * 设置对话框类 - 管理应用程序配置
+ * Settings dialog class - manages application configuration
  */
 class SettingsDialog {
 public:
@@ -19,103 +19,103 @@ public:
     explicit SettingsDialog(core::Application* app);
     ~SettingsDialog();
 
-    // 禁用拷贝构造和赋值
+    // Disable copy constructor and assignment
     SettingsDialog(const SettingsDialog&) = delete;
     SettingsDialog& operator=(const SettingsDialog&) = delete;
 
     /**
-     * 初始化设置对话框
-     * @return 成功返回true，失败返回false
+     * Initialize settings dialog
+     * @return true on success, false on failure
      */
     bool initialize();
 
     /**
-     * 显示设置对话框
-     * @param parent 父窗口
+     * Show settings dialog
+     * @param parent Parent window
      */
     void show(GtkWidget* parent);
 
     /**
-     * 隐藏设置对话框
+     * Hide settings dialog
      */
     void hide();
 
 private:
-    GtkWidget* dialog_;              // 对话框
-    GtkWidget* notebook_;            // 标签页容器
+    GtkWidget* dialog_;              // Dialog
+    GtkWidget* notebook_;            // Tab container
     
-    // 通用设置页面
+    // General settings page
     GtkWidget* general_page_;
     GtkWidget* theme_combo_;
     GtkWidget* language_combo_;
     GtkWidget* startup_check_;
     
-    // 模型设置页面
+    // Model settings page
     GtkWidget* model_page_;
     GtkWidget* llama_model_combo_;
-    GtkWidget* sd_model_entry_;        // 主SD模型
-    GtkWidget* sd_vae_entry_;          // VAE模型
-    GtkWidget* sd_controlnet_entry_;   // ControlNet模型
-    GtkWidget* sd_lora_entry_;         // LoRA模型目录
+    GtkWidget* sd_model_entry_;        // Main SD model
+    GtkWidget* sd_vae_entry_;          // VAE model
+    GtkWidget* sd_controlnet_entry_;   // ControlNet model
+    GtkWidget* sd_lora_entry_;         // LoRA model directory
     GtkWidget* model_path_entry_;
     GtkWidget* ollama_path_entry_;
     
-    // 性能设置页面
+    // Performance settings page
     GtkWidget* performance_page_;
     GtkWidget* threads_spin_;
     GtkWidget* gpu_check_;
     GtkWidget* memory_spin_;
 
     /**
-     * 创建通用设置页面
+     * Create general settings page
      */
     void create_general_page();
 
     /**
-     * 创建模型设置页面
+     * Create model settings page
      */
     void create_model_page();
 
     /**
-     * 创建性能设置页面
+     * Create performance settings page
      */
     void create_performance_page();
 
     /**
-     * 连接信号处理器
+     * Connect signal handlers
      */
     void connect_signals();
 
     /**
-     * 加载当前设置
+     * Load current settings
      */
     void load_settings();
 
     /**
-     * 保存设置
+     * Save settings
      */
     void save_settings();
 
     /**
-     * 重置为默认设置
+     * Reset to default settings
      */
     void reset_to_defaults();
 
     /**
-     * 设置应用程序实例引用
-     * @param app 应用程序实例指针
+     * Set application instance reference
+     * @param app Application instance pointer
      */
     void set_application(core::Application* app);
 
     /**
-     * 刷新模型列表
+     * Refresh model list
      */
     void refresh_model_list();
 
-    // 应用程序实例引用
+    // Application instance reference
     core::Application* application_;
 
-    // 静态回调函数
+    // Static callback functions
     static void on_ok_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_cancel_button_clicked(GtkWidget* widget, gpointer user_data);
     static void on_apply_button_clicked(GtkWidget* widget, gpointer user_data);
@@ -128,7 +128,7 @@ private:
     static void on_ollama_path_browse_clicked(GtkWidget* widget, gpointer user_data);
     static void on_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
     
-    // 文件选择对话框回调函数
+    // File selection dialog callback functions
     static void on_sd_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
     static void on_sd_vae_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);
     static void on_sd_controlnet_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data);

@@ -14,7 +14,7 @@ using json = nlohmann::json;
 namespace duorou {
 namespace gui {
 
-// 静态常量定义
+// Static constant definitions
 const std::string SessionStorageAdapter::SESSION_LIST_KEY = "session_list";
 const std::string SessionStorageAdapter::SESSION_DATA_PREFIX = "session_data:";
 
@@ -129,10 +129,10 @@ std::string SessionStorageAdapter::buildExistsCommand(const std::string &key) {
 
 bool SessionStorageAdapter::saveSession(const ChatSession &session) {
   try {
-    // 序列化会话数据
+    // Serialize session data
     std::string json_data = serializeSession(session);
 
-    // 保存会话数据
+    // Save session data
     std::string session_key = getSessionKey(session.get_id());
     std::string set_cmd = buildSetCommand(session_key, json_data);
 
@@ -147,13 +147,13 @@ bool SessionStorageAdapter::saveSession(const ChatSession &session) {
       return false;
     }
 
-    // 更新会话列表
+    // Update session list
     std::vector<std::string> session_ids = getAllSessionIds();
     if (std::find(session_ids.begin(), session_ids.end(), session.get_id()) ==
         session_ids.end()) {
       session_ids.push_back(session.get_id());
 
-      // 将会话ID列表序列化为JSON
+      // Serialize session ID list to JSON
       json session_list_json = session_ids;
       std::string list_cmd =
           buildSetCommand(SESSION_LIST_KEY, session_list_json.dump());
@@ -163,7 +163,7 @@ bool SessionStorageAdapter::saveSession(const ChatSession &session) {
         return false;
       }
 
-      receiveResponse(); // 消费响应
+      receiveResponse(); // Consume response
     }
 
     return true;
@@ -186,18 +186,18 @@ SessionStorageAdapter::loadSession(const std::string &session_id) {
 
     std::string response = receiveResponse();
 
-    // 解析Redis响应格式
+    // Parse Redis response format
     if (response.empty() ||
         response[0] == '$' && response.find("-1") != std::string::npos) {
-      return nullptr; // 键不存在
+      return nullptr; // Key does not exist
     }
 
-    // 提取实际数据（跳过Redis协议头）
+    // Extract actual data (skip Redis protocol header)
     size_t data_start = response.find("\r\n");
     if (data_start != std::string::npos) {
       data_start += 2;
       std::string json_data = response.substr(data_start);
-      // 移除末尾的\r\n
+      // Remove trailing \r\n
       if (json_data.length() >= 2 &&
           json_data.substr(json_data.length() - 2) == "\r\n") {
         json_data = json_data.substr(0, json_data.length() - 2);
@@ -214,7 +214,7 @@ SessionStorageAdapter::loadSession(const std::string &session_id) {
 
 bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
   try {
-    // 删除会话数据
+    // Delete session data
     std::string session_key = getSessionKey(session_id);
     std::string del_cmd = buildDelCommand(session_key);
 
@@ -222,15 +222,15 @@ bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
       return false;
     }
 
-    receiveResponse(); // 消费响应
+    receiveResponse(); // Consume response
 
-    // 从会话列表中移除
+    // Remove from session list
     std::vector<std::string> session_ids = getAllSessionIds();
     auto it = std::find(session_ids.begin(), session_ids.end(), session_id);
     if (it != session_ids.end()) {
       session_ids.erase(it);
 
-      // 更新会话列表
+      // Update session list
       json session_list_json = session_ids;
       std::string set_cmd =
           buildSetCommand(SESSION_LIST_KEY, session_list_json.dump());
@@ -239,7 +239,7 @@ bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
         return false;
       }
 
-      receiveResponse(); // 消费响应
+      receiveResponse(); // Consume response
     }
 
     return true;
@@ -259,18 +259,18 @@ std::vector<std::string> SessionStorageAdapter::getAllSessionIds() {
 
     std::string response = receiveResponse();
 
-    // 解析Redis响应
+    // Parse Redis response
     if (response.empty() ||
         response[0] == '$' && response.find("-1") != std::string::npos) {
-      return {}; // 键不存在，返回空列表
+      return {}; // Key does not exist, return empty list
     }
 
-    // 提取JSON数据
+    // Extract JSON data
     size_t data_start = response.find("\r\n");
     if (data_start != std::string::npos) {
       data_start += 2;
       std::string json_data = response.substr(data_start);
-      // 移除末尾的\r\n
+      // Remove trailing \r\n
       if (json_data.length() >= 2 &&
           json_data.substr(json_data.length() - 2) == "\r\n") {
         json_data = json_data.substr(0, json_data.length() - 2);
@@ -305,12 +305,12 @@ bool SessionStorageAdapter::sessionExists(const std::string &session_id) {
 }
 
 bool SessionStorageAdapter::saveToFile() {
-  // 网络模式下，数据已经持久化到服务器
+  // In network mode, data is already persisted to server
   return true;
 }
 
 bool SessionStorageAdapter::loadFromFile() {
-  // 网络模式下，数据从服务器加载
+  // In network mode, data is loaded from server
   return true;
 }
 
@@ -322,13 +322,13 @@ bool SessionStorageAdapter::clearAllSessions() {
       deleteSession(session_id);
     }
 
-    // 清空会话列表
+    // Clear session list
     std::string set_cmd = buildSetCommand(SESSION_LIST_KEY, "[]");
     if (!sendCommand(set_cmd)) {
       return false;
     }
 
-    receiveResponse(); // 消费响应
+    receiveResponse(); // Consume response
     return true;
   } catch (const std::exception &e) {
     std::cerr << "Error clearing all sessions: " << e.what() << std::endl;
@@ -347,7 +347,7 @@ SessionStorageAdapter::serializeSession(const ChatSession &session) {
   session_json["title"] = session.get_title();
   session_json["custom_name"] = session.get_custom_name();
 
-  // 转换时间点为时间戳
+  // Convert time point to timestamp
   auto created_time = session.get_created_time();
   auto last_updated = session.get_last_updated();
   session_json["created_at"] = std::chrono::duration_cast<std::chrono::seconds>(
@@ -379,17 +379,17 @@ SessionStorageAdapter::deserializeSession(const std::string &json_data) {
   try {
     json session_json = json::parse(json_data);
 
-    // 从JSON中提取基本信息
+    // Extract basic information from JSON
     std::string id = session_json["id"].get<std::string>();
     std::string title = session_json["title"].get<std::string>();
     
-    // 提取自定义名称（向后兼容，如果不存在则为空字符串）
+    // Extract custom name (backward compatible, empty string if not exists)
     std::string custom_name = "";
     if (session_json.contains("custom_name")) {
       custom_name = session_json["custom_name"].get<std::string>();
     }
 
-    // 转换时间戳为时间点
+    // Convert timestamp to time point
     auto created_timestamp = session_json["created_at"].get<int64_t>();
     auto last_updated_timestamp = session_json["last_updated"].get<int64_t>();
 
@@ -398,11 +398,11 @@ SessionStorageAdapter::deserializeSession(const std::string &json_data) {
     auto last_updated =
         std::chrono::system_clock::from_time_t(last_updated_timestamp);
 
-    // 使用包含自定义名称的反序列化构造函数创建会话
+    // Create session using deserialization constructor with custom name
     auto session =
         std::make_unique<ChatSession>(id, title, custom_name, created_time, last_updated);
 
-    // 反序列化消息列表
+    // Deserialize message list
     if (session_json.contains("messages") &&
         session_json["messages"].is_array()) {
       for (const auto &msg_json : session_json["messages"]) {

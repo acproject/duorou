@@ -9,27 +9,27 @@
 namespace duorou {
 namespace invokeai {
 
-// 图像格式枚举
+// Image format enumeration
 enum class ImageFormat {
-    PNG,
-    JPEG,
-    WEBP,
+    PNG,    // PNG format
+    JPEG,   // JPEG format
+    WEBP,   // WebP format
     BMP,
     TIFF
 };
 
-// 图像信息结构体
+// Image data structure
 struct ImageInfo {
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    ImageFormat format = ImageFormat::PNG;
+    int width = 0;          // Image width
+    int height = 0;         // Image height
+    int channels = 0;       // Number of channels
+    ImageFormat format = ImageFormat::PNG; // Image format
     size_t file_size = 0;
     std::string color_space;
     bool has_alpha = false;
 };
 
-// 系统信息结构体
+// System information structure
 struct SystemInfo {
     std::string platform;
     std::string cpu_info;
@@ -43,7 +43,7 @@ struct SystemInfo {
     std::vector<std::string> available_devices;
 };
 
-// 模型验证结果
+// Model validation result
 struct ModelValidationResult {
     bool is_valid = false;
     std::string model_type; // "checkpoint", "diffusers", "safetensors", "lora", "vae"
@@ -54,7 +54,7 @@ struct ModelValidationResult {
     std::string checksum;
 };
 
-// 性能统计信息
+// Performance statistics
 struct PerformanceStats {
     double total_generation_time = 0.0;
     double model_load_time = 0.0;
@@ -66,15 +66,15 @@ struct PerformanceStats {
     double average_time_per_step = 0.0;
 };
 
-// 图像处理工具类
+// Image processing utility class
 class ImageUtils {
 public:
-    // 图像信息获取
+    // Image information retrieval
     static ImageInfo get_image_info(const std::string& image_path);
     static bool is_valid_image(const std::string& image_path);
     static std::vector<ImageFormat> get_supported_formats();
     
-    // 图像转换
+    // Image conversion
     static bool convert_format(const std::string& input_path, 
                               const std::string& output_path, 
                               ImageFormat target_format);
@@ -86,7 +86,7 @@ public:
                          const std::string& output_path,
                          int x, int y, int width, int height);
     
-    // 图像处理
+    // Image processing
     static bool normalize_image(const std::string& input_path, 
                               const std::string& output_path);
     static bool apply_gaussian_blur(const std::string& input_path, 
@@ -99,12 +99,12 @@ public:
                               const std::string& output_path, 
                               float factor);
     
-    // 图像分析
+    // Image analysis
     static std::map<std::string, float> analyze_image_quality(const std::string& image_path);
     static bool detect_faces(const std::string& image_path);
     static std::vector<std::pair<int, int>> get_dominant_colors(const std::string& image_path, int num_colors = 5);
     
-    // 图像合成
+    // Image composition
     static bool blend_images(const std::string& base_path, 
                            const std::string& overlay_path,
                            const std::string& output_path, 
@@ -113,7 +113,7 @@ public:
                          const std::string& mask_path,
                          const std::string& output_path);
     
-    // 批量处理
+    // Batch processing
     static bool batch_resize(const std::vector<std::string>& input_paths,
                            const std::string& output_dir,
                            int target_width, int target_height);
@@ -122,26 +122,26 @@ public:
                             ImageFormat target_format);
 };
 
-// 模型工具类
+// Model utility class
 class ModelUtils {
 public:
-    // 模型验证
+    // Model validation
     static ModelValidationResult validate_model(const std::string& model_path);
     static bool is_compatible_model(const std::string& model_path, const std::string& architecture);
     static std::string detect_model_architecture(const std::string& model_path);
     
-    // 模型信息
+    // Model information
     static std::map<std::string, std::string> extract_model_metadata(const std::string& model_path);
     static std::string calculate_model_checksum(const std::string& model_path);
     static size_t get_model_size(const std::string& model_path);
     
-    // 模型转换
+    // Model conversion
     static bool convert_checkpoint_to_diffusers(const std::string& checkpoint_path,
                                                const std::string& output_dir);
     static bool convert_diffusers_to_checkpoint(const std::string& diffusers_dir,
                                                const std::string& output_path);
     
-    // 模型优化
+    // Model optimization
     static bool optimize_model(const std::string& model_path, 
                              const std::string& output_path,
                              const std::string& precision = "fp16");
@@ -149,115 +149,115 @@ public:
                              const std::string& output_path,
                              int bits = 8);
     
-    // 模型搜索
+    // Model search
     static std::vector<std::string> find_models_in_directory(const std::string& directory,
                                                             bool recursive = true);
     static std::vector<std::string> filter_models_by_type(const std::vector<std::string>& model_paths,
                                                          const std::string& model_type);
 };
 
-// 系统工具类
+// System utility class
 class SystemUtils {
 public:
-    // 系统信息
+    // System information
     static SystemInfo get_system_info();
     static bool is_cuda_available();
     static bool is_mps_available();
     static std::string get_optimal_device();
     
-    // 内存管理
+    // Memory management
     static size_t get_available_memory();
     static size_t get_gpu_memory();
     static bool check_memory_requirements(size_t required_mb);
     static void optimize_memory_usage();
     
-    // 性能监控
+    // Performance monitoring
     static PerformanceStats get_performance_stats();
     static void reset_performance_stats();
     static void start_performance_monitoring();
     static void stop_performance_monitoring();
     
-    // 设备管理
+    // Device management
     static std::vector<std::string> get_available_devices();
     static bool set_device(const std::string& device);
     static std::string get_current_device();
     
-    // 环境检查
+    // Environment check
     static bool check_dependencies();
     static std::vector<std::string> get_missing_dependencies();
     static bool verify_installation();
 };
 
-// 文件工具类
+// File utility class
 class FileUtils {
 public:
-    // 文件操作
+    // File operations
     static bool file_exists(const std::string& path);
     static bool directory_exists(const std::string& path);
     static bool create_directory(const std::string& path);
     static bool remove_file(const std::string& path);
     static bool remove_directory(const std::string& path, bool recursive = false);
     
-    // 文件信息
+    // File information
     static size_t get_file_size(const std::string& path);
     static std::string get_file_extension(const std::string& path);
     static std::string get_filename_without_extension(const std::string& path);
     static std::string get_directory_path(const std::string& path);
     
-    // 路径操作
+    // Path operations
     static std::string join_paths(const std::string& path1, const std::string& path2);
     static std::string normalize_path(const std::string& path);
     static std::string get_absolute_path(const std::string& path);
     static std::string get_relative_path(const std::string& path, const std::string& base);
     
-    // 文件搜索
+    // File search
     static std::vector<std::string> find_files(const std::string& directory,
                                               const std::string& pattern,
                                               bool recursive = true);
     static std::vector<std::string> list_directory(const std::string& directory,
                                                   bool include_subdirs = false);
     
-    // 文件复制和移动
+    // File copy and move
     static bool copy_file(const std::string& source, const std::string& destination);
     static bool move_file(const std::string& source, const std::string& destination);
     static bool copy_directory(const std::string& source, const std::string& destination);
     
-    // 临时文件
+    // Temporary files
     static std::string create_temp_file(const std::string& prefix = "invokeai_",
                                        const std::string& suffix = ".tmp");
     static std::string create_temp_directory(const std::string& prefix = "invokeai_");
     static void cleanup_temp_files();
 };
 
-// 配置工具类
+// Configuration utility class
 class ConfigUtils {
 public:
-    // 配置文件操作
+    // Configuration file operations
     static bool load_config(const std::string& config_path, 
                           std::map<std::string, std::string>& config);
     static bool save_config(const std::string& config_path, 
                           const std::map<std::string, std::string>& config);
     
-    // 默认配置
+    // Default configuration
     static std::map<std::string, std::string> get_default_config();
     static void apply_default_config(std::map<std::string, std::string>& config);
     
-    // 配置验证
+    // Configuration validation
     static bool validate_config(const std::map<std::string, std::string>& config);
     static std::vector<std::string> get_config_errors(const std::map<std::string, std::string>& config);
     
-    // 环境变量
+    // Environment variables
     static std::string get_env_var(const std::string& name, const std::string& default_value = "");
     static bool set_env_var(const std::string& name, const std::string& value);
     
-    // 配置路径
+    // Configuration paths
     static std::string get_config_directory();
     static std::string get_models_directory();
     static std::string get_cache_directory();
     static std::string get_output_directory();
 };
 
-// 日志工具类
+// Log utility class
 class LogUtils {
 public:
     enum class LogLevel {
@@ -268,7 +268,7 @@ public:
         CRITICAL
     };
     
-    // 日志记录
+    // Log recording
     static void log(LogLevel level, const std::string& message);
     static void debug(const std::string& message);
     static void info(const std::string& message);
@@ -276,18 +276,18 @@ public:
     static void error(const std::string& message);
     static void critical(const std::string& message);
     
-    // 日志配置
+    // Log configuration
     static void set_log_level(LogLevel level);
     static void set_log_file(const std::string& file_path);
     static void enable_console_logging(bool enabled);
     static void enable_file_logging(bool enabled);
     
-    // 性能日志
+    // Performance logging
     static void log_performance(const std::string& operation, double duration);
     static void log_memory_usage(const std::string& context, size_t memory_mb);
 };
 
-// 工具函数
+// Utility functions
 std::string format_file_size(size_t bytes);
 std::string format_duration(double seconds);
 std::string format_memory_size(size_t bytes);

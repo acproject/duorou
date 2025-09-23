@@ -35,8 +35,8 @@ public:
     model_info_.memory_usage = 0;
     model_info_.path = model_path;
 
-    // 使用全局的 OllamaModelManager 实例
-    // model_manager_ 将在 load() 方法中通过 GlobalModelManager 获取
+    // Use global OllamaModelManager instance
+    // model_manager_ will be obtained through GlobalModelManager in load() method
   }
 
   bool load(const std::string &model_path) override {
@@ -52,7 +52,7 @@ public:
     std::cout << "[DEBUG] OllamaModelImpl: Using original model name as ID: " << model_id_
               << " from path: " << model_path << std::endl;
 
-    // 获取全局的 OllamaModelManager 实例
+    // Get global OllamaModelManager instance
     auto& global_manager = duorou::extensions::ollama::GlobalModelManager::getInstance();
 
     bool registered = global_manager.registerModelByName(model_path);
@@ -81,10 +81,10 @@ public:
     model_info_.memory_usage = memory_usage_;
 
     // Create text generator using global manager
-     // 创建一个不会删除全局管理器的shared_ptr
+     // Create a shared_ptr that won't delete the global manager
      auto shared_manager = std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>(
          &global_manager, [](duorou::extensions::ollama::OllamaModelManager*) {
-           // 空删除器，因为全局管理器由GlobalModelManager管理
+           // Empty deleter, because global manager is managed by GlobalModelManager
          });
      text_generator_ = std::make_unique<duorou::core::TextGenerator>(
          shared_manager, model_id_);
@@ -283,12 +283,12 @@ private:
   std::unique_ptr<ImageGenerator> image_generator_;
 };
 
-// ModelManager实现
+// ModelManager implementation
 ModelManager::ModelManager()
-    : memory_limit_(4ULL * 1024 * 1024 * 1024) // 默认4GB内存限制
+    : memory_limit_(4ULL * 1024 * 1024 * 1024) // Default 4GB memory limit
       ,
       initialized_(false), auto_memory_management_(false) {
-  // 初始化模型下载器
+  // Initialize model downloader
   std::cout << "[DEBUG] Creating ModelDownloader..." << std::endl;
   model_downloader_ = ModelDownloaderFactory::create();
   if (model_downloader_) {
@@ -299,11 +299,11 @@ ModelManager::ModelManager()
 }
 
 ModelManager::~ModelManager() {
-  // 使用try_lock避免析构时的死锁
+  // Use try_lock to avoid deadlock during destruction
   std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
 
   if (lock.try_lock()) {
-    // 成功获取锁，正常卸载所有模型
+    // Successfully acquired lock, normally unload all models
     for (auto &pair : loaded_models_) {
       try {
         pair.second->unload();
@@ -316,11 +316,11 @@ ModelManager::~ModelManager() {
     loaded_models_.clear();
     std::cout << "All models unloaded in destructor" << std::endl;
   } else {
-    // 无法获取锁，可能存在死锁风险，强制清理
+    // Cannot acquire lock, possible deadlock risk, force cleanup
     std::cerr
         << "Warning: Could not acquire lock in destructor, forcing cleanup"
         << std::endl;
-    // 不加锁直接清理，避免死锁
+    // Clean up directly without lock to avoid deadlock
     for (auto &pair : loaded_models_) {
       try {
         pair.second->unload();
@@ -341,7 +341,7 @@ bool ModelManager::initialize() {
   std::lock_guard<std::mutex> lock(mutex_);
 
   try {
-    // 扫描默认模型目录
+    // Scan default model directory
     std::string models_dir = "./models";
     if (std::filesystem::exists(models_dir)) {
       scanModelDirectory(models_dir);
@@ -384,10 +384,10 @@ bool ModelManager::loadModel(const std::string &model_id) {
 
   std::lock_guard<std::mutex> lock(mutex_);
 
-  // 检查模型是否已注册
+  // Check if model is already registered
   auto it = registered_models_.find(model_id);
   if (it == registered_models_.end()) {
-    // 如果模型未注册，检查是否为Ollama模型
+    // If model is not registered, check if it's an Ollama model
     if (model_downloader_) {
       auto local_models = model_downloader_->getLocalModels();
       bool is_ollama_model = std::find(local_models.begin(), local_models.end(),
@@ -396,12 +396,12 @@ bool ModelManager::loadModel(const std::string &model_id) {
       if (is_ollama_model) {
         std::cout << "[DEBUG] Dynamically registering Ollama model: "
                   << model_id << std::endl;
-        // 动态注册Ollama模型
+        // Dynamically register Ollama model
         ModelInfo ollama_model;
         ollama_model.id = model_id;
         ollama_model.name = model_id;
         ollama_model.type = ModelType::LANGUAGE_MODEL;
-        ollama_model.path = model_id; // 对于Ollama模型，path就是model_id
+        ollama_model.path = model_id; // For Ollama models, path is the model_id
         ollama_model.memory_usage = 0;
         ollama_model.status = ModelStatus::NOT_LOADED;
         ollama_model.description = "Ollama model: " + model_id;
@@ -418,13 +418,13 @@ bool ModelManager::loadModel(const std::string &model_id) {
     }
   }
 
-  // 检查模型是否已加载
+  // Check if model is already loaded
   if (loaded_models_.find(model_id) != loaded_models_.end()) {
     std::cout << "Model already loaded: " << model_id << std::endl;
     return true;
   }
 
-  // 检查内存限制
+  // Check memory limits
   std::cout << "[DEBUG] Checking memory availability for model: " << model_id
             << std::endl;
   if (!hasEnoughMemory(model_id)) {
@@ -434,7 +434,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
   std::cout << "[DEBUG] Memory check passed for model: " << model_id
             << std::endl;
 
-  // 创建模型实例
+  // Create model instance
   std::cout << "[DEBUG] Creating model instance for: " << model_id << std::endl;
   auto model = createModel(it->second);
   if (!model) {
@@ -445,20 +445,20 @@ bool ModelManager::loadModel(const std::string &model_id) {
     return false;
   }
 
-  // 更新状态为加载中
+  // Update status to loading
   std::cout << "[DEBUG] Starting model load for: " << model_id << std::endl;
   updateModelStatus(model_id, ModelStatus::LOADING);
 
-  // 记录开始时间
+  // Record start time
   auto start_time = std::chrono::steady_clock::now();
 
-  // 加载模型（带超时处理）
+  // Load model (with timeout handling)
   bool success = false;
   std::string error_message;
 
   try {
-    // 直接同步加载，但添加详细的错误信息
-    // 注意：异步加载在这个上下文中可能不安全，因为涉及到共享状态
+    // Direct synchronous loading, but add detailed error information
+    // Note: Asynchronous loading may not be safe in this context due to shared state
     success = model->load(it->second.path);
   } catch (const std::exception &e) {
     error_message = "Exception during model loading: " + std::string(e.what());
@@ -470,7 +470,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
               << std::endl;
   }
 
-  // 计算加载时间
+  // Calculate loading time
   auto end_time = std::chrono::steady_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
       end_time - start_time);
@@ -479,7 +479,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
     loaded_models_[model_id] = model;
     updateModelStatus(model_id, ModelStatus::LOADED);
 
-    // 调用回调函数
+    // Call callback function
     if (load_callback_) {
       load_callback_(model_id, true);
     }
@@ -489,7 +489,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
   } else {
     updateModelStatus(model_id, ModelStatus::ERROR);
 
-    // 调用回调函数
+    // Call callback function
     if (load_callback_) {
       load_callback_(model_id, false);
     }
@@ -501,7 +501,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
     }
     std::cerr << std::endl;
 
-    // 记录详细的错误信息
+    // Log detailed error information
     std::cerr << "[DEBUG] Model details - Path: " << it->second.path
               << ", Type: " << static_cast<int>(it->second.type)
               << ", Memory limit: " << memory_limit_ / (1024 * 1024) << "MB"
@@ -520,11 +520,11 @@ bool ModelManager::unloadModel(const std::string &model_id) {
     return false;
   }
 
-  // 卸载模型
+  // Unload model
   it->second->unload();
   loaded_models_.erase(it);
 
-  // 更新状态
+  // Update status
   updateModelStatus(model_id, ModelStatus::NOT_LOADED);
 
   std::cout << "Model unloaded: " << model_id << std::endl;
@@ -573,7 +573,7 @@ ModelInfo ModelManager::getModelInfo(const std::string &model_id) const {
     return it->second;
   }
 
-  return ModelInfo(); // 返回空的ModelInfo
+  return ModelInfo(); // Return empty ModelInfo
 }
 
 std::vector<ModelInfo> ModelManager::getAllModels() const {
@@ -583,14 +583,14 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
 
   std::vector<ModelInfo> models;
 
-  // 添加已注册的模型
+  // Add registered models
   std::cout << "[DEBUG] Registered models count: " << registered_models_.size()
             << std::endl;
   for (const auto &pair : registered_models_) {
     models.push_back(pair.second);
   }
 
-  // 添加ollama模型
+  // Add ollama models
   if (model_downloader_) {
     std::cout << "[DEBUG] ModelDownloader exists, getting local models..."
               << std::endl;
@@ -621,7 +621,7 @@ std::vector<ModelInfo> ModelManager::getAllModels() const {
     std::cout << "[DEBUG] ModelDownloader is null!" << std::endl;
   }
 
-  // 如果没有任何模型，返回一些默认的示例模型
+  // If no models exist, return some default example models
   if (models.empty()) {
     ModelInfo llama_example;
     llama_example.id = "llama-7b-example";
@@ -712,15 +712,15 @@ bool ModelManager::hasEnoughMemory(const std::string &model_id) const {
     return false;
   }
 
-  // 估算模型内存使用量（这里使用简单的估算）
-  size_t estimated_usage = 512 * 1024 * 1024; // 默认512MB
+  // Estimate model memory usage (using simple estimation here)
+  size_t estimated_usage = 512 * 1024 * 1024; // Default 512MB
   if (it->second.type == ModelType::DIFFUSION_MODEL) {
-    estimated_usage = 1024 * 1024 * 1024; // 扩散模型1GB
+    estimated_usage = 1024 * 1024 * 1024; // Diffusion model 1GB
   }
   std::cout << "[DEBUG] hasEnoughMemory: Estimated usage = " << estimated_usage
             << " bytes" << std::endl;
 
-  // 直接计算当前内存使用量，避免死锁（不调用getTotalMemoryUsage）
+  // Calculate current memory usage directly to avoid deadlock (don't call getTotalMemoryUsage)
   std::cout
       << "[DEBUG] hasEnoughMemory: Calculating current memory usage directly..."
       << std::endl;
@@ -797,26 +797,26 @@ size_t ModelManager::optimizeMemory() {
 
   size_t freed_memory = 0;
 
-  // 获取当前内存使用情况
+  // Get current memory usage
   size_t current_usage = getTotalMemoryUsage();
 
-  // 如果内存使用超过限制的80%，开始优化
+  // If memory usage exceeds 80% of the limit, start optimization
   if (current_usage > memory_limit_ * 0.8) {
-    // 按最后使用时间排序，卸载最久未使用的模型
+    // Sort by last usage time, unload the least recently used models
     std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>>
         model_usage;
 
     for (const auto &pair : loaded_models_) {
-      // 这里可以添加模型最后使用时间的跟踪
-      // 暂时使用当前时间作为占位符
+      // Model last usage time tracking can be added here
+      // Using current time as placeholder for now
       model_usage.emplace_back(pair.first, std::chrono::steady_clock::now());
     }
 
-    // 按使用时间排序（最久未使用的在前）
+    // Sort by usage time (least recently used first)
     std::sort(model_usage.begin(), model_usage.end(),
               [](const auto &a, const auto &b) { return a.second < b.second; });
 
-    // 卸载模型直到内存使用降到限制的60%以下
+    // Unload models until memory usage drops below 60% of the limit
     for (const auto &pair : model_usage) {
       if (current_usage <= memory_limit_ * 0.6) {
         break;
@@ -838,7 +838,7 @@ void ModelManager::enableAutoMemoryManagement(bool enable) {
   auto_memory_management_ = enable;
 
   if (enable) {
-    // 立即执行一次内存优化
+    // Immediately perform memory optimization
     optimizeMemory();
   }
 }
@@ -851,7 +851,7 @@ ModelManager::downloadModel(const std::string &model_name,
     return model_downloader_->downloadModel(model_name);
   }
 
-  // 返回失败的Future
+  // Return failed Future
   std::promise<DownloadResult> promise;
   DownloadResult result;
   result.error_message = "Model downloader not initialized";
@@ -874,15 +874,15 @@ ModelManager::downloadModelSync(const std::string &model_name,
 
 ModelInfo ModelManager::getModelInfo(const std::string &model_name) {
   if (model_downloader_) {
-    // 获取下载器的ModelInfo（duorou命名空间）
+    // Get downloader's ModelInfo (duorou namespace)
     auto downloader_info = model_downloader_->getModelInfo(model_name);
 
-    // 转换为ModelManager的ModelInfo（duorou::core命名空间）
+    // Convert to ModelManager's ModelInfo (duorou::core namespace)
     ModelInfo manager_info;
     manager_info.id = downloader_info.name;
     manager_info.name = downloader_info.name;
     manager_info.description = downloader_info.description;
-    manager_info.type = ModelType::LANGUAGE_MODEL; // 默认为语言模型
+    manager_info.type = ModelType::LANGUAGE_MODEL; // Default to language model
     manager_info.status = ModelStatus::NOT_LOADED;
     manager_info.memory_usage = 0;
 
@@ -953,7 +953,7 @@ ModelManager::createModel(const ModelInfo &model_info) {
             << ", type: " << static_cast<int>(model_info.type) << std::endl;
 
   if (model_info.type == ModelType::LANGUAGE_MODEL) {
-    // 检查是否为Ollama模型
+    // Check if it's an Ollama model
     std::cout << "[DEBUG] Checking if model is Ollama model..." << std::endl;
     std::cout << "[DEBUG] model_downloader_ exists: "
               << (model_downloader_ ? "true" : "false") << std::endl;
@@ -965,7 +965,7 @@ ModelManager::createModel(const ModelInfo &model_info) {
                 << (isOllama ? "true" : "false") << std::endl;
     }
 
-    // 也检查模型名称是否包含ollama特征
+    // Also check if model name contains ollama characteristics
     bool hasOllamaPattern =
         model_info.name.find("registry.ollama.ai") != std::string::npos ||
         model_info.name.find("ollama") != std::string::npos;
@@ -1018,27 +1018,27 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
         std::string path = entry.path().string();
         std::string extension = entry.path().extension().string();
 
-        // 检查文件扩展名以确定模型类型
+        // Check file extension to determine model type
         ModelInfo info;
         info.path = path;
         info.name = entry.path().stem().string();
         info.status = ModelStatus::NOT_LOADED;
 
         if (extension == ".gguf" || extension == ".bin") {
-          // LLaMA模型文件
+          // LLaMA model file
           info.id = "llama_" + info.name;
           info.type = ModelType::LANGUAGE_MODEL;
           info.description = "Language model (LLaMA)";
         } else if (extension == ".safetensors" || extension == ".ckpt") {
-          // Stable Diffusion模型文件
+          // Stable Diffusion model file
           info.id = "sd_" + info.name;
           info.type = ModelType::DIFFUSION_MODEL;
           info.description = "Diffusion model (Stable Diffusion)";
         } else {
-          continue; // 跳过不支持的文件类型
+          continue; // Skip unsupported file types
         }
 
-        // 注册模型（不加锁，因为调用者已经加锁）
+        // Register model (no locking, as caller already locked)
         if (registered_models_.find(info.id) == registered_models_.end()) {
           registered_models_[info.id] = info;
           std::cout << "Auto-discovered model: " << info.id << " at " << path

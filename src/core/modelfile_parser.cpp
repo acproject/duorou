@@ -10,7 +10,7 @@
 namespace duorou {
 namespace core {
 
-// 支持的媒体类型常量
+// Supported media type constants
 static const std::vector<std::string> SUPPORTED_MEDIA_TYPES = {
     "application/vnd.ollama.image.model",
     "application/vnd.ollama.image.template", 
@@ -29,7 +29,7 @@ bool ModelfileParser::parseFromManifest(const ModelManifest& manifest, Modelfile
         return false;
     }
     
-    // 遍历所有层，解析不同类型的配置
+    // Iterate through all layers and parse different types of configurations
     for (const auto& layer : manifest.layers) {
         if (layer.media_type == "application/vnd.ollama.image.template") {
             parseTemplateLayer(layer.digest, config);
@@ -41,7 +41,7 @@ bool ModelfileParser::parseFromManifest(const ModelManifest& manifest, Modelfile
             parseAdapterLayer(layer.digest, config);
         } else if (layer.media_type == "application/vnd.ollama.image.model" || 
                    layer.media_type == "application/vnd.docker.image.rootfs.diff.tar.gzip") {
-            // 基础模型路径
+            // Base model path
             config.base_model = model_path_manager_->getBlobFilePath(layer.digest);
         }
     }
@@ -53,12 +53,12 @@ bool ModelfileParser::parseFromJson(const std::string& json_str, ModelfileConfig
     try {
         nlohmann::json json_data = nlohmann::json::parse(json_str);
         
-        // 解析基础模型
+        // Parse base model
         if (json_data.contains("base_model")) {
             config.base_model = json_data["base_model"].get<std::string>();
         }
         
-        // 解析LoRA适配器
+        // Parse LoRA adapters
         if (json_data.contains("adapters") && json_data["adapters"].is_array()) {
             for (const auto& adapter_json : json_data["adapters"]) {
                 LoRAAdapter adapter;
@@ -81,14 +81,14 @@ bool ModelfileParser::parseFromJson(const std::string& json_str, ModelfileConfig
             }
         }
         
-        // 解析参数
+        // Parse parameters
         if (json_data.contains("parameters") && json_data["parameters"].is_object()) {
             for (auto& [key, value] : json_data["parameters"].items()) {
                 config.parameters[key] = value.get<std::string>();
             }
         }
         
-        // 解析系统提示和模板
+        // Parse system prompt and template
         if (json_data.contains("system_prompt")) {
             config.system_prompt = json_data["system_prompt"].get<std::string>();
         }
@@ -112,12 +112,12 @@ bool ModelfileParser::parseFromFile(const std::string& file_path, ModelfileConfi
     buffer << file.rdbuf();
     std::string content = buffer.str();
     
-    // 尝试解析为JSON
+    // Try to parse as JSON
     if (content.front() == '{' && content.back() == '}') {
         return parseFromJson(content, config);
     }
     
-    // 解析为Modelfile指令格式
+    // Parse as Modelfile instruction format
     return parseModelfileInstructions(content, config);
 }
 
@@ -126,37 +126,37 @@ bool ModelfileParser::validateLoRAAdapter(const LoRAAdapter& adapter) {
         return false;
     }
     
-    // 检查文件是否存在
+    // Check if file exists
     if (!std::filesystem::exists(adapter.path)) {
         return false;
     }
     
-    // 检查文件扩展名（应该是.gguf）
+    // Check file extension (should be .gguf)
     std::filesystem::path path(adapter.path);
     if (path.extension() != ".gguf") {
         return false;
     }
     
-    // 检查缩放因子范围
+    // Check scaling factor range
     if (adapter.scale <= 0.0f || adapter.scale > 10.0f) {
         return false;
     }
     
-    // 检查文件大小（LoRA文件通常比较小）
+    // Check file size (LoRA files are usually small)
     std::error_code ec;
     auto file_size = std::filesystem::file_size(adapter.path, ec);
     if (ec) {
         return false;
     }
     
-    // LoRA文件通常在几MB到几百MB之间
+    // LoRA files are usually between a few MB to several hundred MB
     const size_t MIN_LORA_SIZE = 1024 * 1024; // 1MB
     const size_t MAX_LORA_SIZE = 2ULL * 1024 * 1024 * 1024; // 2GB
     if (file_size < MIN_LORA_SIZE || file_size > MAX_LORA_SIZE) {
         return false;
     }
     
-    // 验证GGUF文件头
+    // Validate GGUF file header
     if (!validateGGUFHeader(adapter.path)) {
         return false;
     }
@@ -194,7 +194,7 @@ bool ModelfileParser::parseParametersLayer(const std::string& layer_digest, Mode
         return false;
     }
     
-    // 解析参数（可能是JSON格式或键值对格式）
+    // Parse parameters (may be JSON format or key-value pair format)
     try {
         nlohmann::json params = nlohmann::json::parse(content);
         if (params.is_object()) {
@@ -204,10 +204,10 @@ bool ModelfileParser::parseParametersLayer(const std::string& layer_digest, Mode
             return true;
         }
     } catch (const std::exception&) {
-        // 如果不是JSON，尝试解析为键值对
+        // If not JSON, try to parse as key-value pairs
     }
     
-    // 解析键值对格式
+    // Parse key-value pair format
     std::istringstream iss(content);
     std::string line;
     while (std::getline(iss, line)) {
@@ -215,7 +215,7 @@ bool ModelfileParser::parseParametersLayer(const std::string& layer_digest, Mode
         if (pos != std::string::npos) {
             std::string key = line.substr(0, pos);
             std::string value = line.substr(pos + 1);
-            // 去除前后空格
+            // Remove leading and trailing spaces
             key.erase(0, key.find_first_not_of(" \t"));
             key.erase(key.find_last_not_of(" \t") + 1);
             value.erase(0, value.find_first_not_of(" \t"));
@@ -233,7 +233,7 @@ bool ModelfileParser::parseAdapterLayer(const std::string& layer_digest, Modelfi
         return false;
     }
     
-    // 解析适配器信息（可能是JSON格式或Modelfile指令格式）
+    // Parse adapter information (may be JSON format or Modelfile instruction format)
     try {
         nlohmann::json adapter_json = nlohmann::json::parse(content);
         if (adapter_json.is_object()) {
@@ -252,10 +252,10 @@ bool ModelfileParser::parseAdapterLayer(const std::string& layer_digest, Modelfi
             return true;
         }
     } catch (const std::exception&) {
-        // 如果不是JSON，尝试解析为Modelfile指令
+        // If not JSON, try to parse as Modelfile instructions
     }
     
-    // 解析Modelfile指令格式
+    // Parse Modelfile instruction format
     return parseModelfileInstructions(content, config);
 }
 
@@ -284,16 +284,16 @@ bool ModelfileParser::parseModelfileInstructions(const std::string& content, Mod
     std::string line;
     
     while (std::getline(iss, line)) {
-        // 去除前后空格
+        // Remove leading and trailing spaces
         line.erase(0, line.find_first_not_of(" \t"));
         line.erase(line.find_last_not_of(" \t") + 1);
         
-        // 跳过空行和注释
+        // Skip empty lines and comments
         if (line.empty() || line[0] == '#') {
             continue;
         }
         
-        // 转换为大写以便匹配指令
+        // Convert to uppercase for instruction matching
         std::string upper_line = line;
         std::transform(upper_line.begin(), upper_line.end(), upper_line.begin(), ::toupper);
         
@@ -333,7 +333,7 @@ bool ModelfileParser::parseAdapterInstruction(const std::string& line, Modelfile
         LoRAAdapter adapter;
         adapter.path = match[1].str();
         
-        // 解析可选的参数（如缩放因子）
+        // Parse optional parameters (such as scaling factor)
         if (match.size() > 2 && !match[2].str().empty()) {
             std::string params = match[2].str();
             std::regex scale_regex(R"(scale=([0-9]*\.?[0-9]+))", std::regex_constants::icase);
@@ -349,7 +349,7 @@ bool ModelfileParser::parseAdapterInstruction(const std::string& line, Modelfile
             }
         }
         
-        // 如果没有指定名称，使用文件名
+        // If no name is specified, use the filename
         if (adapter.name.empty()) {
             std::filesystem::path path(adapter.path);
             adapter.name = path.stem().string();
@@ -370,7 +370,7 @@ bool ModelfileParser::parseParameterInstruction(const std::string& line, Modelfi
         std::string key = match[1].str();
         std::string value = match[2].str();
         
-        // 去除引号
+        // Remove quotes
         if ((value.front() == '"' && value.back() == '"') ||
             (value.front() == '\'' && value.back() == '\'')) {
             value = value.substr(1, value.length() - 2);
@@ -390,7 +390,7 @@ bool ModelfileParser::parseTemplateInstruction(const std::string& line, Modelfil
     if (std::regex_match(line, match, template_regex)) {
         std::string template_str = match[1].str();
         
-        // 去除引号
+        // Remove quotes
         if ((template_str.front() == '"' && template_str.back() == '"') ||
             (template_str.front() == '\'' && template_str.back() == '\'')) {
             template_str = template_str.substr(1, template_str.length() - 2);
@@ -410,7 +410,7 @@ bool ModelfileParser::parseSystemInstruction(const std::string& line, ModelfileC
     if (std::regex_match(line, match, system_regex)) {
         std::string system_str = match[1].str();
         
-        // 去除引号
+        // Remove quotes
         if ((system_str.front() == '"' && system_str.back() == '"') ||
             (system_str.front() == '\'' && system_str.back() == '\'')) {
             system_str = system_str.substr(1, system_str.length() - 2);
@@ -429,50 +429,50 @@ bool ModelfileParser::validateGGUFHeader(const std::string& file_path) {
         return false;
     }
     
-    // GGUF文件头魔数是"GGUF"
+    // GGUF file header magic number is "GGUF"
     char magic[4];
     file.read(magic, 4);
     if (file.gcount() != 4) {
         return false;
     }
     
-    // 检查魔数
+    // Check magic number
     if (magic[0] != 'G' || magic[1] != 'G' || magic[2] != 'U' || magic[3] != 'F') {
         return false;
     }
     
-    // 读取版本号
+    // Read version number
     uint32_t version;
     file.read(reinterpret_cast<char*>(&version), sizeof(version));
     if (file.gcount() != sizeof(version)) {
         return false;
     }
     
-    // 支持的GGUF版本（通常是3或更高）
+    // Supported GGUF version (usually 3 or higher)
     if (version < 3) {
         return false;
     }
     
-    // 读取tensor数量
+    // Read tensor count
     uint64_t tensor_count;
     file.read(reinterpret_cast<char*>(&tensor_count), sizeof(tensor_count));
     if (file.gcount() != sizeof(tensor_count)) {
         return false;
     }
     
-    // LoRA文件应该有合理数量的tensor（通常几十到几百个）
+    // LoRA files should have a reasonable number of tensors (usually tens to hundreds)
     if (tensor_count == 0 || tensor_count > 10000) {
         return false;
     }
     
-    // 读取metadata键值对数量
+    // Read metadata key-value pair count
     uint64_t metadata_kv_count;
     file.read(reinterpret_cast<char*>(&metadata_kv_count), sizeof(metadata_kv_count));
     if (file.gcount() != sizeof(metadata_kv_count)) {
         return false;
     }
     
-    // metadata数量应该合理
+    // Metadata count should be reasonable
     if (metadata_kv_count > 1000) {
         return false;
     }

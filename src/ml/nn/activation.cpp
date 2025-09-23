@@ -48,7 +48,7 @@ Tensor LeakyReLU::forward(Context& /*ctx*/, const Tensor& input) {
     return input; // Placeholder
 }
 
-// ActivationFactory 实现
+// ActivationFactory implementation
 std::unique_ptr<ActivationBase> ActivationFactory::create(Type type) {
     switch (type) {
         case Type::RELU:
@@ -78,7 +78,7 @@ ActivationFactory::Type ActivationFactory::stringToType(const std::string& typeS
     if (typeStr == "sigmoid") return Type::SIGMOID;
     if (typeStr == "softmax") return Type::SOFTMAX;
     if (typeStr == "leaky_relu") return Type::LEAKY_RELU;
-    return Type::RELU; // 默认
+    return Type::RELU; // Default
 }
 
 std::string ActivationFactory::typeToString(Type type) {

@@ -23,13 +23,13 @@ public:
         
         models_path_ = models_path.empty() ? "./models" : models_path;
         
-        // 创建模型目录
+        // Create model directory
         std::filesystem::create_directories(models_path_);
         
-        // 扫描可用模型
+        // Scan available models
         scan_models();
         
-        // 设置默认配置
+        // Set default configuration
         device_ = "cpu";
         precision_ = "fp32";
         threads_ = std::thread::hardware_concurrency();
@@ -50,10 +50,10 @@ public:
             return;
         }
         
-        // 取消当前任务
+        // Cancel current task
         cancel_generation();
         
-        // 卸载模型
+        // Unload model
         unload_model();
         
         is_initialized_ = false;
@@ -73,7 +73,7 @@ public:
             return false;
         }
         
-        // 查找模型
+        // Find model
         auto it = std::find_if(available_models_.begin(), available_models_.end(),
                               [&model_name](const ModelInfo& model) {
                                   return model.name == model_name;
@@ -84,16 +84,16 @@ public:
             return false;
         }
         
-        // 卸载当前模型
+        // Unload current model
         if (current_model_loaded_) {
             unload_model();
         }
         
-        // 模拟模型加载过程
+        // Simulate model loading process
         status_ = "Loading model: " + model_name;
         std::cout << "Loading model: " << model_name << std::endl;
         
-        // 模拟加载时间
+        // Simulate loading time
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         
         current_model_ = *it;
@@ -155,17 +155,17 @@ public:
         auto start_time = std::chrono::high_resolution_clock::now();
         
         try {
-            // 模拟图像生成过程
+            // Simulate image generation process
             status_ = "Generating image...";
             std::cout << "Generating image with prompt: " << params.prompt << std::endl;
             
-            // 模拟生成步骤
+            // Simulate generation steps
             for (int step = 1; step <= params.steps; ++step) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 status_ = "Step " + std::to_string(step) + "/" + std::to_string(params.steps);
             }
             
-            // 生成输出文件名
+            // Generate output filename
             auto now = std::chrono::system_clock::now();
             auto time_t = std::chrono::system_clock::to_time_t(now);
             std::stringstream ss;
@@ -173,13 +173,13 @@ public:
             
             result.output_image_path = "./outputs/" + ss.str();
             
-            // 创建输出目录
+            // Create output directory
             std::filesystem::create_directories("./outputs");
             
-            // 模拟创建图像文件（实际应该调用图像生成库）
+            // Simulate creating image file (should call image generation library in actual implementation)
             create_placeholder_image(result.output_image_path, params.width, params.height);
             
-            // 生成元数据
+            // Generate metadata
             result.metadata = create_metadata_json(params);
             
             auto end_time = std::chrono::high_resolution_clock::now();
@@ -202,9 +202,9 @@ public:
     
     ImageGenerationResult generate_image_async(const ImageGenerationParams& params, 
                                               ProgressCallback progress_cb) {
-        // 简化实现：直接调用同步版本，但添加进度回调
+        // Simplified implementation: call synchronous version directly, but add progress callback
         if (progress_cb) {
-            // 在单独线程中调用进度回调
+            // Call progress callback in separate thread
             std::thread([this, params, progress_cb]() {
                 for (int step = 1; step <= params.steps; ++step) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -217,7 +217,7 @@ public:
     }
     
     ImageGenerationResult image_to_image(const ImageGenerationParams& params) {
-        // img2img的简化实现
+        // Simplified implementation of img2img
         ImageGenerationResult result = generate_image(params);
         if (result.success) {
             std::cout << "img2img generation completed using init image: " 
@@ -281,7 +281,7 @@ private:
     void scan_models() {
         available_models_.clear();
         
-        // 添加一些示例模型
+        // Add some example models
         ModelInfo model1;
         model1.name = "stable-diffusion-v1-5";
         model1.path = models_path_ + "/stable-diffusion-v1-5";
@@ -296,13 +296,13 @@ private:
         model2.description = "Stable Diffusion XL base model";
         available_models_.push_back(model2);
         
-        // 扫描实际的模型文件
+        // Scan actual model files
         if (std::filesystem::exists(models_path_)) {
             for (const auto& entry : std::filesystem::directory_iterator(models_path_)) {
                 if (entry.is_directory()) {
                     std::string model_name = entry.path().filename().string();
                     
-                    // 检查是否已经添加
+                    // Check if already added
                     bool exists = std::any_of(available_models_.begin(), available_models_.end(),
                                              [&model_name](const ModelInfo& model) {
                                                  return model.name == model_name;
@@ -322,11 +322,11 @@ private:
     }
     
     void create_placeholder_image(const std::string& path, int width, int height) {
-        // 创建一个简单的占位图像文件
-        // 实际实现中应该调用图像生成库
+        // Create a simple placeholder image file
+        // Should call image generation library in actual implementation
         std::ofstream file(path, std::ios::binary);
         if (file.is_open()) {
-            // 写入简单的文本文件作为占位符
+            // Write simple text file as placeholder
             file << "Generated image placeholder\n";
             file << "Size: " << width << "x" << height << "\n";
             file << "This would be a real PNG image in actual implementation\n";
@@ -371,7 +371,7 @@ private:
     ModelInfo current_model_;
 };
 
-// InvokeAIEngine公共接口实现
+// InvokeAIEngine public interface implementation
 InvokeAIEngine::InvokeAIEngine() : pimpl_(std::make_unique<Impl>()) {}
 
 InvokeAIEngine::~InvokeAIEngine() = default;
@@ -449,7 +449,7 @@ std::map<std::string, std::string> InvokeAIEngine::get_system_info() const {
     return pimpl_->get_system_info();
 }
 
-// 工厂函数
+// Factory function
 std::unique_ptr<InvokeAIEngine> create_invokeai_engine() {
     return std::make_unique<InvokeAIEngine>();
 }

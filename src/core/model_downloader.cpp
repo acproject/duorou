@@ -30,7 +30,7 @@ namespace duorou {
 using json = nlohmann::json;
 
 /**
- * @brief HTTP响应数据结构
+ * @brief HTTP response data structure
  */
 struct HttpResponse {
     std::string data;
@@ -39,7 +39,7 @@ struct HttpResponse {
 };
 
 /**
- * @brief 下载上下文
+ * @brief Download context
  */
 struct DownloadContext {
     DownloadProgressCallback callback;
@@ -50,7 +50,7 @@ struct DownloadContext {
 };
 
 /**
- * @brief CURL写入回调函数
+ * @brief CURL write callback function
  */
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
     size_t total_size = size * nmemb;
@@ -59,7 +59,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
 }
 
 /**
- * @brief CURL文件写入回调函数
+ * @brief CURL file write callback function
  */
 static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, DownloadContext* ctx) {
     size_t total_size = size * nmemb;
@@ -68,7 +68,7 @@ static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, Downl
         ctx->file->write((char*)contents, total_size);
         ctx->downloaded_size += total_size;
         
-        // 调用进度回调
+        // Call progress callback
         if (ctx->callback && ctx->total_size > 0) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ctx->start_time).count();
@@ -81,7 +81,7 @@ static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, Downl
 }
 
 /**
- * @brief CURL进度回调函数
+ * @brief CURL progress callback function
  */
 static int ProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     DownloadContext* ctx = static_cast<DownloadContext*>(clientp);
@@ -102,7 +102,7 @@ static int ProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow,
 }
 
 /**
- * @brief ModelDownloader实现类
+ * @brief ModelDownloader implementation class
  */
 class ModelDownloader::Impl {
 public:
@@ -113,15 +113,15 @@ public:
     size_t max_cache_size_;
     
     Impl(const std::string& base_url, const std::string& model_dir)
-        : base_url_(base_url), model_dir_(expandPath(model_dir)), max_cache_size_(10ULL * 1024 * 1024 * 1024) { // 10GB默认
+        : base_url_(base_url), model_dir_(expandPath(model_dir)), max_cache_size_(10ULL * 1024 * 1024 * 1024) { // 10GB default
         
-        // 初始化CURL
+        // Initialize CURL
         curl_global_init(CURL_GLOBAL_DEFAULT);
         
-        // 创建模型目录
+        // Create model directory
         fs::create_directories(model_dir_);
         
-        // 初始化路径管理器
+        // Initialize path manager
         path_manager_ = std::make_unique<ModelPathManager>(model_dir_);
     }
     
@@ -130,7 +130,7 @@ public:
     }
     
     /**
-     * @brief 展开路径中的~符号
+     * @brief Expand ~ symbol in path
      */
     std::string expandPath(const std::string& path) {
         if (path.empty() || path[0] != '~') {
@@ -146,7 +146,7 @@ public:
     }
     
     /**
-     * @brief 执行HTTP GET请求
+     * @brief Execute HTTP GET request
      */
     HttpResponse httpGet(const std::string& url) {
         HttpResponse response;
@@ -175,12 +175,12 @@ public:
     }
     
     /**
-     * @brief 下载文件
+     * @brief Download file
      */
     DownloadResult downloadFile(const std::string& url, const std::string& local_path, DownloadContext& ctx) {
         DownloadResult result;
         
-        // 创建目录
+        // Create directory
         fs::create_directories(fs::path(local_path).parent_path());
         
         std::ofstream file(local_path, std::ios::binary);
@@ -205,7 +205,7 @@ public:
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ProgressCallback);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3600L); // 1小时超时
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3600L); // 1 hour timeout
         
         auto start_time = std::chrono::steady_clock::now();
         CURLcode res = curl_easy_perform(curl);
@@ -238,7 +238,7 @@ public:
     }
     
     /**
-     * @brief 解析模型名称
+     * @brief Parse model name
      */
     core::ModelPath parseModelName(const std::string& model_name) {
         core::ModelPath model_path;
@@ -247,7 +247,7 @@ public:
     }
     
     /**
-     * @brief 获取模型清单
+     * @brief Fetch model manifest
      */
     core::ModelManifest fetchModelManifest(const core::ModelPath& model_path) {
         std::string url = base_url_ + "/v2/" + model_path.repository + "/manifests/" + model_path.tag;
@@ -288,13 +288,13 @@ public:
     }
     
     /**
-     * @brief 下载blob
+     * @brief Download blob
      */
     DownloadResult downloadBlob(const core::ModelPath& model_path, const std::string& digest, DownloadContext& ctx) {
         std::string url = base_url_ + "/v2/" + model_path.repository + "/blobs/" + digest;
         std::string local_path = path_manager_->getBlobFilePath(digest);
         
-        // 检查blob是否已存在
+        // Check if blob already exists
         if (path_manager_->blobExists(digest)) {
             DownloadResult result;
             result.success = true;

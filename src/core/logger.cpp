@@ -34,16 +34,16 @@ bool Logger::initialize() {
             std::lock_guard<std::mutex> lock(mutex_);
             std::cout << "Logger::initialize: Acquired mutex lock" << std::endl;
             
-            // 默认启用控制台输出，文件输出将在配置加载后设置
+            // Enable console output by default, file output will be set after configuration loading
             std::cout << "Logger::initialize: Setting default output options" << std::endl;
             console_output_ = true;
-            // file_output_ 保持默认值 false，等待配置管理器设置
+            // file_output_ keeps default value false, waiting for configuration manager to set
             
             initialized_ = true;
             std::cout << "Logger::initialize: Set initialized flag to true" << std::endl;
-        } // mutex锁在这里释放
+        } // mutex lock is released here
         
-        // 记录初始化信息 - 在锁释放后调用
+        // Log initialization info - called after lock is released
         std::cout << "Logger::initialize: Calling info method" << std::endl;
         info("Logger initialized successfully (console only)");
         
@@ -62,9 +62,9 @@ void Logger::setLogLevel(LogLevel level) {
         std::lock_guard<std::mutex> lock(mutex_);
         current_level_ = level;
         level_str = getLevelString(level);
-    } // mutex锁在这里释放
+    } // mutex lock is released here
     
-    // 在锁释放后调用info，避免死锁
+    // Call info after lock is released to avoid deadlock
     info("Log level set to: " + level_str);
 }
 
@@ -75,20 +75,20 @@ bool Logger::setLogFile(const std::string& file_path) {
     try {
         std::cout << "setLogFile: Acquired mutex lock" << std::endl;
         
-        // 关闭现有文件
+        // Close existing file
         if (log_file_ && log_file_->is_open()) {
             std::cout << "setLogFile: Closing existing log file" << std::endl;
             log_file_->close();
         }
         
-        // 确保目录存在
+        // Ensure directory exists
         std::cout << "setLogFile: Creating directory path" << std::endl;
         std::filesystem::path path(file_path);
         std::cout << "setLogFile: Parent path: " << path.parent_path() << std::endl;
         std::filesystem::create_directories(path.parent_path());
         std::cout << "setLogFile: Directory created successfully" << std::endl;
         
-        // 创建新的文件流
+        // Create new file stream
         std::cout << "setLogFile: Opening log file" << std::endl;
         log_file_ = std::make_unique<std::ofstream>(file_path, std::ios::app);
         if (!log_file_->is_open()) {
@@ -157,7 +157,7 @@ void Logger::flush() {
 void Logger::writeLog(LogLevel level, const std::string& message) {
     std::cout << "writeLog: Starting with message: " << message << std::endl;
     
-    // 检查日志级别
+    // Check log level
     if (level < current_level_) {
         std::cout << "writeLog: Level check failed, returning" << std::endl;
         return;
@@ -167,7 +167,7 @@ void Logger::writeLog(LogLevel level, const std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::cout << "writeLog: Mutex acquired" << std::endl;
     
-    // 生成日志条目
+    // Generate log entry
     std::cout << "writeLog: Getting timestamp" << std::endl;
     std::string timestamp = getCurrentTimestamp();
     std::cout << "writeLog: Getting level string" << std::endl;
@@ -180,7 +180,7 @@ void Logger::writeLog(LogLevel level, const std::string& message) {
     std::string log_line = log_entry.str();
     std::cout << "writeLog: Log line built: " << log_line << std::endl;
     
-    // 输出到控制台
+    // Output to console
     if (console_output_) {
         std::cout << "writeLog: Outputting to console" << std::endl;
         if (level >= LogLevel::ERROR) {
@@ -191,12 +191,12 @@ void Logger::writeLog(LogLevel level, const std::string& message) {
         std::cout << "writeLog: Console output completed" << std::endl;
     }
     
-    // 输出到文件
+    // Output to file
     if (file_output_ && log_file_ && log_file_->is_open()) {
         std::cout << "writeLog: Outputting to file" << std::endl;
         *log_file_ << log_line << std::endl;
         
-        // 对于错误和致命错误，立即刷新
+        // For errors and fatal errors, flush immediately
         if (level >= LogLevel::ERROR) {
             log_file_->flush();
         }
@@ -231,7 +231,7 @@ std::string Logger::getLevelString(LogLevel level) const {
 }
 
 std::string Logger::getDefaultLogPath() const {
-    // 获取日志目录
+    // Get log directory
     std::string log_dir;
     
 #ifdef _WIN32
@@ -250,7 +250,7 @@ std::string Logger::getDefaultLogPath() const {
     }
 #endif
     
-    // 生成带时间戳的日志文件名
+    // Generate timestamped log filename
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     

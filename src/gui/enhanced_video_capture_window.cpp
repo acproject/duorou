@@ -20,7 +20,7 @@ EnhancedVideoCaptureWindow::EnhancedVideoCaptureWindow()
 }
 
 EnhancedVideoCaptureWindow::~EnhancedVideoCaptureWindow() {
-    // 清理缓存的Cairo表面
+    // Clean up cached Cairo surface
     if (cached_surface_) {
         cairo_surface_destroy(cached_surface_);
         cached_surface_ = nullptr;
@@ -40,23 +40,23 @@ bool EnhancedVideoCaptureWindow::initialize() {
 void EnhancedVideoCaptureWindow::show(CaptureMode mode) {
     current_mode_ = mode;
     
-    // 确保窗口已经初始化
+    // Ensure window is initialized
     if (!window_) {
         std::cerr << "Error: Window not initialized before show()" << std::endl;
         return;
     }
     
-    // 更新模式标签
+    // Update mode label
     if (mode_label_) {
-        const char* mode_text = (mode == CaptureMode::DESKTOP) ? "桌面捕获模式" : "摄像头模式";
+        const char* mode_text = (mode == CaptureMode::DESKTOP) ? "Desktop Capture Mode" : "Camera Mode";
         gtk_label_set_text(GTK_LABEL(mode_label_), mode_text);
     }
     
-    // 显示窗口
+    // Show window
     gtk_widget_set_visible(window_, TRUE);
     gtk_window_present(GTK_WINDOW(window_));
     
-    // 在窗口显示后刷新源列表
+    // Refresh source list after window is shown
     update_source_list();
 }
 
@@ -83,46 +83,46 @@ void EnhancedVideoCaptureWindow::set_device_selection_callback(std::function<voi
 }
 
 void EnhancedVideoCaptureWindow::update_frame(const media::VideoFrame& frame) {
-    // 检查是否需要重新创建缓存表面
+    // Check if cached surface needs to be recreated
     bool need_recreate_surface = (frame.width != cached_width_ || frame.height != cached_height_);
 
-    // 更新帧数据
+    // Update frame data
     frame_width_ = frame.width;
     frame_height_ = frame.height;
     frame_channels_ = frame.channels;
 
-    // 分配内存存储帧数据
+    // Allocate memory to store frame data
     size_t data_size = frame.width * frame.height * frame.channels;
     frame_data_ = std::make_unique<guchar[]>(data_size);
     std::memcpy(frame_data_.get(), frame.data.data(), data_size);
 
-    // 如果尺寸改变，重新创建缓存表面
+    // If size changed, recreate cached surface
     if (need_recreate_surface) {
-        // 清理旧的表面
+        // Clean up old surface
         if (cached_surface_) {
             cairo_surface_destroy(cached_surface_);
             cached_surface_ = nullptr;
         }
 
-        // 更新缓存尺寸
+        // Update cached dimensions
         cached_width_ = frame.width;
         cached_height_ = frame.height;
 
-        // 创建新的RGBA数据缓冲区
+        // Create new RGBA data buffer
         int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, frame.width);
         cached_rgba_data_ = std::make_unique<guchar[]>(stride * frame.height);
 
-        // 创建新的Cairo表面
+        // Create new Cairo surface
         cached_surface_ = cairo_image_surface_create_for_data(
             cached_rgba_data_.get(), CAIRO_FORMAT_RGB24, frame.width, frame.height, stride);
     }
 
-    // 更新缓存表面的数据
+    // Update cached surface data
     if (cached_surface_ && cached_rgba_data_) {
         int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, frame.width);
         int channels = frame.channels;
 
-        // 在修改表面数据前，先获取表面数据指针
+        // Get surface data pointer before modifying surface data
         cairo_surface_flush(cached_surface_);
 
         for (int y = 0; y < frame.height; y++) {
@@ -132,13 +132,13 @@ void EnhancedVideoCaptureWindow::update_frame(const media::VideoFrame& frame) {
 
                 if (src_idx + (channels - 1) < (int)(frame.width * frame.height * channels)) {
                     if (channels == 4) {
-                        // ScreenCaptureKit使用BGRA格式，转换为Cairo的RGB24格式
+                        // ScreenCaptureKit uses BGRA format, convert to Cairo RGB24 format
                         cached_rgba_data_[dst_idx + 0] = frame.data[src_idx + 0]; // B
                         cached_rgba_data_[dst_idx + 1] = frame.data[src_idx + 1]; // G
                         cached_rgba_data_[dst_idx + 2] = frame.data[src_idx + 2]; // R
                         cached_rgba_data_[dst_idx + 3] = frame.data[src_idx + 3]; // A
                     } else {
-                        // RGB格式转换为Cairo RGB24
+                        // Convert RGB format to Cairo RGB24
                         cached_rgba_data_[dst_idx + 0] = frame.data[src_idx + 2]; // B
                         cached_rgba_data_[dst_idx + 1] = frame.data[src_idx + 1]; // G
                         cached_rgba_data_[dst_idx + 2] = frame.data[src_idx + 0]; // R
@@ -148,11 +148,11 @@ void EnhancedVideoCaptureWindow::update_frame(const media::VideoFrame& frame) {
             }
         }
 
-        // 标记表面数据已更新
+        // Mark surface data as updated
         cairo_surface_mark_dirty(cached_surface_);
     }
 
-    // 更新信息标签
+    // Update info label
     if (info_label_) {
         char info_text[256];
         auto timestamp_ms = static_cast<int64_t>(frame.timestamp * 1000);
@@ -166,135 +166,135 @@ void EnhancedVideoCaptureWindow::update_frame(const media::VideoFrame& frame) {
         snprintf(timestamp_str, sizeof(timestamp_str), "%02lld:%02lld:%02lld.%03lld",
                  hours, minutes, seconds, ms_part);
 
-        snprintf(info_text, sizeof(info_text), "分辨率: %dx%d, 通道: %d, 时间戳: %s",
+        snprintf(info_text, sizeof(info_text), "Resolution: %dx%d, Channels: %d, Timestamp: %s",
                  frame.width, frame.height, frame.channels, timestamp_str);
         gtk_label_set_text(GTK_LABEL(info_label_), info_text);
     }
 
-    // 触发重绘
+    // Trigger redraw
     if (video_area_) {
         gtk_widget_queue_draw(video_area_);
     }
 }
 
 void EnhancedVideoCaptureWindow::init_ui() {
-    // 创建主窗口
+    // Create main window
     window_ = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(window_), "增强视频捕捉窗口");
+    gtk_window_set_title(GTK_WINDOW(window_), "Enhanced Video Capture Window");
     gtk_window_set_default_size(GTK_WINDOW(window_), 1000, 600);
     gtk_window_set_resizable(GTK_WINDOW(window_), TRUE);
 
-    // 创建主分割面板（左右分栏）
+    // Create main paned panel (left-right split)
     main_paned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_position(GTK_PANED(main_paned_), 650); // 左侧650px，右侧350px
+    gtk_paned_set_position(GTK_PANED(main_paned_), 650); // Left 650px, right 350px
     gtk_window_set_child(GTK_WINDOW(window_), main_paned_);
 
-    // 创建左侧和右侧区域
+    // Create left and right areas
     create_video_area();
     create_source_list();
 
-    // 连接窗口关闭信号
+    // Connect window close signal
     g_signal_connect(window_, "close-request", G_CALLBACK(on_window_close), this);
 }
 
 void EnhancedVideoCaptureWindow::create_video_area() {
-    // 创建左侧框架
-    left_frame_ = gtk_frame_new("视频预览");
+    // Create left frame
+    left_frame_ = gtk_frame_new("Video Preview");
     gtk_widget_set_margin_start(left_frame_, 10);
     gtk_widget_set_margin_end(left_frame_, 5);
     gtk_widget_set_margin_top(left_frame_, 10);
     gtk_widget_set_margin_bottom(left_frame_, 10);
 
-    // 创建左侧内容容器
+    // Create left content container
     GtkWidget* left_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_margin_start(left_vbox, 10);
     gtk_widget_set_margin_end(left_vbox, 10);
     gtk_widget_set_margin_top(left_vbox, 10);
     gtk_widget_set_margin_bottom(left_vbox, 10);
 
-    // 创建信息标签
-    info_label_ = gtk_label_new("等待视频数据...");
+    // Create info label
+    info_label_ = gtk_label_new("Waiting for video data...");
     gtk_widget_set_halign(info_label_, GTK_ALIGN_CENTER);
     gtk_widget_add_css_class(info_label_, "info-label");
 
-    // 创建视频显示区域
+    // Create video display area
     video_area_ = gtk_drawing_area_new();
     gtk_widget_set_size_request(video_area_, 320, 240);
     gtk_widget_set_hexpand(video_area_, TRUE);
     gtk_widget_set_vexpand(video_area_, TRUE);
 
-    // 设置绘制回调
+    // Set draw callback
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(video_area_), on_draw_area, this, nullptr);
 
-    // 添加到左侧容器
+    // Add to left container
     gtk_box_append(GTK_BOX(left_vbox), info_label_);
     gtk_box_append(GTK_BOX(left_vbox), video_area_);
     gtk_frame_set_child(GTK_FRAME(left_frame_), left_vbox);
 
-    // 添加到主分割面板
+    // Add to main paned panel
     gtk_paned_set_start_child(GTK_PANED(main_paned_), left_frame_);
 }
 
 void EnhancedVideoCaptureWindow::create_source_list() {
-    // 创建右侧框架
-    right_frame_ = gtk_frame_new("源选择");
+    // Create right frame
+    right_frame_ = gtk_frame_new("Source Selection");
     gtk_widget_set_margin_start(right_frame_, 5);
     gtk_widget_set_margin_end(right_frame_, 10);
     gtk_widget_set_margin_top(right_frame_, 10);
     gtk_widget_set_margin_bottom(right_frame_, 10);
 
-    // 创建右侧内容容器
+    // Create right content container
     GtkWidget* right_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_start(right_vbox, 10);
     gtk_widget_set_margin_end(right_vbox, 10);
     gtk_widget_set_margin_top(right_vbox, 10);
     gtk_widget_set_margin_bottom(right_vbox, 10);
 
-    // 创建模式标签
-    mode_label_ = gtk_label_new("桌面捕获模式");
+    // Create mode label
+    mode_label_ = gtk_label_new("Desktop Capture Mode");
     gtk_widget_set_halign(mode_label_, GTK_ALIGN_START);
     gtk_widget_add_css_class(mode_label_, "mode-label");
 
-    // 创建刷新按钮
+    // Create refresh button
     refresh_button_ = gtk_button_new_with_label("Refresh");
     gtk_widget_set_halign(refresh_button_, GTK_ALIGN_END);
     g_signal_connect(refresh_button_, "clicked", G_CALLBACK(on_refresh_button_clicked), this);
 
-    // 创建顶部水平容器（模式标签和刷新按钮）
+    // Create top horizontal container (mode label and refresh button)
     GtkWidget* top_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_box_append(GTK_BOX(top_hbox), mode_label_);
     gtk_box_append(GTK_BOX(top_hbox), refresh_button_);
     gtk_widget_set_hexpand(mode_label_, TRUE);
 
-    // 创建源列表
+    // Create source list
     source_list_ = gtk_list_box_new();
     gtk_widget_add_css_class(source_list_, "source-list");
     g_signal_connect(source_list_, "row-selected", G_CALLBACK(on_source_selection_changed), this);
 
-    // 创建滚动容器
+    // Create scroll container
     source_scrolled_ = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(source_scrolled_),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(source_scrolled_), source_list_);
     gtk_widget_set_vexpand(source_scrolled_, TRUE);
 
-    // 添加到右侧容器
+    // Add to right container
     gtk_box_append(GTK_BOX(right_vbox), top_hbox);
     gtk_box_append(GTK_BOX(right_vbox), source_scrolled_);
     gtk_frame_set_child(GTK_FRAME(right_frame_), right_vbox);
 
-    // 添加到主分割面板
+    // Add to main paned panel
     gtk_paned_set_end_child(GTK_PANED(main_paned_), right_frame_);
 }
 
 void EnhancedVideoCaptureWindow::update_source_list() {
-    // 检查source_list_是否已初始化
+    // Check if source_list_ is initialized
     if (!source_list_ || !GTK_IS_LIST_BOX(source_list_)) {
         std::cerr << "Error: source_list_ is not properly initialized" << std::endl;
         return;
     }
     
-    // 清空现有列表
+    // Clear existing list
     GtkWidget* child = gtk_widget_get_first_child(source_list_);
     while (child) {
         GtkWidget* next = gtk_widget_get_next_sibling(child);
@@ -305,7 +305,7 @@ void EnhancedVideoCaptureWindow::update_source_list() {
     if (current_mode_ == CaptureMode::DESKTOP) {
         refresh_window_list();
         
-        // 添加窗口列表项
+        // Add window list items
         for (const auto& window_info : available_windows_) {
             GtkWidget* row = gtk_list_box_row_new();
             GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -314,12 +314,12 @@ void EnhancedVideoCaptureWindow::update_source_list() {
             gtk_widget_set_margin_top(hbox, 5);
             gtk_widget_set_margin_bottom(hbox, 5);
 
-            // 图标
+            // Icon
             const char* icon = window_info.is_desktop ? "Desktop" : "Window";
             GtkWidget* icon_label = gtk_label_new(icon);
             gtk_widget_set_size_request(icon_label, 30, -1);
 
-            // 窗口信息
+            // Window info
             GtkWidget* info_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
             GtkWidget* title_label = gtk_label_new(window_info.title.c_str());
             GtkWidget* app_label = gtk_label_new(window_info.app_name.c_str());
@@ -338,7 +338,7 @@ void EnhancedVideoCaptureWindow::update_source_list() {
 
             gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), hbox);
             
-            // 存储窗口信息到行数据
+            // Store window info to row data
             g_object_set_data(G_OBJECT(row), "window_id", GINT_TO_POINTER(window_info.window_id));
             g_object_set_data_full(G_OBJECT(row), "window_title", g_strdup(window_info.title.c_str()), g_free);
             g_object_set_data_full(G_OBJECT(row), "app_name", g_strdup(window_info.app_name.c_str()), g_free);
@@ -349,7 +349,7 @@ void EnhancedVideoCaptureWindow::update_source_list() {
     } else {
         refresh_device_list();
         
-        // 添加设备列表项
+        // Add device list items
         for (const auto& device_info : available_devices_) {
             GtkWidget* row = gtk_list_box_row_new();
             GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -358,12 +358,12 @@ void EnhancedVideoCaptureWindow::update_source_list() {
             gtk_widget_set_margin_top(hbox, 5);
             gtk_widget_set_margin_bottom(hbox, 5);
 
-            // 图标 - 根据设备类型选择不同图标
+            // Icon - choose different icon based on device type
             const char* icon = (device_info.device_index == -1) ? "N/A" : "Camera";
             GtkWidget* icon_label = gtk_label_new(icon);
             gtk_widget_set_size_request(icon_label, 30, -1);
 
-            // 设备信息
+            // Device info
             GtkWidget* info_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
             GtkWidget* name_label = gtk_label_new(device_info.name.c_str());
             GtkWidget* id_label = gtk_label_new(device_info.id.c_str());
@@ -382,7 +382,7 @@ void EnhancedVideoCaptureWindow::update_source_list() {
 
             gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), hbox);
             
-            // 存储设备信息到行数据
+            // Store device info to row data
             g_object_set_data(G_OBJECT(row), "device_index", GINT_TO_POINTER(device_info.device_index));
             g_object_set_data_full(G_OBJECT(row), "device_name", g_strdup(device_info.name.c_str()), g_free);
             g_object_set_data_full(G_OBJECT(row), "device_id", g_strdup(device_info.id.c_str()), g_free);
@@ -395,23 +395,23 @@ void EnhancedVideoCaptureWindow::update_source_list() {
 void EnhancedVideoCaptureWindow::refresh_window_list() {
     available_windows_.clear();
     
-    // 添加桌面选项
+    // Add desktop option
     WindowInfo desktop_info;
-    desktop_info.title = "整个桌面";
-    desktop_info.app_name = "系统桌面";
+    desktop_info.title = "Entire Desktop";
+    desktop_info.app_name = "System Desktop";
     desktop_info.window_id = 0;
     desktop_info.is_desktop = true;
     available_windows_.push_back(desktop_info);
 
 #ifdef __APPLE__
-    // macOS 获取窗口列表
+    // macOS get window list
     CFArrayRef window_list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
     if (window_list) {
         CFIndex count = CFArrayGetCount(window_list);
         for (CFIndex i = 0; i < count; i++) {
             CFDictionaryRef window_info = (CFDictionaryRef)CFArrayGetValueAtIndex(window_list, i);
             
-            // 获取窗口标题
+            // Get window title
             CFStringRef title_ref = (CFStringRef)CFDictionaryGetValue(window_info, kCGWindowName);
             CFStringRef owner_ref = (CFStringRef)CFDictionaryGetValue(window_info, kCGWindowOwnerName);
             CFNumberRef window_id_ref = (CFNumberRef)CFDictionaryGetValue(window_info, kCGWindowNumber);
@@ -425,7 +425,7 @@ void EnhancedVideoCaptureWindow::refresh_window_list() {
                 CFStringGetCString(owner_ref, owner, sizeof(owner), kCFStringEncodingUTF8);
                 CFNumberGetValue(window_id_ref, kCFNumberIntType, &window_id);
                 
-                // 过滤掉空标题和系统窗口
+                // Filter out empty titles and system windows
                 if (strlen(title) > 0 && strcmp(owner, "Window Server") != 0) {
                     WindowInfo info;
                     info.title = title;
@@ -439,10 +439,10 @@ void EnhancedVideoCaptureWindow::refresh_window_list() {
         CFRelease(window_list);
     }
 #else
-    // 其他平台的实现可以在这里添加
+    // Implementation for other platforms can be added here
     WindowInfo example_window;
-    example_window.title = "示例窗口";
-    example_window.app_name = "示例应用";
+    example_window.title = "Example Window";
+    example_window.app_name = "Example App";
     example_window.window_id = 1;
     example_window.is_desktop = false;
     available_windows_.push_back(example_window);
@@ -452,14 +452,14 @@ void EnhancedVideoCaptureWindow::refresh_window_list() {
 void EnhancedVideoCaptureWindow::refresh_device_list() {
     available_devices_.clear();
     
-    // 添加禁用摄像头选项
+    // Add disable camera option
     DeviceInfo disable_info;
-    disable_info.name = "禁用摄像头";
+    disable_info.name = "Disable Camera";
     disable_info.id = "disable_camera";
-    disable_info.device_index = -1;  // 使用-1表示禁用
+    disable_info.device_index = -1;  // Use -1 to indicate disabled
     available_devices_.push_back(disable_info);
     
-    // 获取摄像头设备列表
+    // Get camera device list
     auto camera_devices = media::VideoCapture::get_camera_devices();
     for (size_t i = 0; i < camera_devices.size(); i++) {
         DeviceInfo info;
@@ -469,10 +469,10 @@ void EnhancedVideoCaptureWindow::refresh_device_list() {
         available_devices_.push_back(info);
     }
     
-    // 如果没有找到摄像头，添加默认项
+    // If no camera found, add default item
     if (camera_devices.empty()) {
         DeviceInfo default_info;
-        default_info.name = "默认摄像头";
+        default_info.name = "Default Camera";
         default_info.id = "camera_0";
         default_info.device_index = 0;
         available_devices_.push_back(default_info);
@@ -538,44 +538,44 @@ void EnhancedVideoCaptureWindow::setup_styling() {
     g_object_unref(css_provider);
 }
 
-// 静态回调函数实现
+// Static callback function implementations
 void EnhancedVideoCaptureWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr, int width, int height, gpointer user_data) {
     EnhancedVideoCaptureWindow* window = static_cast<EnhancedVideoCaptureWindow*>(user_data);
 
-    // 设置背景色
+    // Set background color
     cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
     cairo_paint(cr);
 
-    // 如果有缓存的表面，绘制视频帧
+    // If cached surface exists, draw video frame
     if (window->cached_surface_) {
-        // 计算缩放比例以适应显示区域
+        // Calculate scale ratio to fit display area
         double scale_x = (double)width / window->cached_width_;
         double scale_y = (double)height / window->cached_height_;
         double scale = std::min(scale_x, scale_y);
 
-        // 计算居中位置
+        // Calculate center position
         double scaled_width = window->cached_width_ * scale;
         double scaled_height = window->cached_height_ * scale;
         double x = (width - scaled_width) / 2;
         double y = (height - scaled_height) / 2;
 
-        // 应用变换
+        // Apply transformation
         cairo_save(cr);
         cairo_translate(cr, x, y);
         cairo_scale(cr, scale, scale);
 
-        // 绘制视频帧
+        // Draw video frame
         cairo_set_source_surface(cr, window->cached_surface_, 0, 0);
         cairo_paint(cr);
 
         cairo_restore(cr);
     } else {
-        // 显示等待文本
+        // Show waiting text
         cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_size(cr, 16);
 
-        const char* text = "等待视频数据...";
+        const char* text = "Waiting for video data...";
         cairo_text_extents_t extents;
         cairo_text_extents(cr, text, &extents);
 
@@ -592,9 +592,9 @@ gboolean EnhancedVideoCaptureWindow::on_window_close(GtkWidget* widget, gpointer
     if (window->close_callback_) {
         window->close_callback_();
     }
-    // 隐藏窗口而不是销毁，以便可以重复使用
+    // Hide window instead of destroying it for reuse
     window->hide();
-    return TRUE; // 阻止默认的销毁行为
+    return TRUE; // Prevent default destroy behavior
 }
 
 void EnhancedVideoCaptureWindow::on_source_selection_changed(GtkListBox* list_box, GtkListBoxRow* row, gpointer user_data) {
@@ -603,7 +603,7 @@ void EnhancedVideoCaptureWindow::on_source_selection_changed(GtkListBox* list_bo
     EnhancedVideoCaptureWindow* window = static_cast<EnhancedVideoCaptureWindow*>(user_data);
     
     if (window->current_mode_ == CaptureMode::DESKTOP) {
-        // 处理窗口选择
+        // Handle window selection
         int window_id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "window_id"));
         const char* title = (const char*)g_object_get_data(G_OBJECT(row), "window_title");
         const char* app_name = (const char*)g_object_get_data(G_OBJECT(row), "app_name");
@@ -618,7 +618,7 @@ void EnhancedVideoCaptureWindow::on_source_selection_changed(GtkListBox* list_bo
             window->window_selection_callback_(info);
         }
     } else {
-        // 处理设备选择
+        // Handle device selection
         int device_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "device_index"));
         const char* name = (const char*)g_object_get_data(G_OBJECT(row), "device_name");
         const char* id = (const char*)g_object_get_data(G_OBJECT(row), "device_id");

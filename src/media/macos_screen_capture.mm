@@ -14,7 +14,7 @@ static SCStream *g_stream = nil;
 static bool g_is_capturing = false;
 static id<SCStreamDelegate> g_delegate = nil;
 static int g_consecutive_failures = 0;
-static const int MAX_CONSECUTIVE_FAILURES = 10; // 连续失败10次后重启流
+static const int MAX_CONSECUTIVE_FAILURES = 10; // Restart stream after 10 consecutive failures
 static std::chrono::steady_clock::time_point g_last_success_time =
     std::chrono::steady_clock::now();
 static bool g_needs_restart = false;
@@ -32,30 +32,30 @@ static bool g_needs_restart = false;
       return;
     }
 
-    // 检查是否仍在捕获状态和回调函数有效性
+    // Check if still capturing and callback function validity
     if (!g_is_capturing || !g_frame_callback) {
       return;
     }
 
-    // 检查stream是否仍然有效
+    // Check if stream is still valid
     if (!stream || stream != g_stream) {
       std::cout << "ScreenCaptureKit: 收到来自无效stream的回调" << std::endl;
       return;
     }
 
-    // 检查CMSampleBuffer的有效性
+    // Check CMSampleBuffer validity
     if (!sampleBuffer) {
       std::cout << "ScreenCaptureKit: CMSampleBuffer为空" << std::endl;
       return;
     }
 
-    // 检查CMSampleBuffer是否有效
+    // Check if CMSampleBuffer is valid
     if (!CMSampleBufferIsValid(sampleBuffer)) {
       std::cout << "ScreenCaptureKit: CMSampleBuffer无效" << std::endl;
       return;
     }
 
-    // 获取CMSampleBuffer的详细信息用于调试
+    // Get CMSampleBuffer details for debugging
     CMFormatDescriptionRef formatDesc =
         CMSampleBufferGetFormatDescription(sampleBuffer);
     if (formatDesc) {
@@ -74,7 +74,7 @@ static bool g_needs_restart = false;
                 << g_consecutive_failures << "/" << MAX_CONSECUTIVE_FAILURES
                 << ")" << std::endl;
 
-      // 检查是否有附件数据
+      // Check for attachment data
       CFArrayRef attachments =
           CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
       if (attachments && CFArrayGetCount(attachments) > 0) {
@@ -83,7 +83,7 @@ static bool g_needs_restart = false;
             << std::endl;
       }
 
-      // 检查数据缓冲区
+      // Check data buffer
       CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
       if (blockBuffer) {
         size_t dataLength = CMBlockBufferGetDataLength(blockBuffer);
@@ -95,50 +95,50 @@ static bool g_needs_restart = false;
                   << std::endl;
       }
 
-      // 检查是否需要重启流
+      // Check if stream restart is needed
       if (g_consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
         std::cout << "ScreenCaptureKit: 连续失败次数过多，标记需要重启流..."
                   << std::endl;
         g_needs_restart = true;
-        g_consecutive_failures = 0; // 重置计数器
+        g_consecutive_failures = 0; // Reset counter
       }
 
       return;
     }
 
-    // 成功获取图像缓冲区，重置失败计数器
+    // Successfully obtained image buffer, reset failure counter
     g_consecutive_failures = 0;
     g_last_success_time = std::chrono::steady_clock::now();
 
-    // 检查像素缓冲区的有效性
+    // Check pixel buffer validity
     if (!CVPixelBufferIsPlanar(imageBuffer)) {
-      // 非平面格式，检查像素格式
+      // Non-planar format, check pixel format
       OSType pixelFormat = CVPixelBufferGetPixelFormatType(imageBuffer);
       if (pixelFormat != kCVPixelFormatType_32BGRA) {
-        std::cout << "ScreenCaptureKit: 意外的像素格式: " << pixelFormat
-                  << ", 期望: " << kCVPixelFormatType_32BGRA << std::endl;
+        std::cout << "ScreenCaptureKit: Unexpected pixel format: " << pixelFormat
+                  << ", expected: " << kCVPixelFormatType_32BGRA << std::endl;
         return;
       }
     } else {
-      std::cout << "ScreenCaptureKit: 收到平面像素缓冲区，当前不支持"
+      std::cout << "ScreenCaptureKit: Received planar pixel buffer, currently not supported"
                 << std::endl;
       return;
     }
 
-    // 检查像素缓冲区尺寸
+    // Check pixel buffer dimensions
     size_t width = CVPixelBufferGetWidth(imageBuffer);
     size_t height = CVPixelBufferGetHeight(imageBuffer);
     if (width == 0 || height == 0) {
-      std::cout << "ScreenCaptureKit: 像素缓冲区尺寸无效: " << width << "x"
+      std::cout << "ScreenCaptureKit: Invalid pixel buffer dimensions: " << width << "x"
                 << height << std::endl;
       return;
     }
 
-    // 尝试锁定像素缓冲区
+    // Try to lock pixel buffer
     CVReturn lockResult =
         CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
     if (lockResult != kCVReturnSuccess) {
-      std::cout << "ScreenCaptureKit: 无法锁定像素缓冲区，错误代码: "
+      std::cout << "ScreenCaptureKit: Unable to lock pixel buffer, error code: "
                 << lockResult << std::endl;
       return;
     }
@@ -160,8 +160,8 @@ static bool g_needs_restart = false;
 
     CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
 
-    // 直接在当前线程调用回调，减少线程切换开销
-    // ScreenCaptureKit已经在专门的队列中处理帧数据
+    // Call callback directly in current thread to reduce thread switching overhead
+    // ScreenCaptureKit already processes frame data in dedicated queue
     if (g_frame_callback && g_is_capturing) {
       g_frame_callback(frame);
     }
@@ -181,21 +181,21 @@ static bool g_needs_restart = false;
   g_is_capturing = false;
 }
 
-// SCStreamOutput和SCStreamDelegate共享同一个方法实现
+// SCStreamOutput and SCStreamDelegate share the same method implementation
 
 @end
 
 namespace duorou {
 namespace media {
 
-// 前向声明
+// Forward declarations
 bool start_macos_screen_capture(
     std::function<void(const VideoFrame &)> callback);
 void stop_macos_screen_capture();
 
 bool check_screen_recording_permission() {
   if (@available(macOS 12.3, *)) {
-    // 尝试获取可共享内容来检查权限
+    // Try to get shareable content to check permissions
     __block bool permission_granted = false;
     __block bool check_completed = false;
 
@@ -216,7 +216,7 @@ bool check_screen_recording_permission() {
           check_completed = true;
         }];
 
-    // 等待权限检查完成（最多等待2秒）
+    // Wait for permission check to complete (maximum 2 seconds)
     int wait_count = 0;
     while (!check_completed && wait_count < 200) {
       [[NSRunLoop currentRunLoop]
@@ -226,26 +226,26 @@ bool check_screen_recording_permission() {
 
     return permission_granted;
   } else {
-    std::cout << "ScreenCaptureKit 需要 macOS 12.3 或更高版本" << std::endl;
+    std::cout << "ScreenCaptureKit requires macOS 12.3 or higher" << std::endl;
     return false;
   }
 }
 
 bool initialize_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
-    // 先检查权限
+    // Check permissions first
     if (!check_screen_recording_permission()) {
-      std::cout << "ScreenCaptureKit 权限检查失败，请在系统偏好设置 > "
-                   "安全性与隐私 > 隐私 > 屏幕录制中允许此应用"
+      std::cout << "ScreenCaptureKit permission check failed, please grant permission in "
+                   "System Preferences > Security & Privacy > Privacy > Screen Recording"
                 << std::endl;
       return false;
     }
 
     g_delegate = [[ScreenCaptureDelegate alloc] init];
-    std::cout << "ScreenCaptureKit 初始化成功" << std::endl;
+    std::cout << "ScreenCaptureKit initialization successful" << std::endl;
     return true;
   } else {
-    std::cout << "ScreenCaptureKit 需要 macOS 12.3 或更高版本" << std::endl;
+    std::cout << "ScreenCaptureKit requires macOS 12.3 or higher" << std::endl;
     return false;
   }
 }
@@ -253,80 +253,80 @@ bool initialize_macos_screen_capture() {
 bool start_macos_screen_capture(
     std::function<void(const VideoFrame &)> callback, int window_id) {
   if (@available(macOS 12.3, *)) {
-    // 检查是否需要重启
+    // Check if restart is needed
     if (g_needs_restart && g_is_capturing) {
-      std::cout << "ScreenCaptureKit: 检测到需要重启，先停止当前流..."
+      std::cout << "ScreenCaptureKit: Restart needed, stopping current stream..."
                 << std::endl;
       stop_macos_screen_capture();
       g_needs_restart = false;
-      // 等待一小段时间让停止操作完成
+      // Wait a short time for the stop operation to complete
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
     if (g_is_capturing && !g_needs_restart) {
-      std::cout << "ScreenCaptureKit 已在运行" << std::endl;
+      std::cout << "ScreenCaptureKit is already running" << std::endl;
       return true;
     }
 
-    // 确保清理之前的stream
+    // Ensure cleanup of previous stream
     if (g_stream) {
-      std::cout << "清理之前的 ScreenCaptureKit 流..." << std::endl;
+      std::cout << "Cleaning up previous ScreenCaptureKit stream..." << std::endl;
       g_stream = nil;
     }
 
-    std::cout << "开始启动 ScreenCaptureKit..." << std::endl;
+    std::cout << "Starting ScreenCaptureKit..." << std::endl;
     g_frame_callback = callback;
 
-    // 确保在主线程上执行ScreenCaptureKit操作
+    // Ensure ScreenCaptureKit operations are executed on main thread
     dispatch_async(dispatch_get_main_queue(), ^{
       @try {
-        // 获取可用的显示器
-        std::cout << "正在获取可共享内容..." << std::endl;
+        // Get available displays
+        std::cout << "Getting shareable content..." << std::endl;
         [SCShareableContent getShareableContentWithCompletionHandler:^(
                                 SCShareableContent *_Nullable content,
                                 NSError *_Nullable error) {
           @try {
-            std::cout << "getShareableContentWithCompletionHandler 回调被调用"
+            std::cout << "getShareableContentWithCompletionHandler callback called"
                       << std::endl;
             if (error) {
-              std::cout << "获取可共享内容失败: " <<
+              std::cout << "Failed to get shareable content: " <<
                   [[error localizedDescription] UTF8String] << std::endl;
-              std::cout << "错误代码: " << error.code << std::endl;
-              std::cout << "错误域: " << [error.domain UTF8String] << std::endl;
+              std::cout << "Error code: " << error.code << std::endl;
+              std::cout << "Error domain: " << [error.domain UTF8String] << std::endl;
               g_is_capturing = false;
               return;
             }
 
             if (!content || content.displays.count == 0) {
-              std::cout << "没有找到可用的显示器" << std::endl;
+              std::cout << "No available displays found" << std::endl;
               g_is_capturing = false;
               return;
             }
 
-            std::cout << "找到 " << content.displays.count << " 个显示器"
+            std::cout << "Found " << content.displays.count << " displays"
                       << std::endl;
             SCDisplay *display = content.displays.firstObject;
             if (!display) {
-              std::cout << "无法获取第一个显示器" << std::endl;
+              std::cout << "Unable to get first display" << std::endl;
               g_is_capturing = false;
               return;
             }
 
-            std::cout << "使用显示器: " << display.displayID
-                      << ", 尺寸: " << display.width << "x" << display.height
+            std::cout << "Using display: " << display.displayID
+                      << ", size: " << display.width << "x" << display.height
                       << std::endl;
 
             SCContentFilter *filter = nil;
             
-            // 根据 window_id 参数决定捕捉目标
+            // Determine capture target based on window_id parameter
             if (window_id <= 0) {
-              // 捕捉整个桌面
-              std::cout << "创建桌面捕捉过滤器..." << std::endl;
+              // Capture entire desktop
+              std::cout << "Creating desktop capture filter..." << std::endl;
               filter = [[SCContentFilter alloc] initWithDisplay:display
                                               excludingWindows:@[]];
             } else {
-              // 捕捉特定窗口
-              std::cout << "查找窗口ID: " << window_id << std::endl;
+              // Capture specific window
+              std::cout << "Looking for window ID: " << window_id << std::endl;
               SCWindow *targetWindow = nil;
               for (SCWindow *window in content.windows) {
                 if (window.windowID == window_id) {
@@ -336,56 +336,56 @@ bool start_macos_screen_capture(
               }
               
               if (targetWindow) {
-                std::cout << "找到目标窗口: " << [targetWindow.title UTF8String]
+                std::cout << "Found target window: " << [targetWindow.title UTF8String]
                           << " (" << [targetWindow.owningApplication.applicationName UTF8String] << ")" << std::endl;
                 filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
               } else {
-                std::cout << "未找到窗口ID " << window_id << "，回退到桌面捕捉" << std::endl;
+                std::cout << "Window ID " << window_id << " not found, falling back to desktop capture" << std::endl;
                 filter = [[SCContentFilter alloc] initWithDisplay:display
                                                 excludingWindows:@[]];
               }
             }
             
             if (!filter) {
-              std::cout << "创建内容过滤器失败" << std::endl;
+              std::cout << "Failed to create content filter" << std::endl;
               g_is_capturing = false;
               return;
             }
-            std::cout << "创建内容过滤器成功" << std::endl;
+            std::cout << "Content filter created successfully" << std::endl;
 
             SCStreamConfiguration *config =
                 [[SCStreamConfiguration alloc] init];
-            // 使用更保守的分辨率设置，避免过高的数据量
+            // Use more conservative resolution settings to avoid excessive data volume
             config.width = std::min((int)display.width, 1280);
             config.height = std::min((int)display.height, 720);
             config.minimumFrameInterval =
-                CMTimeMake(1, 30); // 进一步降低到3 FPS，大幅减少缓冲区压力
+                CMTimeMake(1, 30); // Further reduce to 30 FPS to significantly reduce buffer pressure
             config.pixelFormat = kCVPixelFormatType_32BGRA;
-            config.queueDepth = 3;      // 进一步增加缓存深度，提供更多缓冲空间
-            config.showsCursor = YES;   // 显示鼠标光标
-            config.capturesAudio = YES; // 明确禁用音频捕获
-            config.scalesToFit = YES;   // 允许缩放以适应配置的尺寸
-            config.includeChildWindows = YES;          // 包含子窗口
-            config.colorSpaceName = kCGColorSpaceSRGB; // 明确指定颜色空间
-            config.backgroundColor = [NSColor blackColor].CGColor; // 设置背景色
-            std::cout << "创建流配置成功" << std::endl;
+            config.queueDepth = 3;      // Increase cache depth for more buffer space
+            config.showsCursor = YES;   // Show mouse cursor
+            config.capturesAudio = YES; // Enable audio capture
+            config.scalesToFit = YES;   // Allow scaling to fit configured dimensions
+            config.includeChildWindows = YES;          // Include child windows
+            config.colorSpaceName = kCGColorSpaceSRGB; // Explicitly specify color space
+            config.backgroundColor = [NSColor blackColor].CGColor; // Set background color
+            std::cout << "Stream configuration created successfully" << std::endl;
 
-            std::cout << "创建 ScreenCaptureKit 流..." << std::endl;
+            std::cout << "Creating ScreenCaptureKit stream..." << std::endl;
             g_stream = [[SCStream alloc] initWithFilter:filter
                                           configuration:config
                                                delegate:g_delegate];
             if (!g_stream) {
-              std::cout << "创建 ScreenCaptureKit 流失败" << std::endl;
+              std::cout << "Failed to create ScreenCaptureKit stream" << std::endl;
               g_is_capturing = false;
               return;
             }
-            std::cout << "ScreenCaptureKit 流创建成功" << std::endl;
+            std::cout << "ScreenCaptureKit stream created successfully" << std::endl;
 
-            // 创建专门的后台队列处理视频帧，避免阻塞主线程
+            // Create dedicated background queue for video frame processing to avoid blocking main thread
             dispatch_queue_t videoQueue = dispatch_queue_create(
                 "com.duorou.video_capture", DISPATCH_QUEUE_SERIAL);
 
-            // 添加stream output以接收视频数据
+            // Add stream output to receive video data
             NSError *outputError = nil;
             BOOL outputAdded =
                 [g_stream addStreamOutput:(id<SCStreamOutput>)g_delegate
@@ -393,66 +393,66 @@ bool start_macos_screen_capture(
                        sampleHandlerQueue:videoQueue
                                     error:&outputError];
             if (!outputAdded || outputError) {
-              std::cout << "添加 ScreenCaptureKit 输出失败: "
+              std::cout << "Failed to add ScreenCaptureKit output: "
                         << (outputError ? [[outputError localizedDescription]
                                               UTF8String]
-                                        : "未知错误")
+                                        : "Unknown error")
                         << std::endl;
               g_is_capturing = false;
               return;
             }
-            std::cout << "ScreenCaptureKit 输出添加成功" << std::endl;
+            std::cout << "ScreenCaptureKit output added successfully" << std::endl;
 
-            std::cout << "开始启动捕获..." << std::endl;
+            std::cout << "Starting capture..." << std::endl;
 
-            // 设置一个标志来跟踪回调是否被调用
+            // Set a flag to track whether callback is called
             __block BOOL callbackCalled = NO;
 
             [g_stream
                 startCaptureWithCompletionHandler:^(NSError *_Nullable error) {
                   @try {
-                    std::cout << "startCaptureWithCompletionHandler 回调被调用"
+                    std::cout << "startCaptureWithCompletionHandler callback called"
                               << std::endl;
                     callbackCalled = YES;
                     if (error) {
-                      std::cout << "启动 ScreenCaptureKit 失败: " <<
+                      std::cout << "Failed to start ScreenCaptureKit: " <<
                           [[error localizedDescription] UTF8String]
                                 << std::endl;
-                      std::cout << "错误代码: " << error.code << std::endl;
-                      std::cout << "错误域: " << [error.domain UTF8String]
+                      std::cout << "Error code: " << error.code << std::endl;
+                      std::cout << "Error domain: " << [error.domain UTF8String]
                                 << std::endl;
                       g_is_capturing = false;
                     } else {
-                      std::cout << "ScreenCaptureKit 启动成功，开始接收屏幕数据"
+                      std::cout << "ScreenCaptureKit started successfully, receiving screen data"
                                 << std::endl;
                       g_is_capturing = true;
                     }
                   } @catch (NSException *exception) {
-                    std::cout << "startCaptureWithCompletionHandler 异常: " <<
+                    std::cout << "startCaptureWithCompletionHandler exception: " <<
                         [[exception description] UTF8String] << std::endl;
                     g_is_capturing = false;
                   }
                 }];
 
-            // 等待回调或超时
+            // Wait for callback or timeout
             dispatch_after(
                 dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                 dispatch_get_main_queue(), ^{
                   if (!callbackCalled) {
                     std::cout
-                        << "ScreenCaptureKit 启动超时（3秒），假设启动成功"
+                        << "ScreenCaptureKit startup timeout (3 seconds), assuming successful start"
                         << std::endl;
                     g_is_capturing = true;
                   }
                 });
           } @catch (NSException *exception) {
-            std::cout << "getShareableContentWithCompletionHandler 异常: " <<
+            std::cout << "getShareableContentWithCompletionHandler exception: " <<
                 [[exception description] UTF8String] << std::endl;
             g_is_capturing = false;
           }
         }];
       } @catch (NSException *exception) {
-        std::cout << "ScreenCaptureKit 启动异常: " <<
+        std::cout << "ScreenCaptureKit startup exception: " <<
             [[exception description] UTF8String] << std::endl;
         g_is_capturing = false;
       }
@@ -460,7 +460,7 @@ bool start_macos_screen_capture(
 
     return true;
   } else {
-    std::cout << "ScreenCaptureKit 需要 macOS 12.3 或更高版本" << std::endl;
+    std::cout << "ScreenCaptureKit requires macOS 12.3 or higher" << std::endl;
     return false;
   }
 }
@@ -468,14 +468,14 @@ bool start_macos_screen_capture(
 void stop_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
     if (g_stream && g_is_capturing) {
-      g_is_capturing = false; // 立即设置为false避免重复调用
+      g_is_capturing = false; // Immediately set to false to avoid duplicate calls
       dispatch_async(dispatch_get_main_queue(), ^{
         [g_stream stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
           if (error) {
-            std::cout << "停止 ScreenCaptureKit 时出错: " <<
+            std::cout << "Error stopping ScreenCaptureKit: " <<
                 [[error localizedDescription] UTF8String] << std::endl;
           } else {
-            std::cout << "ScreenCaptureKit 已停止" << std::endl;
+            std::cout << "ScreenCaptureKit stopped" << std::endl;
           }
         }];
       });
@@ -487,111 +487,111 @@ bool is_macos_screen_capture_running() { return g_is_capturing; }
 
 void cleanup_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
-    std::cout << "开始清理macOS屏幕捕获资源..." << std::endl;
+    std::cout << "Starting cleanup of macOS screen capture resources..." << std::endl;
 
-    // 使用静态互斥锁防止并发清理
+    // Use static mutex to prevent concurrent cleanup
     static std::mutex cleanup_mutex;
     static bool cleanup_completed = false;
 
     std::lock_guard<std::mutex> lock(cleanup_mutex);
 
-    // 检查是否已经清理过
+    // Check if cleanup has already been performed
     if (cleanup_completed) {
-      std::cout << "macOS屏幕捕获资源已经清理，跳过" << std::endl;
+      std::cout << "macOS screen capture resources already cleaned up, skipping" << std::endl;
       return;
     }
 
-    // 先清除回调函数，防止在清理过程中被调用
+    // Clear callback function first to prevent calls during cleanup
     g_frame_callback = nullptr;
 
-    // 确保停止捕获
+    // Ensure capture is stopped
     if (g_stream && g_is_capturing) {
-      std::cout << "正在停止屏幕捕获流..." << std::endl;
+      std::cout << "Stopping screen capture stream..." << std::endl;
 
       if ([NSThread isMainThread]) {
-        // 如果在主线程，直接调用停止方法
+        // If on main thread, call stop method directly
         if (g_stream) {
           [g_stream
               stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
                 if (error) {
-                  std::cout << "停止捕获时出错: " <<
+                  std::cout << "Error stopping capture: " <<
                       [[error localizedDescription] UTF8String] << std::endl;
                 } else {
-                  std::cout << "屏幕捕获流已停止" << std::endl;
+                  std::cout << "Screen capture stream stopped" << std::endl;
                 }
                 g_is_capturing = false;
               }];
         }
-        // 给一个短暂的延迟让停止操作有机会执行
+        // Give a brief delay to allow stop operation to execute
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       } else {
-        // 如果不在主线程，异步停止但不等待完成
+        // If not on main thread, stop asynchronously but don't wait for completion
         dispatch_async(dispatch_get_main_queue(), ^{
           if (g_stream) {
             [g_stream
                 stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
                   if (error) {
-                    std::cout << "停止捕获时出错: " <<
+                    std::cout << "Error stopping capture: " <<
                         [[error localizedDescription] UTF8String] << std::endl;
                   } else {
-                    std::cout << "屏幕捕获流已停止" << std::endl;
+                    std::cout << "Screen capture stream stopped" << std::endl;
                   }
                   g_is_capturing = false;
                 }];
           }
         });
-        // 给一个短暂的延迟让停止操作有机会执行
+        // Give a brief delay to allow stop operation to execute
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }
     }
     
-    // 确保状态正确
+    // Ensure state is correct
     g_is_capturing = false;
 
-    // 安全地清理资源，避免死锁
+    // Safely clean up resources, avoiding deadlock
     if ([NSThread isMainThread]) {
-      // 如果已经在主线程，直接清理
+      // If already on main thread, clean up directly
       if (g_stream) {
         g_stream = nil;
-        std::cout << "屏幕捕获流已清理" << std::endl;
+        std::cout << "Screen capture stream cleaned up" << std::endl;
       }
 
       if (g_delegate) {
         g_delegate = nil;
-        std::cout << "屏幕捕获代理已清理" << std::endl;
+        std::cout << "Screen capture delegate cleaned up" << std::endl;
       }
     } else {
-      // 如果不在主线程，使用异步方式清理，但不等待完成以避免死锁
+      // If not on main thread, use async cleanup but don't wait for completion to avoid deadlock
       dispatch_async(dispatch_get_main_queue(), ^{
         if (g_stream) {
           g_stream = nil;
-          std::cout << "屏幕捕获流已清理" << std::endl;
+          std::cout << "Screen capture stream cleaned up" << std::endl;
         }
 
         if (g_delegate) {
           g_delegate = nil;
-          std::cout << "屏幕捕获代理已清理" << std::endl;
+          std::cout << "Screen capture delegate cleaned up" << std::endl;
         }
       });
       
-      // 给一个短暂的延迟让清理任务有机会执行，但不阻塞
+      // Give a brief delay to allow cleanup task to execute, but don't block
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
-    // 标记清理完成
+    // Mark cleanup as completed
     cleanup_completed = true;
-    std::cout << "macOS屏幕捕获资源清理完成" << std::endl;
+    std::cout << "macOS screen capture resource cleanup completed" << std::endl;
   }
 }
 
 void update_macos_screen_capture_window(int window_id) {
   if (@available(macOS 12.3, *)) {
     if (!g_stream || !g_is_capturing) {
-      std::cout << "屏幕捕获未运行，无法更新窗口" << std::endl;
+      std::cout << "Screen capture not running, cannot update window" << std::endl;
       return;
     }
 
-    std::cout << "更新屏幕捕获窗口ID: " << window_id << std::endl;
+    std::cout << "Updating screen capture window ID: " << window_id << std::endl;
 
     dispatch_async(dispatch_get_main_queue(), ^{
       @try {
@@ -599,29 +599,29 @@ void update_macos_screen_capture_window(int window_id) {
             SCShareableContent *_Nullable content, NSError *_Nullable error) {
           @try {
             if (error || !content) {
-              std::cout << "获取可共享内容失败: " <<
-                  (error ? [[error localizedDescription] UTF8String] : "未知错误")
+              std::cout << "Failed to get shareable content: " <<
+                  (error ? [[error localizedDescription] UTF8String] : "Unknown error")
                         << std::endl;
               return;
             }
 
             SCDisplay *display = content.displays.firstObject;
             if (!display) {
-              std::cout << "未找到显示器" << std::endl;
+              std::cout << "Display not found" << std::endl;
               return;
             }
 
             SCContentFilter *filter = nil;
             
-            // 根据 window_id 参数决定捕捉目标
+            // Determine capture target based on window_id parameter
             if (window_id <= 0) {
-              // 捕捉整个桌面
-              std::cout << "更新为桌面捕捉..." << std::endl;
+              // Capture entire desktop
+              std::cout << "Updating to desktop capture..." << std::endl;
               filter = [[SCContentFilter alloc] initWithDisplay:display
                                               excludingWindows:@[]];
             } else {
-              // 捕捉特定窗口
-              std::cout << "查找窗口ID: " << window_id << std::endl;
+              // Capture specific window
+              std::cout << "Looking for window ID: " << window_id << std::endl;
               SCWindow *targetWindow = nil;
               for (SCWindow *window in content.windows) {
                 if (window.windowID == window_id) {
@@ -631,63 +631,63 @@ void update_macos_screen_capture_window(int window_id) {
               }
               
               if (targetWindow) {
-                std::cout << "找到目标窗口: " << [targetWindow.title UTF8String]
+                std::cout << "Found target window: " << [targetWindow.title UTF8String]
                           << " (" << [targetWindow.owningApplication.applicationName UTF8String] << ")" << std::endl;
                 filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
               } else {
-                std::cout << "未找到窗口ID " << window_id << "，保持当前设置" << std::endl;
+                std::cout << "Window ID " << window_id << " not found, keeping current settings" << std::endl;
                 return;
               }
             }
 
             if (!filter) {
-              std::cout << "创建内容过滤器失败" << std::endl;
+              std::cout << "Failed to create content filter" << std::endl;
               return;
             }
 
-            // 更新流的过滤器
+            // Update stream filter
             [g_stream updateContentFilter:filter completionHandler:^(NSError *_Nullable error) {
               if (error) {
-                std::cout << "更新内容过滤器失败: " <<
+                std::cout << "Failed to update content filter: " <<
                     [[error localizedDescription] UTF8String] << std::endl;
               } else {
-                std::cout << "内容过滤器更新成功" << std::endl;
+                std::cout << "Content filter updated successfully" << std::endl;
               }
             }];
           } @catch (NSException *exception) {
-            std::cout << "更新窗口过滤器异常: " <<
+            std::cout << "Update window filter exception: " <<
                 [[exception description] UTF8String] << std::endl;
           }
         }];
       } @catch (NSException *exception) {
-        std::cout << "更新屏幕捕获窗口异常: " <<
+        std::cout << "Update screen capture window exception: " <<
             [[exception description] UTF8String] << std::endl;
       }
     });
   } else {
-    std::cout << "ScreenCaptureKit 需要 macOS 12.3 或更高版本" << std::endl;
+    std::cout << "ScreenCaptureKit requires macOS 12.3 or higher" << std::endl;
   }
 }
 
 bool is_macos_camera_available() {
   @try {
-    // 使用 AVFoundation 检测摄像头设备
+    // Use AVFoundation to detect camera devices
     NSArray<AVCaptureDevice *> *devices =
         [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
 
     if (devices.count > 0) {
-      std::cout << "检测到 " << devices.count << " 个摄像头设备" << std::endl;
+      std::cout << "Detected " << devices.count << " camera devices" << std::endl;
       for (AVCaptureDevice *device in devices) {
-        std::cout << "摄像头设备: " << [device.localizedName UTF8String]
+        std::cout << "Camera device: " << [device.localizedName UTF8String]
                   << std::endl;
       }
       return true;
     } else {
-      std::cout << "未检测到摄像头设备" << std::endl;
+      std::cout << "No camera devices detected" << std::endl;
       return false;
     }
   } @catch (NSException *exception) {
-    std::cout << "检测摄像头时发生异常: " <<
+    std::cout << "Exception occurred while detecting camera: " <<
         [[exception description] UTF8String] << std::endl;
     return false;
   }

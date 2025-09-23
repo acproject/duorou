@@ -48,7 +48,7 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
             v = value2D.matmul(ctx, valueWeight_);
         }
     } else {
-        // 2D张量直接处理
+        // Process 2D tensor directly
         q = query.matmul(ctx, queryWeight_);
         if (key.data() && value.data()) {
             k = key.matmul(ctx, keyWeight_);
@@ -64,26 +64,26 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
         }
     }
     
-    // 如果有缓存，存储 K, V
+    // If cache exists, store K, V
     if (cache && k.data() && v.data()) {
-        // cache->put(ctx, k, v); // 需要实现缓存接口
+        // cache->put(ctx, k, v); // Need to implement cache interface
     }
     
-    // 执行注意力计算
+    // Execute attention computation
     Tensor attnOutput = scaledDotProductAttention(ctx, q, k, v, mask);
     
-    // 输出投影 - 需要在2D形式下进行
+    // Output projection - needs to be done in 2D form
     Tensor output;
     if (is3D) {
-        // 保持2D形式进行输出投影
+        // Keep 2D form for output projection
         output = attnOutput.matmul(ctx, outputWeight_);
         if (hasBias_) {
             output = output.add(ctx, outputBias_);
         }
-        // 然后重塑回3D
+        // Then reshape back to 3D
         output = output.reshape({queryShape[0], queryShape[1], output.shape()[1]});
     } else {
-        // 2D张量直接处理
+        // Process 2D tensor directly
         output = attnOutput.matmul(ctx, outputWeight_);
         if (hasBias_) {
             output = output.add(ctx, outputBias_);
@@ -97,12 +97,12 @@ Tensor MultiHeadAttention::forwardWithSinks(Context& ctx, const Tensor& query,
                                            const Tensor& key, const Tensor& value,
                                            const Tensor& sinks, float scale,
                                            kvcache::Cache* cache) {
-    // 这是一个简化的实现，实际需要处理 sink tokens
+    // This is a simplified implementation, actually needs to handle sink tokens
     return forward(ctx, query, key, value, cache);
 }
 
 void MultiHeadAttention::initializeWeights(Context& ctx, const std::string& method) {
-    // 初始化所有权重矩阵
+    // Initialize all weight matrices
     queryWeight_.allocate();
     keyWeight_.allocate();
     valueWeight_.allocate();
@@ -115,39 +115,39 @@ void MultiHeadAttention::initializeWeights(Context& ctx, const std::string& meth
         outputBias_.allocate();
     }
     
-    // 使用 Xavier 初始化（简化实现）
-    // 实际应该根据 method 参数选择不同的初始化方法
+    // Use Xavier initialization (simplified implementation)
+    // Should actually choose different initialization methods based on method parameter
 }
 
 Tensor MultiHeadAttention::scaledDotProductAttention(Context& ctx, const Tensor& q, 
                                                    const Tensor& k, const Tensor& v,
                                                    const Tensor& mask) {
-    // 计算注意力分数: scores = q @ k.T / sqrt(d_k)
+    // Calculate attention scores: scores = q @ k.T / sqrt(d_k)
     float scale = 1.0f / std::sqrt(static_cast<float>(headDim_));
     
-    // 这里需要实现实际的注意力计算
-    // 简化实现，返回 v（实际需要完整的注意力机制）
+    // Need to implement actual attention computation here
+    // Simplified implementation, return v (actually needs complete attention mechanism)
     return v;
 }
 
 Tensor MultiHeadAttention::applyRotaryPositionEmbedding(Context& ctx, const Tensor& tensor, 
                                                        int64_t seqLen, int64_t offset) {
-    // RoPE 实现（简化）
+    // RoPE implementation (simplified)
     return tensor;
 }
 
-// 全局注意力函数
+// Global attention function
 Tensor attention(Context& ctx, const Tensor& query, const Tensor& key, 
                 const Tensor& value, float scale, kvcache::Cache* cache) {
-    // 简化的注意力实现
-    // 实际需要完整的 scaled dot-product attention
+    // Simplified attention implementation
+    // Actually needs complete scaled dot-product attention
     return value;
 }
 
 Tensor attentionWithSinks(Context& ctx, const Tensor& query, const Tensor& key,
                          const Tensor& value, const Tensor& sinks, float scale,
                          kvcache::Cache* cache) {
-    // 带 sink tokens 的注意力实现
+    // Attention implementation with sink tokens
     return attention(ctx, query, key, value, scale, cache);
 }
 

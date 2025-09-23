@@ -18,34 +18,34 @@ namespace core {
  * @brief 资源类型枚举
  */
 enum class ResourceType {
-    MODEL,          ///< 模型资源
-    GPU_MEMORY,     ///< GPU内存资源
-    CPU_MEMORY,     ///< CPU内存资源
-    COMPUTE_UNIT,   ///< 计算单元资源
-    STORAGE,        ///< 存储资源
-    NETWORK         ///< 网络资源
+    MODEL,          ///< Model resource
+    GPU_MEMORY,     ///< GPU memory resource
+    CPU_MEMORY,     ///< CPU memory resource
+    COMPUTE_UNIT,   ///< Compute unit resource
+    STORAGE,        ///< Storage resource
+    NETWORK         ///< Network resource
 };
 
 /**
  * @brief 资源锁定模式
  */
 enum class LockMode {
-    SHARED,         ///< 共享锁（读锁）
-    EXCLUSIVE       ///< 独占锁（写锁）
+    SHARED,         ///< Shared lock (read lock)
+    EXCLUSIVE       ///< Exclusive lock (write lock)
 };
 
 /**
  * @brief 资源信息
  */
 struct ResourceInfo {
-    std::string id;                 ///< 资源ID
-    ResourceType type;              ///< 资源类型
-    std::string name;               ///< 资源名称
-    size_t capacity;                ///< 资源容量
-    size_t used;                    ///< 已使用量
-    bool available;                 ///< 是否可用
-    std::chrono::system_clock::time_point last_accessed;  ///< 最后访问时间
-    std::unordered_set<std::string> holders;  ///< 持有者列表
+    std::string id;                 ///< Resource ID
+    ResourceType type;              ///< Resource type
+    std::string name;               ///< Resource name
+    size_t capacity;                ///< Resource capacity
+    size_t used;                    ///< Used amount
+    bool available;                 ///< Whether available
+    std::chrono::system_clock::time_point last_accessed;  ///< Last access time
+    std::unordered_set<std::string> holders;  ///< Holder list
     
     ResourceInfo() : capacity(0), used(0), available(true) {}
 };
@@ -54,11 +54,11 @@ struct ResourceInfo {
  * @brief 资源锁定信息
  */
 struct ResourceLock {
-    std::string resource_id;        ///< 资源ID
-    std::string holder_id;          ///< 持有者ID
-    LockMode mode;                  ///< 锁定模式
-    std::chrono::system_clock::time_point acquired_time;  ///< 获取时间
-    std::chrono::milliseconds timeout;  ///< 超时时间
+    std::string resource_id;        ///< Resource ID
+    std::string holder_id;          ///< Holder ID
+    LockMode mode;                  ///< Lock mode
+    std::chrono::system_clock::time_point acquired_time;  ///< Acquisition time
+    std::chrono::milliseconds timeout;  ///< Timeout duration
     
     ResourceLock() : mode(LockMode::SHARED), timeout(0) {}
 };
@@ -67,51 +67,51 @@ struct ResourceLock {
  * @brief 资源预留信息
  */
 struct ResourceReservation {
-    std::string resource_id;        ///< 资源ID
-    std::string requester_id;       ///< 请求者ID
-    size_t amount;                  ///< 预留数量
-    std::chrono::system_clock::time_point reserved_time;  ///< 预留时间
-    std::chrono::milliseconds duration;  ///< 预留时长
+    std::string resource_id;        ///< Resource ID
+    std::string requester_id;       ///< Requester ID
+    size_t amount;                  ///< Reserved amount
+    std::chrono::system_clock::time_point reserved_time;  ///< Reserved time
+    std::chrono::milliseconds duration;  ///< Reservation duration
     
     ResourceReservation() : amount(0), duration(0) {}
 };
 
 /**
- * @brief 资源管理器
+ * @brief Resource Manager
  */
 class ResourceManager {
 public:
     /**
-     * @brief 构造函数
+     * @brief Constructor
      */
     ResourceManager();
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~ResourceManager();
     
     /**
-     * @brief 注册资源
-     * @param resource_info 资源信息
-     * @return 是否成功
+     * @brief Register resource
+     * @param resource_info Resource information
+     * @return Whether successful
      */
     bool registerResource(const ResourceInfo& resource_info);
     
     /**
-     * @brief 注销资源
-     * @param resource_id 资源ID
-     * @return 是否成功
+     * @brief Unregister resource
+     * @param resource_id Resource ID
+     * @return Whether successful
      */
     bool unregisterResource(const std::string& resource_id);
     
     /**
-     * @brief 获取资源锁
-     * @param resource_id 资源ID
-     * @param holder_id 持有者ID
-     * @param mode 锁定模式
-     * @param timeout_ms 超时时间（毫秒）
-     * @return 是否成功获取锁
+     * @brief Acquire resource lock
+     * @param resource_id Resource ID
+     * @param holder_id Holder ID
+     * @param mode Lock mode
+     * @param timeout_ms Timeout in milliseconds
+     * @return Whether lock acquired successfully
      */
     bool acquireLock(const std::string& resource_id, 
                      const std::string& holder_id,
@@ -119,20 +119,20 @@ public:
                      int timeout_ms = 5000);
     
     /**
-     * @brief 释放资源锁
-     * @param resource_id 资源ID
-     * @param holder_id 持有者ID
-     * @return 是否成功释放锁
+     * @brief Release resource lock
+     * @param resource_id Resource ID
+     * @param holder_id Holder ID
+     * @return Whether lock released successfully
      */
     bool releaseLock(const std::string& resource_id, const std::string& holder_id);
     
     /**
-     * @brief 预留资源
-     * @param resource_id 资源ID
-     * @param requester_id 请求者ID
-     * @param amount 预留数量
-     * @param duration_ms 预留时长（毫秒）
-     * @return 是否成功预留
+     * @brief Reserve resource
+     * @param resource_id Resource ID
+     * @param requester_id Requester ID
+     * @param amount Reserved amount
+     * @param duration_ms Reservation duration in milliseconds
+     * @return Whether reservation successful
      */
     bool reserveResource(const std::string& resource_id,
                         const std::string& requester_id,
@@ -140,140 +140,140 @@ public:
                         int duration_ms = 30000);
     
     /**
-     * @brief 释放资源预留
-     * @param resource_id 资源ID
-     * @param requester_id 请求者ID
-     * @return 是否成功释放
+     * @brief Release resource reservation
+     * @param resource_id Resource ID
+     * @param requester_id Requester ID
+     * @return Whether release successful
      */
     bool releaseReservation(const std::string& resource_id, const std::string& requester_id);
     
     /**
-     * @brief 检查资源是否可用
-     * @param resource_id 资源ID
-     * @param mode 锁定模式
-     * @return 是否可用
+     * @brief Check if resource is available
+     * @param resource_id Resource ID
+     * @param mode Lock mode
+     * @return Whether available
      */
     bool isResourceAvailable(const std::string& resource_id, LockMode mode = LockMode::SHARED) const;
     
     /**
-     * @brief 获取资源信息
-     * @param resource_id 资源ID
-     * @return 资源信息
+     * @brief Get resource information
+     * @param resource_id Resource ID
+     * @return Resource information
      */
     ResourceInfo getResourceInfo(const std::string& resource_id) const;
     
     /**
-     * @brief 获取资源使用率
-     * @param resource_id 资源ID
-     * @return 使用率（0.0-1.0）
+     * @brief Get resource utilization
+     * @param resource_id Resource ID
+     * @return Utilization rate (0.0-1.0)
      */
     double getResourceUtilization(const std::string& resource_id) const;
     
     /**
-     * @brief 获取所有资源列表
-     * @param type 资源类型过滤（可选）
-     * @return 资源ID列表
+     * @brief Get all resource list
+     * @param type Resource type filter (optional)
+     * @return Resource ID list
      */
     std::vector<std::string> getResourceList(ResourceType type = ResourceType::MODEL) const;
     
     /**
-     * @brief 清理过期的锁和预留
+     * @brief Clean up expired locks and reservations
      */
     void cleanupExpiredLocks();
     
     /**
-     * @brief 设置资源状态变化回调
-     * @param callback 回调函数
+     * @brief Set resource status change callback
+     * @param callback Callback function
      */
     void setResourceStatusCallback(std::function<void(const std::string&, bool)> callback);
     
     /**
-     * @brief 获取资源统计信息
-     * @return 统计信息映射
+     * @brief Get resource statistics
+     * @return Statistics mapping
      */
     std::unordered_map<std::string, size_t> getResourceStatistics() const;
     
     /**
-     * @brief 强制释放持有者的所有锁
-     * @param holder_id 持有者ID
-     * @return 释放的锁数量
+     * @brief Force release all locks held by holder
+     * @param holder_id Holder ID
+     * @return Number of locks released
      */
     size_t forceReleaseHolderLocks(const std::string& holder_id);
     
     /**
-     * @brief 检查死锁
-     * @return 是否存在死锁
+     * @brief Check for deadlock
+     * @return Whether deadlock exists
      */
     bool detectDeadlock() const;
     
     /**
-     * @brief 获取等待队列长度
-     * @param resource_id 资源ID
-     * @return 等待队列长度
+     * @brief Get waiting queue length
+     * @param resource_id Resource ID
+     * @return Waiting queue length
      */
     size_t getWaitingQueueLength(const std::string& resource_id) const;
     
 private:
     /**
-     * @brief 检查锁兼容性
-     * @param resource_id 资源ID
-     * @param mode 请求的锁模式
-     * @return 是否兼容
+     * @brief Check lock compatibility
+     * @param resource_id Resource ID
+     * @param mode Requested lock mode
+     * @return Whether compatible
      */
     bool isLockCompatible(const std::string& resource_id, LockMode mode) const;
     
     /**
-     * @brief 清理过期预留
+     * @brief Clean up expired reservations
      */
     void cleanupExpiredReservations();
     
     /**
-     * @brief 启动清理线程
+     * @brief Start cleanup thread
      */
     void startCleanupThread();
     
     /**
-     * @brief 停止清理线程
+     * @brief Stop cleanup thread
      */
     void stopCleanupThread();
     
     /**
-     * @brief 清理线程函数
+     * @brief Cleanup thread function
      */
     void cleanupThreadFunc();
     
 private:
-    mutable std::mutex resources_mutex_;                    ///< 资源互斥锁
-    mutable std::mutex locks_mutex_;                        ///< 锁互斥锁
-    mutable std::mutex reservations_mutex_;                 ///< 预留互斥锁
+    mutable std::mutex resources_mutex_;                    ///< Resource mutex
+    mutable std::mutex locks_mutex_;                        ///< Lock mutex
+    mutable std::mutex reservations_mutex_;                 ///< Reservation mutex
     
-    std::unordered_map<std::string, ResourceInfo> resources_;           ///< 资源映射
-    std::unordered_map<std::string, std::vector<ResourceLock>> locks_;   ///< 锁映射
-    std::unordered_map<std::string, std::vector<ResourceReservation>> reservations_;  ///< 预留映射
+    std::unordered_map<std::string, ResourceInfo> resources_;           ///< Resource mapping
+    std::unordered_map<std::string, std::vector<ResourceLock>> locks_;   ///< Lock mapping
+    std::unordered_map<std::string, std::vector<ResourceReservation>> reservations_;  ///< Reservation mapping
     
-    std::unordered_map<std::string, std::condition_variable> wait_conditions_;  ///< 等待条件变量
-    std::unordered_map<std::string, size_t> waiting_counts_;            ///< 等待计数
+    std::unordered_map<std::string, std::condition_variable> wait_conditions_;  ///< Wait condition variables
+    std::unordered_map<std::string, size_t> waiting_counts_;            ///< Waiting counts
     
-    std::function<void(const std::string&, bool)> status_callback_;     ///< 状态回调
+    std::function<void(const std::string&, bool)> status_callback_;     ///< Status callback
     
-    std::atomic<bool> cleanup_running_;                     ///< 清理线程运行标志
-    std::thread cleanup_thread_;                            ///< 清理线程
-    std::condition_variable cleanup_condition_;             ///< 清理条件变量
-    std::mutex cleanup_mutex_;                              ///< 清理互斥锁
+    std::atomic<bool> cleanup_running_;                     ///< Cleanup thread running flag
+    std::thread cleanup_thread_;                            ///< Cleanup thread
+    std::condition_variable cleanup_condition_;             ///< Cleanup condition variable
+    std::mutex cleanup_mutex_;                              ///< Cleanup mutex
 };
 
 /**
- * @brief RAII资源锁
+ * @brief RAII Resource Lock
  */
 class ResourceLockGuard {
 public:
     /**
-     * @brief 构造函数
-     * @param manager 资源管理器
-     * @param resource_id 资源ID
-     * @param holder_id 持有者ID
-     * @param mode 锁定模式
-     * @param timeout_ms 超时时间
+     * @brief Constructor
+     * @param manager Resource manager
+     * @param resource_id Resource ID
+     * @param holder_id Holder ID
+     * @param mode Lock mode
+     * @param timeout_ms Timeout in milliseconds
      */
     ResourceLockGuard(ResourceManager& manager,
                      const std::string& resource_id,
@@ -282,22 +282,22 @@ public:
                      int timeout_ms = 5000);
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~ResourceLockGuard();
     
     /**
-     * @brief 检查是否成功获取锁
-     * @return 是否成功
+     * @brief Check if lock acquired successfully
+     * @return Whether successful
      */
     bool isLocked() const { return locked_; }
     
     /**
-     * @brief 手动释放锁
+     * @brief Manually release lock
      */
     void unlock();
     
-    // 禁止拷贝和赋值
+    // Disable copy and assignment
     ResourceLockGuard(const ResourceLockGuard&) = delete;
     ResourceLockGuard& operator=(const ResourceLockGuard&) = delete;
     

@@ -31,26 +31,26 @@ public:
         
         config_ = config;
         
-        // 初始化InvokeAI引擎
+        // Initialize InvokeAI engine
         if (!engine_.initialize()) {
             std::cerr << "Failed to initialize InvokeAI engine" << std::endl;
             return false;
         }
         
-        // 初始化模型管理器
+        // Initialize model manager
         if (!model_manager_.initialize("/tmp/models")) {
             std::cerr << "Failed to initialize model manager" << std::endl;
             return false;
         }
         
-        // 设置引擎配置
+        // Set engine configuration
         engine_.set_device(config_.device);
         engine_.set_precision(config_.precision);
         if (config_.num_threads > 0) {
             engine_.set_threads(config_.num_threads);
         }
         
-        // 启动工作线程
+        // Start worker threads
         stop_workers_ = false;
         for (int i = 0; i < std::max(1, config_.num_threads); ++i) {
             workers_.emplace_back(&Impl::worker_thread, this);
@@ -69,7 +69,7 @@ public:
         // 停止所有任务
         cancel_all_tasks();
         
-        // 停止工作线程
+        // Stop worker threads
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             stop_workers_ = true;
@@ -83,7 +83,7 @@ public:
         }
         workers_.clear();
         
-        // 关闭引擎和模型管理器
+        // Shutdown engine and model manager
         engine_.shutdown();
         model_manager_.shutdown();
         
@@ -117,7 +117,7 @@ public:
             return "";
         }
         
-        // 创建新任务
+        // Create new task
         GenerationTask task;
         task.task_id = generate_task_id();
         task.pipeline_type = config_.type;
@@ -125,13 +125,13 @@ public:
         task.status = TaskStatus::PENDING;
         task.created_time = std::chrono::system_clock::now();
         
-        // 添加到任务队列
+        // Add to task queue
         {
             std::lock_guard<std::mutex> lock(tasks_mutex_);
             tasks_[task.task_id] = task;
         }
         
-        // 添加到工作队列
+        // Add to work queue
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             task_queue_.push({task.task_id, progress_cb, completed_cb});
@@ -147,7 +147,7 @@ public:
             return ImageGenerationResult{};
         }
         
-        // 直接使用引擎生成图像
+        // Generate image directly using engine
         return engine_.generate_image(params);
     }
     
@@ -280,7 +280,7 @@ public:
             return false;
         }
         
-        // 加载主模型
+        // Load main model
         if (!config_.model_name.empty()) {
             if (!model_manager_.load_model(config_.model_name)) {
                 std::cerr << "Failed to load main model: " << config_.model_name << std::endl;
@@ -288,14 +288,14 @@ public:
             }
         }
         
-        // 加载VAE模型
+        // Load VAE model
         if (!config_.vae_model.empty()) {
             if (!model_manager_.load_model(config_.vae_model)) {
                 std::cerr << "Failed to load VAE model: " << config_.vae_model << std::endl;
             }
         }
         
-        // 加载ControlNet模型
+        // Load ControlNet model
         if (!config_.controlnet_model.empty()) {
             if (!model_manager_.load_model(config_.controlnet_model)) {
                 std::cerr << "Failed to load ControlNet model: " << config_.controlnet_model << std::endl;
@@ -310,7 +310,7 @@ public:
             return false;
         }
         
-        // 卸载所有已加载的模型
+        // Unload all loaded models
         auto loaded_models = model_manager_.get_loaded_models();
         for (const auto& model_name : loaded_models) {
             model_manager_.unload_model(model_name);
@@ -338,7 +338,7 @@ private:
         while (true) {
             QueuedTask queued_task;
             
-            // 获取任务
+            // Get task
             {
                 std::unique_lock<std::mutex> lock(queue_mutex_);
                 queue_cv_.wait(lock, [this] { return !task_queue_.empty() || stop_workers_; });
@@ -351,7 +351,7 @@ private:
                 task_queue_.pop();
             }
             
-            // 执行任务
+            // Execute task
             execute_task(queued_task);
         }
     }
@@ -359,7 +359,7 @@ private:
     void execute_task(const QueuedTask& queued_task) {
         GenerationTask* task = nullptr;
         
-        // 获取任务信息
+        // Get task information
         {
             std::lock_guard<std::mutex> lock(tasks_mutex_);
             auto it = tasks_.find(queued_task.task_id);
@@ -372,7 +372,7 @@ private:
         }
         
         try {
-            // 进度回调包装器
+            // Progress callback wrapper
             auto progress_wrapper = [&](float progress, const std::string& step) {
                 {
                     std::lock_guard<std::mutex> lock(tasks_mutex_);
@@ -385,10 +385,10 @@ private:
                 }
             };
             
-            // 执行图像生成
+            // Execute image generation
             progress_wrapper(0.0f, "Starting generation...");
             
-            // 模拟生成过程
+            // Simulate generation process
             for (int i = 0; i <= 100; i += 10) {
                 if (task->status == TaskStatus::CANCELLED) {
                     break;
@@ -399,7 +399,7 @@ private:
             }
             
             if (task->status != TaskStatus::CANCELLED) {
-                // 使用引擎生成图像
+                // Generate image using engine
                 task->result = engine_.generate_image(task->params);
                 
                 {
@@ -431,7 +431,7 @@ private:
         return "task_" + std::to_string(next_task_id_++);
     }
     
-    // 成员变量
+    // Member variables
     bool initialized_;
     bool debug_mode_;
     PipelineConfig config_;
@@ -439,12 +439,12 @@ private:
     ModelManager model_manager_;
     PipelineEventCallback event_callback_;
     
-    // 任务管理
+    // Task management
     mutable std::mutex tasks_mutex_;
     std::map<std::string, GenerationTask> tasks_;
     std::atomic<int> next_task_id_;
     
-    // 工作线程
+    // Worker threads
     std::vector<std::thread> workers_;
     std::queue<QueuedTask> task_queue_;
     std::mutex queue_mutex_;
@@ -452,7 +452,7 @@ private:
     std::atomic<bool> stop_workers_;
 };
 
-// ImagePipeline实现
+// ImagePipeline implementation
 ImagePipeline::ImagePipeline() : pimpl_(std::make_unique<Impl>()) {}
 
 ImagePipeline::~ImagePipeline() = default;
@@ -548,7 +548,7 @@ void ImagePipeline::enable_debug_mode(bool enabled) {
     pimpl_->enable_debug_mode(enabled);
 }
 
-// 工具函数实现
+// Utility function implementations
 std::string pipeline_type_to_string(PipelineType type) {
     switch (type) {
         case PipelineType::TEXT_TO_IMAGE: return "text_to_image";
@@ -630,7 +630,7 @@ std::string format_generation_time(double seconds) {
     }
 }
 
-// 工厂函数实现
+// Factory function implementations
 std::unique_ptr<ImagePipeline> create_text_to_image_pipeline(const PipelineConfig& config) {
     auto pipeline = std::make_unique<ImagePipeline>();
     PipelineConfig cfg = config;

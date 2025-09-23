@@ -10,44 +10,44 @@ namespace duorou {
 namespace gui {
 
 /**
- * 会话存储适配器类
- * 封装MiniMemory的DataStore接口，专门用于聊天会话的持久化存储
+ * Session storage adapter class
+ * Encapsulates MiniMemory's DataStore interface, specifically for persistent storage of chat sessions
  */
 class SessionStorageAdapter {
 public:
   SessionStorageAdapter();
   ~SessionStorageAdapter();
 
-  // 初始化存储连接
+  // Initialize storage connection
   bool initialize(const std::string &server_host = "localhost",
                   int server_port = 6379);
 
-  // 保存单个会话
+  // Save single session
   bool saveSession(const duorou::gui::ChatSession &session);
 
-  // 加载单个会话
+  // Load single session
   std::unique_ptr<duorou::gui::ChatSession>
   loadSession(const std::string &session_id);
 
-  // 删除会话
+  // Delete session
   bool deleteSession(const std::string &session_id);
 
-  // 获取所有会话ID列表
+  // Get all session ID list
   std::vector<std::string> getAllSessionIds();
 
-  // 检查会话是否存在
+  // Check if session exists
   bool sessionExists(const std::string &session_id);
 
-  // 保存所有会话数据到磁盘
+  // Save all session data to disk
   bool saveToFile();
 
-  // 从磁盘加载所有会话数据
+  // Load all session data from disk
   bool loadFromFile();
 
-  // 清空所有会话数据
+  // Clear all session data
   bool clearAllSessions();
 
-  // 获取会话数量
+  // Get session count
   size_t getSessionCount();
 
 private:
@@ -56,29 +56,29 @@ private:
   int socket_fd_;
   bool connected_;
 
-  // 序列化会话为JSON字符串
+  // Serialize session to JSON string
   std::string serializeSession(const duorou::gui::ChatSession &session);
 
-  // 从JSON字符串反序列化会话
+  // Deserialize session from JSON string
   std::unique_ptr<duorou::gui::ChatSession>
   deserializeSession(const std::string &json_data);
 
-  // 生成会话在存储中的键名
+  // Generate session key name in storage
   std::string getSessionKey(const std::string &session_id);
 
-  // 会话列表键名
+  // Session list key name
   static const std::string SESSION_LIST_KEY;
 
-  // 会话数据键前缀
+  // Session data key prefix
   static const std::string SESSION_DATA_PREFIX;
 
-  // 网络通信方法
+  // Network communication methods
   bool connectToServer();
   void disconnectFromServer();
   bool sendCommand(const std::string &command);
   std::string receiveResponse();
 
-  // Redis协议命令构建
+  // Redis protocol command building
   std::string buildSetCommand(const std::string &key, const std::string &value);
   std::string buildGetCommand(const std::string &key);
   std::string buildDelCommand(const std::string &key);
