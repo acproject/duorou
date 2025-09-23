@@ -30,12 +30,19 @@ set_target_properties(duorou_kvcache PROPERTIES
 )
 
 # 设置编译选项
-target_compile_options(duorou_kvcache PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -O2
-)
+if(MSVC)
+    target_compile_options(duorou_kvcache PRIVATE
+        /W4
+        /O2
+    )
+else()
+    target_compile_options(duorou_kvcache PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -O2
+    )
+endif()
 
 # 设置包含目录
 target_include_directories(duorou_kvcache PUBLIC
@@ -44,7 +51,11 @@ target_include_directories(duorou_kvcache PUBLIC
 
 # 如果是 Debug 模式，添加调试信息
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(duorou_kvcache PRIVATE -g -O0)
+    if(MSVC)
+        target_compile_options(duorou_kvcache PRIVATE /Od /Zi)
+    else()
+        target_compile_options(duorou_kvcache PRIVATE -g -O0)
+    endif()
     target_compile_definitions(duorou_kvcache PRIVATE DEBUG=1)
 endif()
 
