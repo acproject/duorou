@@ -125,7 +125,7 @@ bool OllamaModelManager::loadModel(const std::string &model_id) {
     active_models_count_++;
     log("INFO", "Model loaded successfully: " + model_id);
   } else {
-    model_states_[model_id] = ModelLoadState::ERROR;
+    model_states_[model_id] = ModelLoadState::LOAD_ERROR;
     log("ERROR", "Failed to load model: " + model_id);
   }
 
@@ -232,7 +232,7 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
             << static_cast<int>(load_state) << std::endl;
 
   if (load_state != ModelLoadState::LOADED) {
-    if (load_state == ModelLoadState::ERROR) {
+    if (load_state == ModelLoadState::LOAD_ERROR) {
       std::cout << "[ERROR] Model initialization failed previously: "
                 << normalized_model_id << std::endl;
       response.error_message =
@@ -435,7 +435,7 @@ bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
     auto engine = createInferenceEngine(model_id);
     if (!engine) {
       log("ERROR", "Failed to create inference engine for: " + model_id);
-      model_states_[model_id] = ModelLoadState::ERROR;
+      model_states_[model_id] = ModelLoadState::LOAD_ERROR;
       return false;
     }
 
@@ -451,7 +451,7 @@ bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
 
   } catch (const std::exception &e) {
     log("ERROR", "Exception during model loading: " + std::string(e.what()));
-    model_states_[model_id] = ModelLoadState::ERROR;
+    model_states_[model_id] = ModelLoadState::LOAD_ERROR;
     return false;
   }
 }

@@ -34,7 +34,7 @@ enum class ModelLoadState {
     UNLOADED,
     LOADING,
     LOADED,
-    ERROR
+    LOAD_ERROR
 };
 
 // 推理请求结构体
