@@ -6,46 +6,46 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// ReLU 实现
+// ReLU implementation
 Tensor ReLU::forward(Context& ctx, const Tensor& input) {
     return input.relu(ctx);
 }
 
-// GELU 实现
+// GELU implementation
 Tensor GELU::forward(Context& /*ctx*/, const Tensor& input) {
     // GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
-    // 简化实现，实际需要更精确的计算
-    return input; // 占位符
+    // Simplified implementation, actual needs more precise calculation
+    return input; // Placeholder
 }
 
-// SiLU 实现
+// SiLU implementation
 Tensor SiLU::forward(Context& ctx, const Tensor& input) {
     // SiLU(x) = x * sigmoid(x)
     Tensor sigmoid_x = input.sigmoid(ctx);
     return input.mul(ctx, sigmoid_x);
 }
 
-// Tanh 实现
+// Tanh implementation
 Tensor Tanh::forward(Context& ctx, const Tensor& input) {
     return input.tanh(ctx);
 }
 
-// Sigmoid 实现
+// Sigmoid implementation
 Tensor Sigmoid::forward(Context& ctx, const Tensor& input) {
     return input.sigmoid(ctx);
 }
 
-// Softmax 实现
+// Softmax implementation
 Tensor Softmax::forward(Context& ctx, const Tensor& input) {
     return input.softmax(ctx, dim_);
 }
 
-// LeakyReLU 实现
+// LeakyReLU implementation
 Tensor LeakyReLU::forward(Context& /*ctx*/, const Tensor& input) {
     // LeakyReLU(x) = max(0, x) + negative_slope * min(0, x)
-    // 简化实现，实际需要更精确的计算
-    (void)negativeSlope_; // 避免未使用字段警告
-    return input; // 占位符
+    // Simplified implementation, actual needs more precise calculation
+    (void)negativeSlope_; // Avoid unused field warning
+    return input; // Placeholder
 }
 
 // ActivationFactory 实现

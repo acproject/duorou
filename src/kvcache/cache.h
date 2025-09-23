@@ -10,7 +10,7 @@
 namespace duorou {
 namespace kvcache {
 
-// 错误类型定义
+// Error type definitions
 class CacheError : public std::runtime_error {
 public:
     explicit CacheError(const std::string& message) : std::runtime_error(message) {}
@@ -21,7 +21,7 @@ public:
     explicit OutOfMemoryError(const std::string& message) : CacheError(message) {}
 };
 
-// 数据类型枚举
+// Data type enumeration
 enum class DType {
     FLOAT32,
     FLOAT16,
@@ -29,7 +29,7 @@ enum class DType {
     INT64
 };
 
-// 缓存配置结构
+// Cache configuration structure
 struct CacheConfig {
     int maxSeqLen;
     int maxBatchSize;
@@ -42,7 +42,7 @@ struct CacheConfig {
                    numHeads(32), headDim(128), dtype(DType::FLOAT32) {}
 };
 
-// 批处理输入结构
+// Batch input structure
 struct Batch {
     std::vector<int> seqs;
     std::vector<int> seqLens;
@@ -52,11 +52,11 @@ struct Batch {
     Batch() : batchSize(0) {}
 };
 
-// 前向声明
+// Forward declarations
 class Context;
 class Backend;
 
-// 张量类
+// Tensor class
 class Tensor {
 private:
     std::vector<int> shape_;
@@ -77,7 +77,7 @@ public:
     size_t bytesSize() const;
 };
 
-// 上下文类
+// Context class
 class Context {
 private:
     Backend* backend_;
@@ -87,7 +87,7 @@ public:
     Backend* backend() const { return backend_; }
 };
 
-// 后端类
+// Backend class
 class Backend {
 public:
     virtual ~Backend() = default;
@@ -96,39 +96,39 @@ public:
     virtual void copy(void* dst, const void* src, size_t bytes) = 0;
 };
 
-// 缓存接口
+// Cache interface
 class Cache {
 public:
     virtual ~Cache() = default;
     
-    // 初始化缓存
+    // Initialize cache
     virtual void init(Context& ctx, const CacheConfig& config) = 0;
     
-    // 关闭缓存
+    // Close cache
     virtual void close() = 0;
     
-    // 设置当前层
+    // Set current layer
     virtual void setLayer(int layer) = 0;
     
-    // 获取缓存
+    // Get cache
     virtual std::tuple<Tensor, Tensor> get(Context& ctx, int seq, int32_t startPos, int32_t endPos) = 0;
     
-    // 存储缓存
+    // Store cache
     virtual void put(Context& ctx, const Tensor& key, const Tensor& value) = 0;
     
-    // 开始前向传播
+    // Start forward propagation
     virtual void startForward(Context& ctx, const Batch& batch, bool reserve) = 0;
     
-    // 复制前缀
+    // Copy prefix
     virtual void copyPrefix(Context& ctx, int srcSeq, int dstSeq, int32_t length) = 0;
     
-    // 检查是否可以恢复
+    // Check if can resume
     virtual bool canResume(int seq, int32_t pos) const = 0;
     
-    // 移除缓存条目
+    // Remove cache entries
     virtual void remove(int seq, int32_t beginIndex, int32_t endIndex) = 0;
     
-    // 构建输出张量
+    // Build output tensors
     virtual std::tuple<Tensor, Tensor, Tensor> buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs) = 0;
 };
 

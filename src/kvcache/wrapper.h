@@ -9,14 +9,14 @@
 namespace duorou {
 namespace kvcache {
 
-// 缓存类型枚举
+// Cache type enumeration
 enum class CacheType {
     ENCODER,
     CAUSAL,
     BIDIRECTIONAL
 };
 
-// 缓存包装器类
+// Cache wrapper class
 class CacheWrapper {
 private:
     CacheType type_;
@@ -24,22 +24,22 @@ private:
     bool ownsCache_;
 
 public:
-    // 构造函数
+    // Constructors
     explicit CacheWrapper(CacheType type);
     CacheWrapper(CacheType type, Cache* cache);
     
-    // 析构函数
+    // Destructor
     ~CacheWrapper();
     
-    // 禁用拷贝构造和赋值
+    // Copy semantics (disabled)
     CacheWrapper(const CacheWrapper&) = delete;
     CacheWrapper& operator=(const CacheWrapper&) = delete;
     
-    // 移动构造和赋值
+    // Move semantics
     CacheWrapper(CacheWrapper&& other) noexcept;
     CacheWrapper& operator=(CacheWrapper&& other) noexcept;
     
-    // 缓存操作接口
+    // Cache operations
     void init(Context& ctx, const CacheConfig& config);
     void close();
     void setLayer(int layer);
@@ -51,24 +51,24 @@ public:
     void remove(int seq, int32_t beginIndex, int32_t endIndex);
     std::tuple<Tensor, Tensor, Tensor> buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs);
     
-    // 包装器特有方法
+    // Getters and utilities
     CacheType getType() const;
     Cache* getCache() const;
     bool isValid() const;
     void reset();
     
-    // 静态工厂方法
+    // Static factory methods
     static CacheWrapper createEncoder();
     static CacheWrapper createCausal();
     
 private:
-    // 内部辅助方法
+    // Helper methods
     void createCache();
     void destroyCache();
     void validateCache() const;
 };
 
-// 全局函数
+// Utility functions
 CacheWrapper createCacheWrapper(CacheType type);
 std::string cacheTypeToString(CacheType type);
 CacheType stringToCacheType(const std::string& typeStr);

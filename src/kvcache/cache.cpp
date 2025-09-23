@@ -5,17 +5,17 @@
 namespace duorou {
 namespace kvcache {
 
-// Tensor类实现
+// Tensor class implementation
 Tensor::Tensor(const std::vector<int>& shape, DType dtype) 
     : shape_(shape), dtype_(dtype), data_(nullptr), size_(0) {
     
-    // 计算总元素数量
+    // Calculate total number of elements
     size_t totalElements = 1;
     for (int dim : shape) {
         totalElements *= dim;
     }
     
-    // 根据数据类型计算字节大小
+    // Calculate byte size based on data type
     size_t elementSize = 0;
     switch (dtype) {
         case DType::FLOAT32:
@@ -34,7 +34,7 @@ Tensor::Tensor(const std::vector<int>& shape, DType dtype)
     
     size_ = totalElements * elementSize;
     
-    // 分配内存
+    // Allocate memory
     if (size_ > 0) {
         data_ = std::malloc(size_);
         if (data_) {

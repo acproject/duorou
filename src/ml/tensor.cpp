@@ -12,7 +12,7 @@
 namespace duorou {
 namespace ml {
 
-// 构造函数实现
+// Constructor implementation
 Tensor::Tensor() 
     : dtype_(DataType::FLOAT32), data_(nullptr), backend_(nullptr), ownsData_(false) {
 }
@@ -80,7 +80,7 @@ Tensor::~Tensor() {
     deallocate();
 }
 
-// 基本属性实现
+// Basic properties implementation
 int64_t Tensor::dim(int index) const {
     if (index < 0) {
         index += static_cast<int>(shape_.size());
@@ -104,7 +104,7 @@ size_t Tensor::nbytes() const {
     return numel() * itemSize();
 }
 
-// 内存管理实现
+// Memory management implementation
 void Tensor::allocate(Backend* backend) {
     if (data_ && ownsData_) {
         deallocate();
@@ -119,7 +119,7 @@ void Tensor::allocate(Backend* backend) {
         if (backend_) {
             data_ = backend_->allocate(bytes);
         } else {
-            // 使用 malloc 而不是 aligned_alloc 以避免兼容性问题
+            // Use malloc instead of aligned_alloc to avoid compatibility issues
             data_ = std::malloc(bytes);
             if (!data_) {
                 throw std::runtime_error("Failed to allocate memory for tensor");
@@ -141,7 +141,7 @@ void Tensor::deallocate() {
     }
 }
 
-// 数据拷贝实现
+// Data copying implementation
 void Tensor::copyFrom(const Tensor& other) {
     if (numel() != other.numel()) {
         throw std::invalid_argument("Tensor sizes must match for copying");
@@ -187,7 +187,7 @@ void Tensor::copyToHost(void* hostData, size_t bytes) const {
     }
 }
 
-// 静态工厂方法实现
+// Static factory methods implementation
 Tensor Tensor::zeros(const std::vector<int64_t>& shape, DataType dtype) {
     Tensor tensor(shape, dtype);
     tensor.allocate();
@@ -204,7 +204,7 @@ Tensor Tensor::ones(const std::vector<int64_t>& shape, DataType dtype) {
     Tensor tensor(shape, dtype);
     tensor.allocate();
     
-    // 根据数据类型填充1
+    // Fill with 1 based on data type
     int64_t numel = tensor.numel();
     switch (dtype) {
         case DataType::FLOAT32: {
@@ -217,7 +217,7 @@ Tensor Tensor::ones(const std::vector<int64_t>& shape, DataType dtype) {
             std::fill(data, data + numel, 1);
             break;
         }
-        // 其他数据类型...
+        // Other data types...
         default:
             throw std::runtime_error("Unsupported data type for ones");
     }
@@ -229,7 +229,7 @@ Tensor Tensor::randn(const std::vector<int64_t>& shape, DataType dtype) {
     Tensor tensor(shape, dtype);
     tensor.allocate();
     
-    // 使用正态分布生成随机数
+    // Generate random numbers using normal distribution
     std::random_device rd;
     std::mt19937 gen(rd());
     std::normal_distribution<float> dis(0.0f, 1.0f);
@@ -250,7 +250,7 @@ Tensor Tensor::randn(const std::vector<int64_t>& shape, DataType dtype) {
             }
             break;
         }
-        // 其他数据类型...
+        // Other data types...
         default:
             throw std::runtime_error("Unsupported data type for randn");
     }
@@ -258,9 +258,9 @@ Tensor Tensor::randn(const std::vector<int64_t>& shape, DataType dtype) {
     return tensor;
 }
 
-// 张量操作实现
+// Tensor operations implementation
 Tensor Tensor::add(Context& /*ctx*/, const Tensor& /*other*/) const {
-    // 简化实现，实际需要调用后端
+    // Simplified implementation, should call backend in practice
     Tensor result(shape_, dtype_);
     result.allocate();
     return result;
@@ -285,7 +285,7 @@ Tensor Tensor::div(Context& /*ctx*/, const Tensor& /*other*/) const {
 }
 
 Tensor Tensor::matmul(Context& /*ctx*/, const Tensor& other) const {
-    // 简化的矩阵乘法实现
+    // Simplified matrix multiplication implementation
     if (shape_.size() != 2 || other.shape_.size() != 2) {
         throw std::invalid_argument("matmul requires 2D tensors");
     }
@@ -299,7 +299,7 @@ Tensor Tensor::matmul(Context& /*ctx*/, const Tensor& other) const {
     return result;
 }
 
-// 激活函数实现
+// Activation functions implementation
 Tensor Tensor::relu(Context& /*ctx*/) const {
     Tensor result(shape_, dtype_);
     result.allocate();
@@ -324,7 +324,7 @@ Tensor Tensor::softmax(Context& /*ctx*/, int /*dim*/) const {
     return result;
 }
 
-// 形状操作实现
+// Shape operations implementation
 Tensor Tensor::reshape(const std::vector<int64_t>& newShape) const {
     Tensor result(newShape, dtype_);
     result.data_ = data_;
@@ -365,7 +365,7 @@ Tensor Tensor::permute(const std::vector<int>& dims) const {
     return result;
 }
 
-// 归约操作实现
+// Reduction operations implementation
 Tensor Tensor::sum(Context& /*ctx*/, int dim, bool keepdim) const {
     std::vector<int64_t> newShape = shape_;
     if (dim >= 0 && dim < static_cast<int>(shape_.size())) {
@@ -393,7 +393,7 @@ Tensor Tensor::min(Context& ctx, int dim, bool keepdim) const {
     return sum(ctx, dim, keepdim);
 }
 
-// 索引操作实现
+// Indexing operations implementation
 Tensor Tensor::slice(int /*dim*/, int64_t /*start*/, int64_t /*end*/, int64_t /*step*/) const {
     Tensor result(shape_, dtype_);
     result.allocate();
@@ -406,7 +406,7 @@ Tensor Tensor::index(const std::vector<int64_t>& /*indices*/) const {
     return result;
 }
 
-// 字符串表示
+// String representation
 std::string Tensor::toString() const {
     std::ostringstream oss;
     oss << "Tensor(shape=[";
@@ -422,7 +422,7 @@ void Tensor::print() const {
     std::cout << toString() << std::endl;
 }
 
-// 辅助方法实现
+// Helper methods implementation
 void Tensor::validateShape(const std::vector<int64_t>& shape) const {
     for (int64_t dim : shape) {
         if (dim < 0) {
@@ -444,7 +444,7 @@ size_t Tensor::getDataTypeSize(DataType dtype) const {
     }
 }
 
-// 工具函数实现
+// Utility functions implementation
 std::string dataTypeToString(DataType dtype) {
     switch (dtype) {
         case DataType::FLOAT32: return "float32";
@@ -466,7 +466,7 @@ DataType stringToDataType(const std::string& dtypeStr) {
     if (dtypeStr == "int8") return DataType::INT8;
     if (dtypeStr == "uint8") return DataType::UINT8;
     if (dtypeStr == "bool") return DataType::BOOL;
-    return DataType::FLOAT32; // 默认
+    return DataType::FLOAT32; // Default
 }
 
 } // namespace ml

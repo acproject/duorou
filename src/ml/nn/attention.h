@@ -9,42 +9,43 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// 多头注意力机制
+// Multi-head attention mechanism
 class MultiHeadAttention {
 public:
-    // 构造函数
+    // Constructor
     MultiHeadAttention(int64_t embedDim, int64_t numHeads, 
                       int64_t kvHeads = -1, bool bias = true, 
                       float dropout = 0.0f);
     
     ~MultiHeadAttention() = default;
     
-    // 前向传播
+    // Forward pass
     Tensor forward(Context& ctx, const Tensor& query, 
-                  const Tensor& key = Tensor(), const Tensor& value = Tensor(),
-                  kvcache::Cache* cache = nullptr, const Tensor& mask = Tensor());
+                  const Tensor& key = {}, const Tensor& value = {},
+                  kvcache::Cache* cache = nullptr, const Tensor& mask = {});
     
-    // 带Sink Token的注意力
+    // Forward pass with attention sinks
     Tensor forwardWithSinks(Context& ctx, const Tensor& query,
                            const Tensor& key, const Tensor& value,
                            const Tensor& sinks, float scale,
                            kvcache::Cache* cache = nullptr);
     
-    // 参数访问
-    const Tensor& getQueryWeight() const { return queryWeight_; }
-    const Tensor& getKeyWeight() const { return keyWeight_; }
-    const Tensor& getValueWeight() const { return valueWeight_; }
-    const Tensor& getOutputWeight() const { return outputWeight_; }
+    // Copy and move semantics
+    MultiHeadAttention(const MultiHeadAttention& other) = delete;
+    MultiHeadAttention& operator=(const MultiHeadAttention& other) = delete;
+    MultiHeadAttention(MultiHeadAttention&& other) = default;
+    MultiHeadAttention& operator=(MultiHeadAttention&& other) = default;
     
-    // 参数初始化
+    // Weight initialization
     void initializeWeights(Context& ctx, const std::string& method = "xavier_uniform");
     
-    // 层信息
-    int64_t getEmbedDim() const { return embedDim_; }
-    int64_t getNumHeads() const { return numHeads_; }
-    int64_t getKVHeads() const { return kvHeads_; }
-    int64_t getHeadDim() const { return headDim_; }
-    float getDropout() const { return dropout_; }
+    // Getters
+    int64_t embedDim() const { return embedDim_; }
+    int64_t numHeads() const { return numHeads_; }
+    int64_t kvHeads() const { return kvHeads_; }
+    int64_t headDim() const { return headDim_; }
+    bool hasBias() const { return hasBias_; }
+    float dropout() const { return dropout_; }
     
 private:
     int64_t embedDim_;
@@ -54,27 +55,27 @@ private:
     bool hasBias_;
     float dropout_;
     
-    // 权重矩阵
+    // Weight matrices
     Tensor queryWeight_;  // [embedDim, embedDim]
     Tensor keyWeight_;    // [embedDim, kvHeads * headDim]
     Tensor valueWeight_;  // [embedDim, kvHeads * headDim]
     Tensor outputWeight_; // [embedDim, embedDim]
     
-    // 偏置
+    // Bias vectors
     Tensor queryBias_;
     Tensor keyBias_;
     Tensor valueBias_;
     Tensor outputBias_;
     
-    // 辅助方法
+    // Helper methods
     Tensor scaledDotProductAttention(Context& ctx, const Tensor& q, 
                                    const Tensor& k, const Tensor& v,
-                                   const Tensor& mask = Tensor());
+                                   const Tensor& mask = {});
     Tensor applyRotaryPositionEmbedding(Context& ctx, const Tensor& tensor, 
                                       int64_t seqLen, int64_t offset = 0);
 };
 
-// 标准注意力函数（类似Ollama的实现）
+// Standalone attention functions
 Tensor attention(Context& ctx, const Tensor& query, const Tensor& key, 
                 const Tensor& value, float scale, kvcache::Cache* cache = nullptr);
 

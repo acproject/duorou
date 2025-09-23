@@ -9,42 +9,42 @@
 namespace duorou {
 namespace ml {
 
-// 前向声明
+// Forward declarations
 class Backend;
 class Tensor;
 enum class DataType;
 
-// 计算上下文类
+// Computation context class
 class Context {
 public:
     Context(Backend* backend = nullptr);
     ~Context();
     
-    // 后端管理
+    // Backend management
     void setBackend(Backend* backend);
     Backend* getBackend() const { return backend_; }
     
-    // 内存管理
+    // Memory management
     void* allocate(size_t bytes);
     void deallocate(void* ptr);
     
-    // 临时张量管理
+    // Temporary tensor management
     Tensor createTempTensor(const std::vector<int64_t>& shape, DataType dtype);
     void releaseTempTensors();
     
-    // 计算图管理（可选，用于自动微分）
+    // Computation graph management (optional, for automatic differentiation)
     void enableGradient(bool enable = true);
     bool isGradientEnabled() const { return gradientEnabled_; }
     
-    // 同步操作
+    // Synchronization operations
     void synchronize();
     
-    // 性能分析
+    // Performance profiling
     void enableProfiling(bool enable = true);
     bool isProfilingEnabled() const { return profilingEnabled_; }
     void printProfilingInfo() const;
     
-    // 配置参数
+    // Configuration parameters
     void setParameter(const std::string& key, const std::string& value);
     std::string getParameter(const std::string& key) const;
     
@@ -55,7 +55,7 @@ private:
     std::vector<std::unique_ptr<Tensor>> tempTensors_;
     std::unordered_map<std::string, std::string> parameters_;
     
-    // 性能统计
+    // Performance statistics
     mutable std::unordered_map<std::string, double> timingStats_;
 };
 

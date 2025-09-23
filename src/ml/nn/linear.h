@@ -8,13 +8,13 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// 线性层（全连接层）
+// Linear layer (fully connected layer)
 class Linear {
 public:
-    // 构造函数
+    // Constructor
     Linear(int64_t inFeatures, int64_t outFeatures, bool bias = true);
     
-    // 拷贝和移动
+    // Copy and move
     Linear(const Linear& other) = delete;
     Linear& operator=(const Linear& other) = delete;
     Linear(Linear&& other) noexcept;
@@ -22,26 +22,29 @@ public:
     
     ~Linear() = default;
     
-    // 前向传播
+    // Forward propagation
     Tensor forward(Context& ctx, const Tensor& input);
     
-    // 参数访问
+    // Parameter access
     const Tensor& getWeight() const { return weight_; }
     const Tensor& getBias() const { return bias_; }
     Tensor& getWeight() { return weight_; }
     Tensor& getBias() { return bias_; }
     
-    // 参数初始化
+    // Parameter initialization
     void initializeWeights(Context& ctx, const std::string& method = "xavier_uniform");
     void initializeBias(Context& ctx, float value = 0.0f);
     
-    // 层信息
+    // Layer information
     int64_t getInFeatures() const { return inFeatures_; }
     int64_t getOutFeatures() const { return outFeatures_; }
     bool hasBias() const { return hasBias_; }
     
-    // 参数统计
+    // Parameter statistics
     int64_t getParameterCount() const;
+    
+    // Backend management
+    void setBackend(Backend* backend);
     
 private:
     int64_t inFeatures_;
@@ -52,23 +55,23 @@ private:
     Tensor bias_;    // [outFeatures]
 };
 
-// 批量线性层（用于专家混合等场景）
+// Batch linear layer for efficient batch processing
 class LinearBatch {
 public:
     LinearBatch(int64_t inFeatures, int64_t outFeatures, int64_t batchSize, bool bias = true);
     
-    // 前向传播，indices指定使用哪个专家
+    // Forward propagation with batch indices
     Tensor forward(Context& ctx, const Tensor& input, const Tensor& indices);
     
-    // 参数访问
+    // Parameter access
     const Tensor& getWeight() const { return weight_; }
     const Tensor& getBias() const { return bias_; }
     
-    // 参数初始化
+    // Parameter initialization
     void initializeWeights(Context& ctx, const std::string& method = "xavier_uniform");
     void initializeBias(Context& ctx, float value = 0.0f);
     
-    // 层信息
+    // Layer information
     int64_t getInFeatures() const { return inFeatures_; }
     int64_t getOutFeatures() const { return outFeatures_; }
     int64_t getBatchSize() const { return batchSize_; }

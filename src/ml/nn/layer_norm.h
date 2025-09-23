@@ -11,13 +11,13 @@ namespace nn {
 // Layer Normalization层
 class LayerNorm {
 public:
-  // 构造函数
+  // Constructor
   LayerNorm(int64_t normalizedShape, float eps = 1e-5f,
             bool elementwiseAffine = true);
   LayerNorm(const std::vector<int64_t> &normalizedShape, float eps = 1e-5f,
             bool elementwiseAffine = true);
 
-  // 拷贝和移动
+  // Copy and move
   LayerNorm(const LayerNorm &other) = delete;
   LayerNorm &operator=(const LayerNorm &other) = delete;
   LayerNorm(LayerNorm &&other) noexcept;
@@ -25,27 +25,27 @@ public:
 
   ~LayerNorm() = default;
 
-  // 前向传播
+  // Forward propagation
   Tensor forward(Context &ctx, const Tensor &input);
 
-  // 参数访问
+  // Parameter access
   const Tensor &getWeight() const { return weight_; }
   const Tensor &getBias() const { return bias_; }
   Tensor &getWeight() { return weight_; }
   Tensor &getBias() { return bias_; }
 
-  // 参数初始化
+  // Parameter initialization
   void initializeWeights(Context &ctx);
   void initializeBias(Context &ctx);
 
-  // 层信息
+  // Layer information
   const std::vector<int64_t> &getNormalizedShape() const {
     return normalizedShape_;
   }
   float getEps() const { return eps_; }
   bool hasElementwiseAffine() const { return elementwiseAffine_; }
 
-  // 参数统计
+  // Parameter statistics
   int64_t getParameterCount() const;
 
 private:

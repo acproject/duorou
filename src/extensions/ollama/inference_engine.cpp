@@ -1,8 +1,4 @@
-#include "inference_engine.h"
-#include "../../ml/context.h"
-#include "../../ml/nn/attention.h"
-#include "../../ml/tensor.h"
-#include "ollama_model_manager.h"
+// Include standard library headers first
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -14,18 +10,33 @@
 #include <string>
 #include <vector>
 
-// 包含真正的 llama.cpp 头文件
+// Include the actual llama.cpp header files
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
 #include "../../../third_party/llama.cpp/include/llama.h"
+
+// Include project headers after third-party headers
+#include "inference_engine.h"
+#include "../../ml/context.h"
+#include "../../ml/nn/attention.h"
+#include "../../ml/tensor.h"
+#include "ollama_model_manager.h"
 
 namespace duorou {
 namespace extensions {
 namespace ollama {
-// 简单白名单：哪些架构交给 llama.cpp 处理
+// Simple whitelist: which architectures to handle with llama.cpp
 static bool isSupportedByLlamaCpp(const std::string &arch_raw) {
   std::string arch = arch_raw;
   std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
 
-  // 明确排除已知非 llama.cpp 路线（多模态/非兼容）架构，避免误走 llama.cpp
+  // Explicitly exclude known non-llama.cpp (multimodal/incompatible) architectures to avoid misrouting to llama.cpp
   if (arch.find("qwen") != std::string::npos ||
       arch.find("qwen2") != std::string::npos ||
       arch.find("qwen25") != std::string::npos ||
@@ -38,7 +49,7 @@ static bool isSupportedByLlamaCpp(const std::string &arch_raw) {
     return false;
   }
 
-  // 允许的架构关键词（按需扩展，但尽量精确）
+  // Allowed architecture keywords (expand as needed, but keep precise)
   static const char *allow[] = {"llama", "llama2", "llama3", "mistral",
                                 "gemma"};
   for (auto k : allow) {
@@ -52,7 +63,7 @@ MLInferenceEngine::MLInferenceEngine(const std::string &model_id)
     : model_id_(model_id), initialized_(false), ml_context_(nullptr),
       attention_(nullptr), gguf_parser_(nullptr), kv_cache_(nullptr),
       vocab_size_(0), n_layers_(0), n_heads_(0), n_embd_(0), n_ctx_(0),
-      rope_initialized_(false), llama_model_(nullptr), llama_context_(nullptr),
+       rope_freqs_(), rope_initialized_(false), llama_model_(nullptr), llama_context_(nullptr),
       llama_sampler_(nullptr), use_llama_backend_(false) {
   std::cout << "[DEBUG] MLInferenceEngine constructor called with model_id: "
             << model_id << std::endl;
@@ -61,7 +72,7 @@ MLInferenceEngine::MLInferenceEngine(const std::string &model_id)
 MLInferenceEngine::~MLInferenceEngine() {
   std::cout << "[DEBUG] MLInferenceEngine destructor called" << std::endl;
 
-  // 释放 llama.cpp 资源
+  // Release llama.cpp resources
   if (llama_sampler_) {
     llama_sampler_free(llama_sampler_);
     llama_sampler_ = nullptr;
@@ -89,10 +100,10 @@ bool MLInferenceEngine::initialize() {
   }
 
   try {
-    // 创建ML上下文
+    // Create ML context
     ml_context_ = new ml::Context();
 
-    // 创建注意力机制（简化配置）
+    // Create attention mechanism (simplified configuration)
     attention_ = new ml::nn::MultiHeadAttention(512,  // embed_dim
                                                 8,    // num_heads
                                                 -1,   // kv_heads (default)
@@ -100,10 +111,10 @@ bool MLInferenceEngine::initialize() {
                                                 0.1f  // dropout
     );
 
-    // 尝试从OllamaModelManager获取模型路径
+    // Try to get model path from OllamaModelManager
     OllamaModelManager &manager = GlobalModelManager::getInstance();
 
-    // 直接使用model_id_，因为OllamaModelManager::getModelInfo会进行归一化处理
+    // Use model_id_ directly, as OllamaModelManager::getModelInfo will perform normalization
     auto model_info = manager.getModelInfo(model_id_);
     if (!model_info || model_info->file_path.empty()) {
       std::cerr << "[ERROR] MLInferenceEngine: Model not found or file path "
@@ -115,7 +126,7 @@ bool MLInferenceEngine::initialize() {
 
     model_path_ = model_info->file_path;
 
-    // 第一步：用 GGUFParser 解析文件，获取架构
+    // Step 1: Use GGUFParser to parse file and get architecture
     gguf_parser_ = std::make_unique<GGUFParser>();
     if (!gguf_parser_->parseFile(model_path_)) {
       std::cerr << "[ERROR] MLInferenceEngine: Failed to parse GGUF: "
@@ -130,9 +141,9 @@ bool MLInferenceEngine::initialize() {
               << (use_llama_backend_ ? "true" : "false") << std::endl;
 
     if (use_llama_backend_) {
-      // 仅当选择 llama.cpp 时初始化其后端并加载模型
+      // Only initialize llama.cpp backend and load model when llama.cpp is selected
       llama_backend_init();
-      // 加载llama.cpp模型
+      // Load llama.cpp model
       if (!loadLlamaModel(model_path_)) {
         std::cerr
             << "[ERROR] MLInferenceEngine: Failed to load llama.cpp model from "
@@ -147,28 +158,28 @@ bool MLInferenceEngine::initialize() {
           << std::endl;
       return true;
     } else {
-      // 非 llama 架构：走内部 Forward 流程，使用 Qwen 模型
+      // Non-llama architecture: use internal Forward flow with Qwen model
       std::cout
           << "[DEBUG] Initializing Qwen multimodal model for internal forward"
           << std::endl;
 
-      // 创建 Qwen 多模态模型
+      // Create Qwen multimodal model
       qwen_model_ = std::make_unique<duorou::model::QwenMultimodalModel>();
 
-      // 首先初始化模型组件（包括文本模型）
+      // First initialize model components (including text model)
       if (!qwen_model_->initialize("")) {
         std::cerr << "[WARN] Failed to initialize Qwen model components, using "
                      "fallback initialization"
                   << std::endl;
-        // 即使初始化失败，也继续初始化其他组件，以便至少有基本的推理能力
+        // Even if initialization fails, continue initializing other components for basic inference capability
       }
 
-      // 尝试从 GGUF 文件加载模型
+      // Try to load model from GGUF file
       if (!qwen_model_->loadModel(model_path_)) {
         std::cerr << "[WARN] Failed to load Qwen model from GGUF, using "
                      "fallback initialization"
                   << std::endl;
-        // 即使加载失败，也继续初始化其他组件，以便至少有基本的推理能力
+        // Even if loading fails, continue initializing other components for basic inference capability
       }
 
       if (!parseModelConfig()) {
@@ -228,10 +239,10 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
 
   try {
     if (use_llama_backend_) {
-      // 使用 llama.cpp 进行推理
+      // Use llama.cpp for inference
       return generateWithLlama(prompt, max_tokens, temperature, top_p);
     } else {
-      // 使用内部 Forward 模式进行推理
+      // Use internal Forward mode for inference
       return generateWithInternalForward(prompt, max_tokens, temperature,
                                          top_p);
     }
@@ -243,7 +254,7 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
 }
 
 bool MLInferenceEngine::isReady() const {
-  // 根据后端模式判定就绪状态
+  // Determine ready status based on backend mode
   if (!initialized_)
     return false;
   if (use_llama_backend_) {
@@ -251,13 +262,13 @@ bool MLInferenceEngine::isReady() const {
            llama_model_ != nullptr && llama_context_ != nullptr &&
            llama_sampler_ != nullptr;
   } else {
-    // 内部 Forward 模式：至少需要 ML 上下文、注意力和已完成 RoPE 预计算
+    // Internal Forward mode: requires at least ML context, attention, and completed RoPE precomputation
     return ml_context_ != nullptr && attention_ != nullptr && rope_initialized_;
   }
 }
 
 std::string MLInferenceEngine::processText(const std::string &text) {
-  // 简单的文本处理逻辑
+  // Simple text processing logic
   return "Processed: " + text;
 }
 
@@ -265,38 +276,38 @@ bool MLInferenceEngine::loadModel(const std::string &model_path) {
   try {
     std::cout << "[DEBUG] Loading model from: " << model_path << std::endl;
 
-    // 步骤1: 创建GGUF解析器
+    // Step 1: Create GGUF parser
     std::cout << "[DEBUG] Step 1: Creating GGUF parser" << std::endl;
     gguf_parser_ = std::make_unique<GGUFParser>();
 
-    // 步骤2: 解析GGUF文件
+    // Step 2: Parse GGUF file
     std::cout << "[DEBUG] Step 2: Parsing GGUF file" << std::endl;
     if (!gguf_parser_->parseFile(model_path)) {
       std::cerr << "Failed to parse GGUF model: " << model_path << std::endl;
       return false;
     }
 
-    // 解析模型配置
+    // Parse model configuration
     if (!parseModelConfig()) {
       std::cerr << "Failed to parse model configuration" << std::endl;
       return false;
     }
 
-    // 步骤3: 加载模型权重
+    // Step 3: Load model weights
     std::cout << "[DEBUG] Step 3: Loading model weights" << std::endl;
     if (!loadModelWeights()) {
       std::cerr << "Failed to load model weights" << std::endl;
       return false;
     }
 
-    // 步骤4: 初始化KV缓存
+    // Step 4: Initialize KV cache
     std::cout << "[DEBUG] Step 4: Initializing KV cache" << std::endl;
     if (!initializeKVCache()) {
       std::cerr << "Failed to initialize KV cache" << std::endl;
       return false;
     }
 
-    // 步骤5: 预计算RoPE频率
+    // Step 5: Precompute RoPE frequencies
     std::cout << "[DEBUG] Step 5: Precomputing RoPE frequencies" << std::endl;
     if (!precomputeRoPEFreqs()) {
       std::cerr << "Failed to precompute RoPE frequencies" << std::endl;
@@ -319,11 +330,11 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
     std::cout << "[DEBUG] Loading llama.cpp model from: " << model_path
               << std::endl;
 
-    // 设置模型参数
+    // Set model parameters
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0; // CPU only for now
 
-    // 加载模型
+    // Load model
     llama_model_ = llama_load_model_from_file(model_path.c_str(), model_params);
     if (!llama_model_) {
       std::cerr << "[ERROR] Failed to load llama.cpp model from: " << model_path
@@ -331,30 +342,30 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
       return false;
     }
 
-    // 设置上下文参数
+    // Set context parameters
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 2048;  // 上下文长度
-    ctx_params.n_batch = 512; // 批处理大小
-    ctx_params.n_threads = 4; // 线程数
+    ctx_params.n_ctx = 2048;  // Context length
+    ctx_params.n_batch = 512; // Batch size
+    ctx_params.n_threads = 4; // Number of threads
 
-    // 创建上下文
+    // Create context
     llama_context_ = llama_init_from_model(llama_model_, ctx_params);
     if (!llama_context_) {
       std::cerr << "[ERROR] Failed to create llama.cpp context" << std::endl;
       return false;
     }
 
-    // 基于 GGUF 元数据构建 Vocabulary 和 TextProcessor
+    // Build Vocabulary and TextProcessor based on GGUF metadata
     try {
       gguf_parser_ = std::make_unique<GGUFParser>();
       if (gguf_parser_->parseFile(model_path)) {
-        // 读取tokens
+        // Read tokens
         std::vector<std::string> tokens;
         if (const auto *kvTokens =
                 gguf_parser_->getMetadata("tokenizer.ggml.tokens")) {
           tokens = kvTokens->asStringArray();
         }
-        // 读取token types
+        // Read token types
         std::vector<int32_t> types;
         if (const auto *kvTypes =
                 gguf_parser_->getMetadata("tokenizer.ggml.token_type")) {
@@ -363,7 +374,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
         if (types.empty() && !tokens.empty()) {
           types.assign(tokens.size(), duorou::model::TOKEN_TYPE_NORMAL);
         }
-        // 读取merges
+        // Read merges
         std::vector<std::string> merges;
         if (const auto *kvMerges =
                 gguf_parser_->getMetadata("tokenizer.ggml.merges")) {
@@ -374,7 +385,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
           vocab_ = std::make_shared<duorou::model::Vocabulary>();
           vocab_->initialize(tokens, types, /*scores*/ {}, merges);
 
-          // BOS/EOS 配置
+          // BOS/EOS configuration
           std::vector<int32_t> bos_ids;
           std::vector<int32_t> eos_ids;
           bool add_bos = false;
@@ -402,7 +413,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
             vocab_->setEOS(eos_ids, add_eos);
           }
 
-          // 创建 TextProcessor
+          // Create TextProcessor
           tokenizer_ = duorou::model::createTextProcessorFromGGUF(
               *gguf_parser_, vocab_, tok_opts_);
 
@@ -422,7 +433,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
                 << e.what() << std::endl;
     }
 
-    // 初始化采样器
+    // Initialize sampler
     if (!initializeSampler()) {
       std::cerr << "[ERROR] Failed to initialize sampler" << std::endl;
       return false;
@@ -440,7 +451,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
 
 bool MLInferenceEngine::initializeSampler() {
   try {
-    // 创建采样器链
+    // Create sampler chain
     struct llama_sampler_chain_params chain_params =
         llama_sampler_chain_default_params();
     llama_sampler_ = llama_sampler_chain_init(chain_params);
@@ -451,16 +462,16 @@ bool MLInferenceEngine::initializeSampler() {
       return false;
     }
 
-    // 添加温度采样器
+    // Add temperature sampler
     llama_sampler_chain_add(llama_sampler_, llama_sampler_init_temp(0.8f));
 
-    // 添加 top-p 采样器
+    // Add top-p sampler
     llama_sampler_chain_add(llama_sampler_, llama_sampler_init_top_p(0.9f, 1));
 
-    // 添加 top-k 采样器
+    // Add top-k sampler
     llama_sampler_chain_add(llama_sampler_, llama_sampler_init_top_k(40));
 
-    // 添加分布采样器
+    // Add distribution sampler
     llama_sampler_chain_add(llama_sampler_, llama_sampler_init_dist(1234));
 
     std::cout << "[DEBUG] llama.cpp sampler chain initialized successfully"
@@ -477,7 +488,7 @@ bool MLInferenceEngine::initializeSampler() {
 std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
   std::cout << "[DEBUG] Tokenizing text: '" << text << "' (length: " << text.length() << ")" << std::endl;
   
-  // 优先使用自定义 TextProcessor
+  // Prefer using custom TextProcessor
   try {
     if (tokenizer_) {
       std::cout << "[DEBUG] Using TextProcessor tokenizer" << std::endl;
@@ -491,7 +502,7 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
       return tokens;
     }
 
-    // 其次使用 llama.cpp 自带 tokenizer
+    // Next, use llama.cpp's built-in tokenizer
     if (llama_model_) {
       std::cout << "[DEBUG] Using llama.cpp tokenizer" << std::endl;
       std::vector<llama_token> tokens;
@@ -520,7 +531,7 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
     std::cerr << "Error during tokenization: " << e.what() << std::endl;
   }
 
-  // 最后退化为简单分词（仅作为兜底）
+  // Finally, fall back to simple tokenization (as a last resort)
   std::cout << "[DEBUG] Using fallback tokenizer" << std::endl;
   std::vector<llama_token> tokens;
   try {
@@ -549,7 +560,7 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
 
 std::string
 MLInferenceEngine::detokenize(const std::vector<llama_token> &tokens) {
-  // 优先使用自定义 TextProcessor
+  // Prefer using custom TextProcessor
   try {
     if (tokenizer_) {
       std::vector<int32_t> ids;
@@ -559,15 +570,15 @@ MLInferenceEngine::detokenize(const std::vector<llama_token> &tokens) {
       return tokenizer_->decode(ids);
     }
 
-    // 其次使用 llama.cpp 将 token 转为文本
+    // Next, use llama.cpp to convert tokens to text
     if (llama_model_) {
       const struct llama_vocab *vocab = llama_model_get_vocab(llama_model_);
       std::ostringstream result;
       char piece[256];
       for (auto t : tokens) {
-        int n_piece = llama_token_to_piece(vocab, t, piece, sizeof(piece),
-                                           0,    // lstrip
-                                           false // special
+        int32_t n_piece = llama_token_to_piece(vocab, t, piece, sizeof(piece),
+                                               0,    // lstrip
+                                               false // special
         );
         if (n_piece > 0)
           result.write(piece, n_piece);
@@ -578,7 +589,7 @@ MLInferenceEngine::detokenize(const std::vector<llama_token> &tokens) {
     std::cerr << "Error during detokenization: " << e.what() << std::endl;
   }
 
-  // 兜底：简单拼接
+  // Fallback: simple concatenation
   try {
     std::ostringstream result;
     for (size_t i = 0; i < tokens.size(); ++i) {
@@ -594,9 +605,9 @@ MLInferenceEngine::detokenize(const std::vector<llama_token> &tokens) {
 
 std::string MLInferenceEngine::generateIntelligentResponse(
     const std::string &prompt, uint32_t max_tokens, float temperature) {
-  // 智能响应生成逻辑
+  // Intelligent response generation logic
   try {
-    // 检测输入语言和内容类型
+    // Detect input language and content type
     bool is_chinese = false;
     for (char c : prompt) {
       if (static_cast<unsigned char>(c) > 127) {
@@ -605,21 +616,21 @@ std::string MLInferenceEngine::generateIntelligentResponse(
       }
     }
 
-    // 根据prompt内容生成相关响应
+    // Generate relevant response based on prompt content
     std::string response;
     std::string lower_prompt = prompt;
     std::transform(lower_prompt.begin(), lower_prompt.end(),
                    lower_prompt.begin(), ::tolower);
 
-    // 根据max_tokens限制响应长度
-    if (response.length() > max_tokens * 4) { // 粗略估算：4字符=1token
+    // Limit response length based on max_tokens
+    if (response.length() > max_tokens * 4) { // Rough estimate: 4 characters = 1 token
       response = response.substr(0, max_tokens * 4) + "...";
     }
 
     return response;
 
   } catch (const std::exception &e) {
-    return "生成响应时出现错误。Error generating response.";
+    return "Error generating response.";
   }
 }
 
@@ -630,24 +641,24 @@ bool MLInferenceEngine::parseModelConfig() {
   }
 
   try {
-    // 从GGUF文件中读取模型配置参数
-    // 这里需要根据实际的GGUFParser接口来获取配置
-    // 假设GGUFParser提供了获取配置的方法
+    // Read model configuration parameters from GGUF file
+    // Need to get configuration based on actual GGUFParser interface
+    // Assume GGUFParser provides methods to get configuration
 
-    // 获取词汇表大小
-    vocab_size_ = 32000; // 默认值，应该从GGUF文件读取
+    // Get vocabulary size
+    vocab_size_ = 32000; // Default value, should be read from GGUF file
 
-    // 获取模型层数
-    n_layers_ = 32; // 默认值，应该从GGUF文件读取
+    // Get number of model layers
+    n_layers_ = 32; // Default value, should be read from GGUF file
 
-    // 获取注意力头数
-    n_heads_ = 32; // 默认值，应该从GGUF文件读取
+    // Get number of attention heads
+    n_heads_ = 32; // Default value, should be read from GGUF file
 
-    // 获取嵌入维度
-    n_embd_ = 4096; // 默认值，应该从GGUF文件读取
+    // Get embedding dimension
+    n_embd_ = 4096; // Default value, should be read from GGUF file
 
-    // 获取上下文长度
-    n_ctx_ = 2048; // 默认值，应该从GGUF文件读取
+    // Get context length
+    n_ctx_ = 2048; // Default value, should be read from GGUF file
 
     std::cout << "[DEBUG] Model config - vocab_size: " << vocab_size_
               << ", n_layers: " << n_layers_ << ", n_heads: " << n_heads_
@@ -666,21 +677,21 @@ bool MLInferenceEngine::loadModelWeights() {
     std::cout << "[DEBUG] Loading model weights for " << n_layers_ << " layers"
               << std::endl;
 
-    // 清理之前的权重
+    // Clean up previous weights
     for (auto *weight : model_weights_) {
       delete weight;
     }
     model_weights_.clear();
 
-    // 为每一层创建权重张量
-    // 这里是简化实现，实际应该从GGUF文件中读取权重数据
+    // Create weight tensors for each layer
+    // This is a simplified implementation, should actually read weight data from GGUF file
     for (uint32_t i = 0; i < n_layers_; ++i) {
-      // 创建注意力权重
+      // Create attention weights
       auto *attn_weight =
           new ml::Tensor({n_embd_, n_embd_}, ml::DataType::FLOAT32);
       model_weights_.push_back(attn_weight);
 
-      // 创建前馈网络权重
+      // Create feedforward network weights
       auto *ffn_weight =
           new ml::Tensor({n_embd_, n_embd_ * 4}, ml::DataType::FLOAT32);
       model_weights_.push_back(ffn_weight);
@@ -702,19 +713,19 @@ bool MLInferenceEngine::initializeKVCache() {
     std::cout << "[DEBUG] Initializing KV cache with context length: " << n_ctx_
               << std::endl;
 
-    // 配置KV缓存
+    // Configure KV cache
     cache_config_.maxSeqLen = n_ctx_;
-    cache_config_.maxBatchSize = 32; // 默认批次大小
+    cache_config_.maxBatchSize = 32; // Default batch size
     cache_config_.numLayers = n_layers_;
     cache_config_.numHeads = n_heads_;
     cache_config_.headDim = n_embd_ / n_heads_;
     cache_config_.dtype = kvcache::DType::FLOAT32;
 
-    // 注意：Cache是抽象类，需要具体实现
-    // 这里暂时注释掉，等待具体的Cache实现类
+    // Note: Cache is an abstract class, needs concrete implementation
+    // Temporarily commented out, waiting for concrete Cache implementation class
     // kv_cache_ = std::make_unique<kvcache::ConcreteCache>();
 
-    // 暂时设置为nullptr，表示KV缓存配置已准备好但未实例化
+    // Temporarily set to nullptr, indicating KV cache configuration is ready but not instantiated
     kv_cache_ = nullptr;
 
     std::cout << "[DEBUG] KV cache configuration prepared (maxSeqLen: "
@@ -735,14 +746,19 @@ bool MLInferenceEngine::precomputeRoPEFreqs() {
   try {
     std::cout << "[DEBUG] Precomputing RoPE frequencies" << std::endl;
 
+    if (n_heads_ == 0) {
+      std::cerr << "[ERROR] n_heads_ is zero, cannot compute head_dim" << std::endl;
+      return false;
+    }
+
     const uint32_t head_dim = n_embd_ / n_heads_;
     const float theta = 10000.0f;
 
-    // 清理之前的频率
+    // Clean up previous frequencies
     rope_freqs_.clear();
     rope_freqs_.reserve(head_dim / 2);
 
-    // 计算RoPE频率
+    // Calculate RoPE frequencies
     for (uint32_t i = 0; i < head_dim / 2; ++i) {
       float freq = 1.0f / std::pow(theta, (2.0f * i) / head_dim);
       rope_freqs_.push_back(freq);
@@ -768,11 +784,11 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
   try {
     std::cout << "[DEBUG] Starting llama.cpp inference" << std::endl;
 
-    // 1. 使用 llama.cpp 进行 tokenization
+    // 1. Use llama.cpp for tokenization
     std::vector<llama_token> tokens;
     tokens.resize(prompt.length() + 1);
 
-    // 获取模型的词汇表
+    // Get model vocabulary
     const struct llama_vocab *vocab = llama_model_get_vocab(llama_model_);
 
     int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(),
@@ -790,10 +806,10 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
     std::cout << "[DEBUG] Tokenized prompt into " << n_tokens << " tokens"
               << std::endl;
 
-    // 2. 创建批次
+    // 2. Create batch
     llama_batch batch = llama_batch_init(n_tokens, 0, 1);
 
-    // 添加 tokens 到批次
+    // Add tokens to batch
     for (int i = 0; i < n_tokens; i++) {
       batch.token[i] = tokens[i];
       batch.pos[i] = i;
@@ -803,34 +819,34 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
     }
     batch.n_tokens = n_tokens;
 
-    // 最后一个 token 需要输出
+    // Last token needs output
     batch.logits[batch.n_tokens - 1] = true;
 
-    // 4. 解码输入 tokens
+    // 4. Decode input tokens
     if (llama_decode(llama_context_, batch) != 0) {
       std::cerr << "[ERROR] Failed to decode input tokens" << std::endl;
       llama_batch_free(batch);
       return "Error: Failed to decode input tokens";
     }
 
-    // 5. 生成新的 tokens
+    // 5. Generate new tokens
     std::string generated_text;
     int n_cur = batch.n_tokens;
     int n_decode = 0;
 
     while (n_decode < static_cast<int>(max_tokens)) {
-      // 使用采样器选择下一个 token
+      // Use sampler to select next token
       llama_token new_token = llama_sampler_sample(
           llama_sampler_, llama_context_, batch.n_tokens - 1);
 
-      // 检查是否为结束 token
+      // Check if it's an end token
       if (llama_vocab_is_eog(vocab, new_token)) {
         std::cout << "[DEBUG] Generated EOS token, stopping generation"
                   << std::endl;
         break;
       }
 
-      // 将 token 转换为文本
+      // Convert token to text
       char piece[256];
       int n_piece = llama_token_to_piece(vocab, new_token, piece, sizeof(piece),
                                          0,    // lstrip
@@ -841,7 +857,7 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
         generated_text.append(piece, n_piece);
       }
 
-      // 准备下一次解码
+      // Prepare for next decoding
       batch.n_tokens = 1;
       batch.token[0] = new_token;
       batch.pos[0] = n_cur;
@@ -852,7 +868,7 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
       n_decode++;
       n_cur++;
 
-      // 解码新 token
+      // Decode new token
       if (llama_decode(llama_context_, batch) != 0) {
         std::cerr << "[ERROR] Failed to decode new token" << std::endl;
         break;
@@ -873,7 +889,7 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
   }
 }
 
-// 内部 Forward 模式：使用 Qwen 模型进行真正的推理
+// Internal Forward mode: Use Qwen model for actual inference
 std::string
 MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
                                                uint32_t max_tokens,
@@ -882,16 +898,16 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     std::cout << "[DEBUG] [InternalForward] Starting Qwen model inference"
               << std::endl;
 
-    // 检查 Qwen 模型是否可用
+    // Check if Qwen model is available
     if (!qwen_model_) {
       std::cerr << "[ERROR] Qwen model not initialized" << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
-    // 首先编码文本为 token IDs
+    // First encode text to token IDs
     std::vector<int32_t> input_ids;
     
-    // 如果有 llama_model_，使用 llama.cpp 的分词功能
+    // If llama_model_ exists, use llama.cpp tokenization
     if (llama_model_) {
       std::vector<llama_token> llama_tokens = tokenize(prompt);
       input_ids.reserve(llama_tokens.size());
@@ -900,7 +916,7 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       }
       std::cout << "[DEBUG] [InternalForward] Using llama.cpp tokenization" << std::endl;
     } else {
-      // 回退到 Qwen 模型的分词器
+      // Fall back to Qwen model tokenizer
       input_ids = qwen_model_->encode(prompt, true);
       std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization" << std::endl;
     }
@@ -915,9 +931,9 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     std::cout << "[DEBUG] [InternalForward] Encoded " << input_ids.size()
               << " tokens from prompt" << std::endl;
 
-    // 调用 Qwen 模型的多模态生成方法（不传递图像）
+    // Call Qwen model's multimodal generation method (without passing images)
     std::vector<int32_t> output_ids =
-        qwen_model_->generateMultimodal(input_ids, {}, // 空的图像数据
+        qwen_model_->generateMultimodal(input_ids, {}, // Empty image data
                                         max_tokens, temperature, top_p);
 
     if (output_ids.empty()) {
@@ -930,10 +946,10 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     std::cout << "[DEBUG] [InternalForward] Qwen model generated "
               << output_ids.size() << " output tokens" << std::endl;
 
-    // 解码输出 token IDs 为文本
+    // Decode output token IDs to text
     std::string result;
     
-    // 如果有 llama_model_，使用 llama.cpp 的解码功能
+    // If llama_model_ exists, use llama.cpp decoding
     if (llama_model_) {
       std::vector<llama_token> llama_tokens;
       llama_tokens.reserve(output_ids.size());
@@ -943,7 +959,7 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       result = detokenize(llama_tokens);
       std::cout << "[DEBUG] [InternalForward] Using llama.cpp detokenization" << std::endl;
     } else {
-      // 回退到 Qwen 模型的解码器
+      // Fall back to Qwen model decoder
       result = qwen_model_->decode(output_ids);
       std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization" << std::endl;
     }
@@ -969,27 +985,27 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
 void MLInferenceEngine::cleanupResources() {
   std::cout << "[DEBUG] Cleaning up inference engine resources" << std::endl;
 
-  // 清理ML组件
+  // Clean up ML components
   delete attention_;
   attention_ = nullptr;
 
   delete ml_context_;
   ml_context_ = nullptr;
 
-  // 清理模型权重
+  // Clean up model weights
   for (auto *weight : model_weights_) {
     delete weight;
   }
   model_weights_.clear();
 
-  // 清理KV缓存
+  // Clean up KV cache
   kv_cache_.reset();
 
-  // 清理RoPE频率
+  // Clean up RoPE frequencies
   rope_freqs_.clear();
   rope_initialized_ = false;
 
-  // 重置配置
+  // Reset configuration
   vocab_size_ = 0;
   n_layers_ = 0;
   n_heads_ = 0;

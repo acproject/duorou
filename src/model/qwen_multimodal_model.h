@@ -152,7 +152,7 @@ public:
 private:
     QwenMultimodalConfig config_;
     
-    // 新增：外部词汇表（可选）
+    // New: External vocabulary (optional)
     std::shared_ptr<Vocabulary> external_vocabulary_;
     
     // Component models
@@ -220,7 +220,7 @@ private:
 // Factory functions
 std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath);
 
-// 新增：接受外部词汇表的工厂函数
+// New: Factory function that accepts external vocabulary
 std::unique_ptr<BaseModel> createQwenMultimodalModel(const std::string& configPath, 
                                                      std::shared_ptr<Vocabulary> external_vocab);
 

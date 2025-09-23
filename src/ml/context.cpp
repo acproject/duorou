@@ -28,15 +28,15 @@ void* Context::allocate(size_t bytes) {
     if (backend_) {
         return backend_->allocate(bytes);
     } else {
-        // 跨平台的内存对齐分配
+        // Cross-platform aligned memory allocation
 #ifdef _WIN32
         return _aligned_malloc(bytes, 32);
 #else
-        // 对于支持 C++17 aligned_alloc 的平台
+        // For platforms that support C++17 aligned_alloc
         #if __cplusplus >= 201703L && defined(__GLIBC__) && __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 16
             return std::aligned_alloc(32, bytes);
         #else
-            // 使用 posix_memalign 作为后备方案
+            // Use posix_memalign as fallback
             void* ptr = nullptr;
             if (posix_memalign(&ptr, 32, bytes) == 0) {
                 return ptr;

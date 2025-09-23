@@ -26,7 +26,7 @@ bool CPUBackend::initialize() {
         return true;
     }
     
-    // 检查CPU是否可用（总是可用）
+    // Check if CPU is available (always available)
     initialized_ = true;
     
     std::cout << "CPU Backend initialized with " << numThreads_ << " threads" << std::endl;
@@ -40,20 +40,20 @@ void CPUBackend::cleanup() {
 std::vector<DeviceInfo> CPUBackend::getAvailableDevices() const {
     std::vector<DeviceInfo> devices;
     
-    // CPU设备信息
-    size_t memorySize = 0; // 可以通过系统调用获取实际内存大小
+    // CPU device information
+    size_t memorySize = 0; // Can get actual memory size through system calls
     devices.emplace_back(DeviceType::CPU, "CPU", memorySize, 0);
     
     return devices;
 }
 
 bool CPUBackend::setDevice(int deviceId) {
-    // CPU只有一个设备
+    // CPU has only one device
     return deviceId == 0;
 }
 
 int CPUBackend::getCurrentDevice() const {
-    return 0; // CPU设备ID总是0
+    return 0; // CPU device ID is always 0
 }
 
 void* CPUBackend::allocate(size_t bytes) {
@@ -67,7 +67,7 @@ void CPUBackend::deallocate(void* ptr) {
 }
 
 void CPUBackend::copyToDevice(void* dst, const void* src, size_t bytes) {
-    // CPU上的内存拷贝
+    // Memory copy on CPU
     std::memcpy(dst, src, bytes);
 }
 
@@ -82,11 +82,11 @@ void CPUBackend::copyDeviceToDevice(void* dst, const void* src, size_t bytes) {
 }
 
 void CPUBackend::synchronize() {
-    // CPU后端不需要同步操作
+    // CPU backend doesn't need synchronization
 }
 
 bool CPUBackend::isAvailable() const {
-    return true; // CPU总是可用
+    return true; // CPU is always available
 }
 
 void CPUBackend::setNumThreads(int numThreads) {

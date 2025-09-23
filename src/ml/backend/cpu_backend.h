@@ -8,13 +8,13 @@
 namespace duorou {
 namespace ml {
 
-// CPU后端实现
+// CPU backend implementation
 class CPUBackend : public Backend {
 public:
     CPUBackend();
     virtual ~CPUBackend();
     
-    // Backend接口实现
+    // Backend interface implementation
     bool initialize() override;
     void cleanup() override;
     
@@ -34,7 +34,7 @@ public:
     std::string getName() const override { return "CPU Backend"; }
     bool isAvailable() const override;
     
-    // CPU特定功能
+    // CPU specific functionality
     void setNumThreads(int numThreads);
     int getNumThreads() const;
     
@@ -43,7 +43,7 @@ private:
     int numThreads_;
     std::mutex allocMutex_;
     
-    // 内存对齐分配
+    // Memory aligned allocation
     void* alignedAlloc(size_t bytes, size_t alignment = 32);
     void alignedFree(void* ptr);
 };

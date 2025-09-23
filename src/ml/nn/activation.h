@@ -8,42 +8,42 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// ReLU激活函数
+// ReLU activation function
 class ReLU {
 public:
     ReLU() = default;
     Tensor forward(Context& ctx, const Tensor& input);
 };
 
-// GELU激活函数
+// GELU activation function
 class GELU {
 public:
     GELU() = default;
     Tensor forward(Context& ctx, const Tensor& input);
 };
 
-// SiLU (Swish)激活函数
+// SiLU (Swish) activation function
 class SiLU {
 public:
     SiLU() = default;
     Tensor forward(Context& ctx, const Tensor& input);
 };
 
-// Tanh激活函数
+// Tanh activation function
 class Tanh {
 public:
     Tanh() = default;
     Tensor forward(Context& ctx, const Tensor& input);
 };
 
-// Sigmoid激活函数
+// Sigmoid activation function
 class Sigmoid {
 public:
     Sigmoid() = default;
     Tensor forward(Context& ctx, const Tensor& input);
 };
 
-// Softmax激活函数
+// Softmax activation function
 class Softmax {
 public:
     Softmax(int dim = -1) : dim_(dim) {}
@@ -53,7 +53,7 @@ private:
     int dim_;
 };
 
-// LeakyReLU激活函数
+// LeakyReLU activation function
 class LeakyReLU {
 public:
     LeakyReLU(float negativeSlope = 0.01f) : negativeSlope_(negativeSlope) {}
@@ -63,7 +63,7 @@ private:
     float negativeSlope_;
 };
 
-// 激活函数工厂
+// Activation factory for creating activation functions
 class ActivationFactory {
 public:
     enum class Type {
@@ -81,14 +81,14 @@ public:
     static std::string typeToString(Type type);
 };
 
-// 激活函数基类
+// Base class for polymorphic activation functions
 class ActivationBase {
 public:
     virtual ~ActivationBase() = default;
     virtual Tensor forward(Context& ctx, const Tensor& input) = 0;
 };
 
-// 具体激活函数实现类
+// Template implementation for activation functions
 template<typename ActivationType>
 class ActivationImpl : public ActivationBase {
 public:

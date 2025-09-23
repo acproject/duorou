@@ -6,7 +6,7 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// Linear 实现
+// Linear implementation
 Linear::Linear(int64_t inFeatures, int64_t outFeatures, bool bias)
     : inFeatures_(inFeatures), outFeatures_(outFeatures), hasBias_(bias),
       weight_({outFeatures, inFeatures}), bias_(hasBias_ ? std::vector<int64_t>{outFeatures} : std::vector<int64_t>{}) {
@@ -29,10 +29,10 @@ Linear& Linear::operator=(Linear&& other) noexcept {
 }
 
 Tensor Linear::forward(Context& ctx, const Tensor& input) {
-    // 执行矩阵乘法: output = input @ weight.T
+    // Perform matrix multiplication: output = input @ weight.T
     Tensor output = input.matmul(ctx, weight_.transpose(0, 1));
     
-    // 如果有偏置，添加偏置
+    // Add bias if available
     if (hasBias_) {
         output = output.add(ctx, bias_);
     }
@@ -44,7 +44,7 @@ void Linear::initializeWeights(Context& /*ctx*/, const std::string& method) {
     weight_.allocate();
     
     if (method == "xavier_uniform") {
-        // Xavier均匀初始化
+        // Xavier uniform initialization
         float limit = std::sqrt(6.0f / (inFeatures_ + outFeatures_));
         
         std::random_device rd;

@@ -6,7 +6,7 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// LayerNorm 实现
+// LayerNorm implementation
 LayerNorm::LayerNorm(int64_t normalizedShape, float eps, bool elementwiseAffine)
     : normalizedShape_({normalizedShape}), eps_(eps),
       elementwiseAffine_(elementwiseAffine) {
@@ -45,7 +45,7 @@ LayerNorm &LayerNorm::operator=(LayerNorm &&other) noexcept {
 }
 
 Tensor LayerNorm::forward(Context &ctx, const Tensor &input) {
-  // 计算均值
+  // Calculate mean
   Tensor mean = input.mean(ctx, -1, true);
 
   // 计算方差

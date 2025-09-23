@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include "qwen_vision_model.h"
 #include <cmath>
 #include <algorithm>

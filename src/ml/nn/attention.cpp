@@ -5,7 +5,7 @@ namespace duorou {
 namespace ml {
 namespace nn {
 
-// MultiHeadAttention 实现
+// MultiHeadAttention implementation
 MultiHeadAttention::MultiHeadAttention(int64_t embedDim, int64_t numHeads, 
                                      int64_t kvHeads, bool bias, float dropout)
     : embedDim_(embedDim), numHeads_(numHeads), 
@@ -27,14 +27,14 @@ MultiHeadAttention::MultiHeadAttention(int64_t embedDim, int64_t numHeads,
 Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query, 
                                   const Tensor& key, const Tensor& value,
                                   kvcache::Cache* cache, const Tensor& mask) {
-    // 处理3D张量：[batch_size, seq_len, embed_dim]
-    // 为了简化实现，我们将3D张量重塑为2D进行矩阵乘法
+    // Handle 3D tensor: [batch_size, seq_len, embed_dim]
+    // For simplicity, we reshape 3D tensor to 2D for matrix multiplication
     auto queryShape = query.shape();
     bool is3D = queryShape.size() == 3;
     
     Tensor q, k, v;
     if (is3D) {
-        // 重塑为2D: [batch_size * seq_len, embed_dim]
+        // Reshape to 2D: [batch_size * seq_len, embed_dim]
         int64_t batchSeq = queryShape[0] * queryShape[1];
         int64_t embedDim = queryShape[2];
         

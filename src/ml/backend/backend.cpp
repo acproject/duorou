@@ -6,7 +6,7 @@
 namespace duorou {
 namespace ml {
 
-// BackendFactory 实现
+// BackendFactory implementation
 BackendFactory& BackendFactory::getInstance() {
     static BackendFactory instance;
     return instance;
@@ -33,7 +33,7 @@ std::vector<DeviceType> BackendFactory::getAvailableBackendTypes() const {
 }
 
 std::unique_ptr<Backend> BackendFactory::createBestBackend() {
-    // 优先级顺序：CUDA > METAL > CPU
+    // Priority order: CUDA > METAL > CPU
     std::vector<DeviceType> priority = {
         DeviceType::CUDA,
         DeviceType::METAL,
@@ -50,7 +50,7 @@ std::unique_ptr<Backend> BackendFactory::createBestBackend() {
     return nullptr;
 }
 
-// BackendManager 实现
+// BackendManager implementation
 BackendManager& BackendManager::getInstance() {
     static BackendManager instance;
     return instance;
@@ -59,12 +59,12 @@ BackendManager& BackendManager::getInstance() {
 bool BackendManager::initializeBackends() {
     auto& factory = BackendFactory::getInstance();
     
-    // 注册CPU后端
+    // Register CPU backend
     factory.registerBackend(DeviceType::CPU, []() {
         return std::make_unique<CPUBackend>();
     });
     
-    // 尝试创建所有可用后端
+    // Try to create all available backends
     auto types = factory.getAvailableBackendTypes();
     for (DeviceType type : types) {
         auto backend = factory.createBackend(type);
@@ -73,7 +73,7 @@ bool BackendManager::initializeBackends() {
         }
     }
     
-    // 设置默认后端
+    // Set default backend
     if (!backends_.empty()) {
         currentBackend_ = backends_[0].get();
         return true;
@@ -108,7 +108,7 @@ void BackendManager::cleanup() {
     currentBackend_ = nullptr;
 }
 
-// 工具函数实现
+// Utility functions implementation
 std::string deviceTypeToString(DeviceType type) {
     switch (type) {
         case DeviceType::CPU: return "CPU";
@@ -126,7 +126,7 @@ DeviceType stringToDeviceType(const std::string& typeStr) {
     if (typeStr == "METAL") return DeviceType::METAL;
     if (typeStr == "OPENCL") return DeviceType::OPENCL;
     if (typeStr == "VULKAN") return DeviceType::VULKAN;
-    return DeviceType::CPU; // 默认返回CPU
+    return DeviceType::CPU; // Default to CPU
 }
 
 } // namespace ml
