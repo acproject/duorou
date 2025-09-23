@@ -557,7 +557,7 @@ void ChatView::create_input_area() {
                    G_CALLBACK(on_video_record_button_toggled), this);
 
   // Create send button
-  send_button_ = gtk_button_new_with_label("up");
+  send_button_ = gtk_button_new_with_label("chat");
   gtk_widget_add_css_class(send_button_, "send-button");
   gtk_widget_set_size_request(send_button_, 40, 40);
 
