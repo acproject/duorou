@@ -4,6 +4,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 namespace duorou {
 namespace model {
@@ -50,8 +51,11 @@ bool QwenMultimodalModel::initialize(const std::string& configPath) {
 
 bool QwenMultimodalModel::loadModel(const std::string& modelPath) {
     if (!initialized_) {
-        std::cerr << "Model not initialized. Call initialize() first." << std::endl;
-        return false;
+        std::cerr << "[WARN] Model not initialized; proceeding with minimal GGUF-based setup" << std::endl;
+        // Ensure text model exists for minimal inference
+        if (!textModel_) {
+            textModel_ = std::make_unique<QwenTextModel>(config_.textOptions);
+        }
     }
 
     // If a GGUF file is passed in, prioritize initializing vocabulary and tokenizer from GGUF
@@ -60,20 +64,52 @@ bool QwenMultimodalModel::loadModel(const std::string& modelPath) {
     };
 
     bool gguf_inited = false;
+    // First try by extension
     if (!modelPath.empty() && (ends_with(modelPath, ".gguf") || modelPath.find(".gguf") != std::string::npos)) {
         gguf_inited = loadGGUFModel(modelPath);
         if (!gguf_inited) {
             std::cerr << "[WARN] Failed to initialize tokenizer/vocab from GGUF: " << modelPath << std::endl;
         }
-    } else if (!config_.textModelPath.empty() && (ends_with(config_.textModelPath, ".gguf") || config_.textModelPath.find(".gguf") != std::string::npos)) {
-        gguf_inited = loadGGUFModel(config_.textModelPath);
-        if (!gguf_inited) {
-            std::cerr << "[WARN] Failed to initialize tokenizer/vocab from GGUF: " << config_.textModelPath << std::endl;
+    } else {
+        // Extension-less path (e.g., Ollama blob). Probe GGUF magic via parser.
+        duorou::extensions::ollama::GGUFParser probe(/*use_mmap=*/true);
+        if (probe.parseFile(modelPath)) {
+            std::cout << "[DEBUG] Probed GGUF successfully for path (no .gguf extension): " << modelPath << std::endl;
+            gguf_inited = loadGGUFModel(modelPath);
+            if (!gguf_inited) {
+                std::cerr << "[WARN] Failed to initialize tokenizer/vocab from probed GGUF: " << modelPath << std::endl;
+            }
+        } else if (!config_.textModelPath.empty()) {
+            // Try config_.textModelPath as a GGUF source
+            duorou::extensions::ollama::GGUFParser probe2(/*use_mmap=*/true);
+            if (probe2.parseFile(config_.textModelPath)) {
+                std::cout << "[DEBUG] Probed GGUF successfully for config path: " << config_.textModelPath << std::endl;
+                gguf_inited = loadGGUFModel(config_.textModelPath);
+                if (!gguf_inited) {
+                    std::cerr << "[WARN] Failed to initialize tokenizer/vocab from probed GGUF: " << config_.textModelPath << std::endl;
+                }
+            }
         }
     }
 
-    // Continue loading component models (text/vision)
-    return loadComponentModels();
+    // Ensure text model is initialized so generate() will work
+    if (textModel_) {
+        if (external_vocabulary_) {
+            if (!textModel_->initialize(config_.configPath, true)) {
+                std::cerr << "[WARN] Failed to initialize text model with external vocabulary" << std::endl;
+            }
+        } else {
+            if (!textModel_->initialize(config_.configPath)) {
+                std::cerr << "[WARN] Failed to initialize text model without external vocabulary" << std::endl;
+            }
+        }
+    } else {
+        std::cerr << "[ERROR] textModel_ is null after minimal setup; cannot proceed" << std::endl;
+        return false;
+    }
+
+    // In minimal setup, skip loading vision model/components to avoid null dereference
+    return true;
 }
 
 std::vector<int32_t> QwenMultimodalModel::encode(const std::string& text, bool addSpecial) {
@@ -343,11 +379,17 @@ bool QwenMultimodalModel::initializeComponents() {
         }
         std::cout << "[DEBUG] Using external vocabulary with size: " << external_vocabulary_->size() << std::endl;
         
-        // Create tokenizer based on external vocabulary (using Qwen architecture factory)
-        TokenizerFactoryOptions opts; // Allow future override through configuration
-        tokenizer_ = createTextProcessorForArchitecture("qwen", external_vocabulary_, opts);
+        // Create tokenizer based on external vocabulary (using Qwen architecture factory) ONLY if not already created
         if (!tokenizer_) {
-            std::cerr << "[ERROR] Failed to create tokenizer with external vocabulary" << std::endl;
+            TokenizerFactoryOptions opts; // Allow future override through configuration
+            tokenizer_ = createTextProcessorForArchitecture("qwen", external_vocabulary_, opts);
+            if (!tokenizer_) {
+                std::cerr << "[ERROR] Failed to create tokenizer with external vocabulary" << std::endl;
+            } else {
+                std::cout << "[DEBUG] Tokenizer created via architecture factory using external vocabulary" << std::endl;
+            }
+        } else {
+            std::cout << "[DEBUG] Reusing tokenizer created from GGUF; skip architecture factory creation" << std::endl;
         }
     } else {
         // Only create text model instance, defer initialization to loadComponentModels stage, avoid fallback vocabulary initialization logs
@@ -474,9 +516,108 @@ std::vector<float> QwenMultimodalModel::createMultimodalAttentionMask(
 }
 
 bool QwenMultimodalModel::loadConfig(const std::string& configPath) {
-    // TODO: Load configuration from JSON file
-    // For now, use default values
-    return true;
+    // Record config path
+    config_.configPath = configPath;
+
+    // Allow empty path to use defaults
+    if (configPath.empty()) {
+        return true;
+    }
+
+    std::ifstream in(configPath);
+    if (!in.is_open()) {
+        std::cerr << "[ERROR] Failed to open Qwen multimodal config: " << configPath << std::endl;
+        return false;
+    }
+
+    try {
+        nlohmann::json j;
+        in >> j;
+
+        // Model paths
+        config_.textModelPath = j.value("text_model_path", config_.textModelPath);
+        config_.visionModelPath = j.value("vision_model_path", config_.visionModelPath);
+
+        // Text options
+        if (j.contains("text_options") && j["text_options"].is_object()) {
+            const auto& jt = j["text_options"];
+            config_.textOptions.hiddenSize = jt.value("hidden_size", config_.textOptions.hiddenSize);
+            config_.textOptions.numHeads = jt.value("num_heads", config_.textOptions.numHeads);
+            config_.textOptions.numKVHeads = jt.value("num_kv_heads", config_.textOptions.numKVHeads);
+            config_.textOptions.ropeDim = jt.value("rope_dim", config_.textOptions.ropeDim);
+            config_.textOptions.originalContextLength = jt.value("original_context_length", config_.textOptions.originalContextLength);
+            config_.textOptions.eps = jt.value("eps", config_.textOptions.eps);
+            config_.textOptions.ropeBase = jt.value("rope_base", config_.textOptions.ropeBase);
+            config_.textOptions.ropeScale = jt.value("rope_scale", config_.textOptions.ropeScale);
+            config_.textOptions.blockCount = jt.value("block_count", config_.textOptions.blockCount);
+            config_.textOptions.embeddingLength = jt.value("embedding_length", config_.textOptions.embeddingLength);
+        }
+
+        // Vision options
+        if (j.contains("vision_options") && j["vision_options"].is_object()) {
+            const auto& jv = j["vision_options"];
+            config_.visionOptions.hiddenSize = jv.value("hidden_size", config_.visionOptions.hiddenSize);
+            config_.visionOptions.numHeads = jv.value("num_heads", config_.visionOptions.numHeads);
+            config_.visionOptions.numLayers = jv.value("num_layers", config_.visionOptions.numLayers);
+            config_.visionOptions.patchSize = jv.value("patch_size", config_.visionOptions.patchSize);
+            config_.visionOptions.imageSize = jv.value("image_size", config_.visionOptions.imageSize);
+            config_.visionOptions.numChannels = jv.value("num_channels", config_.visionOptions.numChannels);
+            config_.visionOptions.temporalPatchSize = jv.value("temporal_patch_size", config_.visionOptions.temporalPatchSize);
+            config_.visionOptions.spatialMergeSize = jv.value("spatial_merge_size", config_.visionOptions.spatialMergeSize);
+            config_.visionOptions.layerNormEps = jv.value("layer_norm_eps", config_.visionOptions.layerNormEps);
+        }
+
+        // Image processor config
+        if (j.contains("image_processor") && j["image_processor"].is_object()) {
+            const auto& jp = j["image_processor"];
+            config_.imageProcessorConfig.imageSize = jp.value("image_size", config_.imageProcessorConfig.imageSize);
+            config_.imageProcessorConfig.patchSize = jp.value("patch_size", config_.imageProcessorConfig.patchSize);
+            config_.imageProcessorConfig.temporalPatchSize = jp.value("temporal_patch_size", config_.imageProcessorConfig.temporalPatchSize);
+            config_.imageProcessorConfig.spatialMergeSize = jp.value("spatial_merge_size", config_.imageProcessorConfig.spatialMergeSize);
+            config_.imageProcessorConfig.minPixels = jp.value("min_pixels", config_.imageProcessorConfig.minPixels);
+            config_.imageProcessorConfig.maxPixels = jp.value("max_pixels", config_.imageProcessorConfig.maxPixels);
+            config_.imageProcessorConfig.resampleMode = jp.value("resample_mode", config_.imageProcessorConfig.resampleMode);
+            config_.imageProcessorConfig.doResize = jp.value("do_resize", config_.imageProcessorConfig.doResize);
+            config_.imageProcessorConfig.doNormalize = jp.value("do_normalize", config_.imageProcessorConfig.doNormalize);
+            config_.imageProcessorConfig.doConvertRgb = jp.value("do_convert_rgb", config_.imageProcessorConfig.doConvertRgb);
+
+            if (jp.contains("mean") && jp["mean"].is_array()) {
+                config_.imageProcessorConfig.mean.clear();
+                for (const auto& v : jp["mean"]) {
+                    config_.imageProcessorConfig.mean.push_back(v.get<float>());
+                }
+            }
+            if (jp.contains("std") && jp["std"].is_array()) {
+                config_.imageProcessorConfig.std.clear();
+                for (const auto& v : jp["std"]) {
+                    config_.imageProcessorConfig.std.push_back(v.get<float>());
+                }
+            }
+        }
+
+        // Special tokens
+        if (j.contains("special_tokens") && j["special_tokens"].is_object()) {
+            const auto& js = j["special_tokens"];
+            config_.imageTokenId = js.value("image_token_id", config_.imageTokenId);
+            config_.videoTokenId = js.value("video_token_id", config_.videoTokenId);
+            config_.visionStartId = js.value("vision_start_id", config_.visionStartId);
+            config_.visionEndId = js.value("vision_end_id", config_.visionEndId);
+            config_.visionPadId = js.value("vision_pad_id", config_.visionPadId);
+        }
+
+        // Processing parameters
+        if (j.contains("processing") && j["processing"].is_object()) {
+            const auto& jp = j["processing"];
+            config_.maxImageTokens = jp.value("max_image_tokens", config_.maxImageTokens);
+            config_.maxSequenceLength = jp.value("max_sequence_length", config_.maxSequenceLength);
+            config_.useVisionPadding = jp.value("use_vision_padding", config_.useVisionPadding);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Exception while parsing Qwen multimodal config: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 bool QwenMultimodalModel::validateConfig() const {
@@ -744,97 +885,36 @@ std::vector<float> QwenMultimodalModel::convertFromTensor(const duorou::ml::Tens
 
 bool QwenMultimodalModel::loadGGUFModel(const std::string& modelPath) {
     try {
+        // Parse GGUF file
         ggufParser_ = std::make_unique<duorou::extensions::ollama::GGUFParser>(true);
         if (!ggufParser_->parseFile(modelPath)) {
             std::cerr << "Failed to load GGUF model: parseFile failed for " << modelPath << std::endl;
             return false;
         }
 
-        // Build Vocabulary and TextProcessor (Tokenizer) based on GGUF metadata
-        try {
-            // 读取 tokens
-            std::vector<std::string> tokens;
-            if (const auto* kvTokens = ggufParser_->getMetadata("tokenizer.ggml.tokens")) {
-                tokens = kvTokens->asStringArray();
-            }
-
-            // 读取 token types
-            std::vector<int32_t> types;
-            if (const auto* kvTypes = ggufParser_->getMetadata("tokenizer.ggml.token_type")) {
-                types = kvTypes->asInt32Array();
-            }
-            if (types.empty() && !tokens.empty()) {
-                types.assign(tokens.size(), duorou::model::TOKEN_TYPE_NORMAL);
-            }
-
-            // 读取 merges
-            std::vector<std::string> merges;
-            if (const auto* kvMerges = ggufParser_->getMetadata("tokenizer.ggml.merges")) {
-                merges = kvMerges->asStringArray();
-            }
-
-            if (!tokens.empty()) {
-                // 调试：检查从GGUF读取的词汇表内容
-                std::cout << "[DEBUG] GGUF vocabulary loaded with " << tokens.size() << " tokens" << std::endl;
-                std::cout << "[DEBUG] First 10 tokens from GGUF:" << std::endl;
-                for (size_t i = 0; i < std::min(tokens.size(), size_t(10)); ++i) {
-                    std::cout << "[DEBUG]   Token " << i << ": '" << tokens[i] << "'" << std::endl;
-                }
-                std::cout << "[DEBUG] Last 10 tokens from GGUF:" << std::endl;
-                for (size_t i = std::max(size_t(0), tokens.size() - 10); i < tokens.size(); ++i) {
-                    std::cout << "[DEBUG]   Token " << i << ": '" << tokens[i] << "'" << std::endl;
-                }
-                
-                // use GGUF Vocabulary
-                external_vocabulary_ = std::make_shared<duorou::model::Vocabulary>();
-                external_vocabulary_->initialize(tokens, types, /*scores*/ {}, merges);
-
-                // BOS/EOS config
-                std::vector<int32_t> bos_ids;
-                std::vector<int32_t> eos_ids;
-                bool add_bos = false;
-                bool add_eos = false;
-                if (const auto* kvBOS = ggufParser_->getMetadata("tokenizer.ggml.bos_token_id")) {
-                    bos_ids.push_back(kvBOS->asInt32());
-                }
-                if (const auto* kvEOS = ggufParser_->getMetadata("tokenizer.ggml.eos_token_id")) {
-                    eos_ids.push_back(kvEOS->asInt32());
-                }
-                if (const auto* kvAddBOS = ggufParser_->getMetadata("tokenizer.ggml.add_bos_token")) {
-                    add_bos = kvAddBOS->asBool();
-                }
-                if (const auto* kvAddEOS = ggufParser_->getMetadata("tokenizer.ggml.add_eos_token")) {
-                    add_eos = kvAddEOS->asBool();
-                }
-                if (!bos_ids.empty()) {
-                    external_vocabulary_->setBOS(bos_ids, add_bos);
-                }
-                if (!eos_ids.empty()) {
-                    external_vocabulary_->setEOS(eos_ids, add_eos);
-                }
-
-                // Create TextProcessor (Tokenizer) through GGUF
-                TokenizerFactoryOptions opts; // Use GGUF metadata for default inference
-                tokenizer_ = createTextProcessorFromGGUF(*ggufParser_, external_vocabulary_, opts);
-
-                if (tokenizer_) {
-                    std::cout << "[DEBUG] Tokenizer created successfully from GGUF" << std::endl;
-                    // Test if tokenizer can correctly decode some tokens
-                    std::vector<int32_t> test_tokens = {146895, 89621, 99014};
-                    std::string decoded = tokenizer_->decode(test_tokens);
-                    std::cout << "[DEBUG] Test decode tokens [146895, 89621, 99014]: '" << decoded << "'" << std::endl;
-                } else {
-                    std::cerr << "[ERROR] Failed to create tokenizer from GGUF" << std::endl;
-                }
-
-                std::cout << "[DEBUG] Initialized Vocabulary(size=" << external_vocabulary_->size()
-                          << ") and TextProcessor from GGUF" << std::endl;
-            } else {
-                std::cerr << "[WARN] GGUF does not contain tokenizer tokens; skipping tokenizer init" << std::endl;
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[WARN] Exception initializing tokenizer from GGUF: " << e.what() << std::endl;
+        // Create Vocabulary from GGUF using unified factory (same as tokenizer_golden_test.cpp)
+        auto vocab = createVocabularyFromGGUF(*ggufParser_);
+        if (!vocab) {
+            std::cerr << "[ERROR] Failed to create vocabulary from GGUF: " << modelPath << std::endl;
+            return false;
         }
+        external_vocabulary_ = std::move(vocab);
+        std::cout << "[DEBUG] External vocabulary set from GGUF, size=" << external_vocabulary_->size() << std::endl;
+
+        // Create TextProcessor (Tokenizer) from GGUF
+        TokenizerFactoryOptions opts; // defaults; can be extended via config
+        tokenizer_ = createTextProcessorFromGGUF(*ggufParser_, external_vocabulary_, opts);
+        if (!tokenizer_) {
+            std::cerr << "[ERROR] Failed to create tokenizer from GGUF" << std::endl;
+            return false;
+        }
+        std::cout << "[DEBUG] Tokenizer created successfully from GGUF (vocab_size=" << tokenizer_->getVocabSize() << ")" << std::endl;
+
+        // Optional: simple roundtrip sanity check for a short text
+        const std::string sanity_text = "hello";
+        auto sanity_ids = tokenizer_->encode(sanity_text, /*addSpecial=*/false);
+        auto sanity_decoded = tokenizer_->decode(sanity_ids);
+        std::cout << "[DEBUG] GGUF tokenizer sanity roundtrip: '" << sanity_text << "' -> ids(" << sanity_ids.size() << ") -> '" << sanity_decoded << "'" << std::endl;
 
         return true;
     } catch (const std::exception& e) {

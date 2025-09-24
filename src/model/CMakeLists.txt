@@ -46,7 +46,22 @@ target_link_libraries(duorou_model PUBLIC duorou_utils duorou_ollama_extension)
 # Link against model and ollama extension for GGUF symbols
 # target_link_libraries(test_model PRIVATE duorou_model duorou_ollama_extension)
 
+# 创建 tokenizer_golden_test 可执行文件（用于词元器黄金测试）
+add_executable(tokenizer_golden_test ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_golden_test.cpp)
 
+target_include_directories(tokenizer_golden_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/extensions/ollama
+    ${CMAKE_SOURCE_DIR}/src/fs/gguf
+)
+
+target_link_libraries(tokenizer_golden_test
+    duorou_model
+    duorou_ollama_extension
+    duorou_utils
+)
+
+set_target_properties(tokenizer_golden_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 
 # 将 tokenizer_golden_test 纳入 CTest（使用环境变量驱动数据路径）
 if(BUILD_TESTING)

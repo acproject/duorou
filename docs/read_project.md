@@ -66,7 +66,7 @@
 版本控制：每个层都有独立的 SHA256 哈希值用于完整性验证
 
 我们再来看看blobs文件夹：
-目录: D:\ollama-model\blobs
+目录: ~/.ollama/models/manifests/registry.ollama.ai/library/qwen2.5vl
 
 Mode                 LastWriteTime         Length Name
 ----                 -------------         ------ ----

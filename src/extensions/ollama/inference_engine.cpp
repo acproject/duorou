@@ -931,6 +931,19 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     std::cout << "[DEBUG] [InternalForward] Encoded " << input_ids.size()
               << " tokens from prompt" << std::endl;
 
+    // Remove trailing EOS from input to allow generation to proceed,
+    // and remember prompt length so we can strip it from the final output
+    size_t prompt_len = input_ids.size();
+    if (!llama_model_) {
+      const duorou::model::Vocabulary* v = qwen_model_->getVocabulary();
+      int32_t eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
+      if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
+        input_ids.pop_back();
+        prompt_len = input_ids.size();
+        std::cout << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens" << std::endl;
+      }
+    }
+
     // Call Qwen model's multimodal generation method (without passing images)
     std::vector<int32_t> output_ids =
         qwen_model_->generateMultimodal(input_ids, {}, // Empty image data
@@ -951,17 +964,30 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     
     // If llama_model_ exists, use llama.cpp decoding
     if (llama_model_) {
+      // Only decode newly generated tokens (exclude the prompt)
+      std::vector<int32_t> gen_ids;
+      if (output_ids.size() > prompt_len) {
+        gen_ids.assign(output_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), output_ids.end());
+      }
+
+      // Always decode only newly generated tokens; if none, return empty string
       std::vector<llama_token> llama_tokens;
-      llama_tokens.reserve(output_ids.size());
-      for (int32_t token_id : output_ids) {
+      llama_tokens.reserve(gen_ids.size());
+      for (int32_t token_id : gen_ids) {
         llama_tokens.push_back(static_cast<llama_token>(token_id));
       }
-      result = detokenize(llama_tokens);
-      std::cout << "[DEBUG] [InternalForward] Using llama.cpp detokenization" << std::endl;
+      result = gen_ids.empty() ? std::string() : detokenize(llama_tokens);
+      std::cout << "[DEBUG] [InternalForward] Using llama.cpp detokenization (excluded prompt tokens)" << std::endl;
     } else {
       // Fall back to Qwen model decoder
-      result = qwen_model_->decode(output_ids);
-      std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization" << std::endl;
+      // Only decode newly generated tokens (exclude the prompt)
+      std::vector<int32_t> gen_ids;
+      if (output_ids.size() > prompt_len) {
+        gen_ids.assign(output_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), output_ids.end());
+      }
+      // Always decode only newly generated tokens; if none, result will be empty
+      result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
+      std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization (excluded prompt tokens)" << std::endl;
     }
 
     if (result.empty()) {
