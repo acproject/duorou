@@ -146,3 +146,4 @@ pid.file
 other
 models
 models/**
+.vs
