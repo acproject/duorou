@@ -14,10 +14,10 @@ typedef int32_t llama_token;
 
 // 前向声明
 #include "../../kvcache/cache.h"
+#include "../../model/qwen_multimodal_model.h"
 #include "../../model/text_processor.h"
 #include "../../model/tokenizer_factory.h"
 #include "../../model/vocabulary.h"
-#include "../../model/qwen_multimodal_model.h"
 #include "gguf_parser.h"
 
 // 前向声明
@@ -131,8 +131,7 @@ private:
   // 内部 Forward 模式的文本生成
   std::string generateWithInternalForward(const std::string &prompt,
                                           uint32_t max_tokens,
-                                          float temperature,
-                                          float top_p);
+                                          float temperature, float top_p);
   void cleanupResources();
 };
 

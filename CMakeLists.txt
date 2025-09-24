@@ -349,6 +349,11 @@ add_subdirectory(src/ml)
 # 添加 Model 模块
 add_subdirectory(src/model)
 
+# 集成测试
+if(BUILD_TESTING)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/src/CMakeLists_integration_test.txt)
+endif()
+
 # 创建源文件目录（如果不存在）
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/models)

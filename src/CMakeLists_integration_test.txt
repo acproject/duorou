@@ -1,8 +1,18 @@
 # 独立的模块集成测试
 cmake_minimum_required(VERSION 3.16)
 
+# 兼容 include 与 src 目录调用的源目录解析
+set(DUOROU_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(EXISTS "${DUOROU_SRC_DIR}/test_module_integration.cpp")
+    message(STATUS "Integration tests: using source dir ${DUOROU_SRC_DIR}")
+else()
+    # 当本文件位于 src/ 下被直接处理时，当前目录就是 src
+    set(DUOROU_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    message(STATUS "Integration tests: using source dir ${DUOROU_SRC_DIR}")
+endif()
+
 # 创建集成测试可执行文件
-add_executable(module_integration_test test_module_integration.cpp)
+add_executable(module_integration_test ${DUOROU_SRC_DIR}/test_module_integration.cpp)
 
 # 设置C++标准
 set_target_properties(module_integration_test PROPERTIES
@@ -12,15 +22,19 @@ set_target_properties(module_integration_test PROPERTIES
 
 # 包含目录
 target_include_directories(module_integration_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/ml
-    ${CMAKE_CURRENT_SOURCE_DIR}/kvcache
+    ${DUOROU_SRC_DIR}
+    ${DUOROU_SRC_DIR}/ml
+    ${DUOROU_SRC_DIR}/kvcache
+    ${DUOROU_SRC_DIR}/extensions/ollama
+    ${DUOROU_SRC_DIR}/model
 )
 
 # 链接库
 target_link_libraries(module_integration_test
     duorou_ml
     duorou_kvcache
+    duorou_ollama_extension
+    duorou_model
 )
 
 # 编译器标志

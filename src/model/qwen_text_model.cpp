@@ -275,13 +275,15 @@ bool QwenTextModel::initialize(const std::string &configPath) {
 
     // Fill remaining with placeholder tokens
     while (defaultVocab.size() < vocabSize) {
-      defaultVocab.push_back("<token_" + std::to_string(defaultVocab.size()) + ">");
+      defaultVocab.push_back("<token_" + std::to_string(defaultVocab.size()) +
+                             ">");
       defaultTypes.push_back(duorou::model::TOKEN_TYPE_NORMAL);
       defaultScores.push_back(0.0f);
     }
 
     // Initialize vocabulary and specials
-    vocabulary_->initialize(defaultVocab, defaultTypes, defaultScores, defaultMerges);
+    vocabulary_->initialize(defaultVocab, defaultTypes, defaultScores,
+                            defaultMerges);
     vocabulary_->setUNK({0});
     vocabulary_->setBOS({1}, true);
     vocabulary_->setEOS({2}, true);
@@ -289,7 +291,8 @@ bool QwenTextModel::initialize(const std::string &configPath) {
     std::cout << "[DEBUG] Vocabulary initialized with " << vocabulary_->size()
               << " tokens" << std::endl;
 
-    auto vocabPtr = std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary*){});
+    auto vocabPtr =
+        std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary *) {});
 
     // Create tokenizer via factory for Qwen architecture
     std::cout << "[DEBUG] Creating Qwen tokenizer via factory..." << std::endl;
@@ -298,14 +301,16 @@ bool QwenTextModel::initialize(const std::string &configPath) {
     tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts);
 
     if (!tokenizer_) {
-      std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture" << std::endl;
+      std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture"
+                << std::endl;
       return false;
     }
 
     // Ensure embedding/output sizes match tokenizer vocab size
     {
       size_t newVocab = tokenizer_->getVocabSize();
-      if (newVocab == 0 && vocabPtr) newVocab = vocabPtr->size();
+      if (newVocab == 0 && vocabPtr)
+        newVocab = vocabPtr->size();
       if (newVocab > 0) {
         size_t hidden = options_.hiddenSize;
         tokenEmbeddings_.assign(newVocab * hidden, 0.0f);
@@ -332,7 +337,8 @@ bool QwenTextModel::initialize(const std::string &configPath) {
   }
 }
 
-bool QwenTextModel::initialize(const std::string &configPath, bool skipVocabInit) {
+bool QwenTextModel::initialize(const std::string &configPath,
+                               bool skipVocabInit) {
   if (skipVocabInit) {
     try {
       if (!loadConfig(configPath)) {
@@ -346,10 +352,13 @@ bool QwenTextModel::initialize(const std::string &configPath, bool skipVocabInit
         }
       }
       initialized_ = true;
-      std::cout << "[DEBUG] QwenTextModel initialized with external vocabulary (skipped vocab init)" << std::endl;
+      std::cout << "[DEBUG] QwenTextModel initialized with external vocabulary "
+                   "(skipped vocab init)"
+                << std::endl;
       return true;
     } catch (const std::exception &e) {
-      std::cerr << "Error initializing QwenTextModel with skipVocabInit: " << e.what() << std::endl;
+      std::cerr << "Error initializing QwenTextModel with skipVocabInit: "
+                << e.what() << std::endl;
       return false;
     }
   }
@@ -367,7 +376,8 @@ QwenTextModel::generate(const std::vector<int32_t> &inputIds, size_t maxLength,
   if (tokenizer_) {
     if (const Vocabulary *v = tokenizer_->getVocabulary()) {
       int32_t vid = v->getSpecialId(Special::EOS);
-      if (vid >= 0) eos_id = vid;
+      if (vid >= 0)
+        eos_id = vid;
     }
   }
   if (!inputIds.empty() && inputIds.back() == eos_id) {
@@ -378,7 +388,8 @@ QwenTextModel::generate(const std::vector<int32_t> &inputIds, size_t maxLength,
     auto probabilities = softmax(logits);
     int32_t nextToken = sampleToken(probabilities, temperature, topP);
     result.push_back(nextToken);
-    if (nextToken == eos_id) break;
+    if (nextToken == eos_id)
+      break;
   }
   return result;
 }
@@ -436,12 +447,14 @@ std::vector<float> QwenTextModel::layerNorm(const std::vector<float> &input,
                                             float eps) {
   std::vector<float> output = input;
   size_t hiddenSize = weights.size();
-  if (hiddenSize == 0) return output;
+  if (hiddenSize == 0)
+    return output;
   size_t sequenceLength = input.size() / hiddenSize;
   for (size_t seq = 0; seq < sequenceLength; ++seq) {
     size_t start = seq * hiddenSize;
     float mean = 0.0f;
-    for (size_t i = 0; i < hiddenSize; ++i) mean += input[start + i];
+    for (size_t i = 0; i < hiddenSize; ++i)
+      mean += input[start + i];
     mean /= static_cast<float>(hiddenSize);
     float variance = 0.0f;
     for (size_t i = 0; i < hiddenSize; ++i) {
@@ -459,15 +472,18 @@ std::vector<float> QwenTextModel::layerNorm(const std::vector<float> &input,
 
 std::vector<float> QwenTextModel::softmax(const std::vector<float> &logits) {
   std::vector<float> probabilities(logits.size());
-  if (logits.empty()) return probabilities;
+  if (logits.empty())
+    return probabilities;
   float maxLogit = *std::max_element(logits.begin(), logits.end());
   float sum = 0.0f;
   for (size_t i = 0; i < logits.size(); ++i) {
     probabilities[i] = std::exp(logits[i] - maxLogit);
     sum += probabilities[i];
   }
-  if (sum <= 0.0f) return probabilities;
-  for (size_t i = 0; i < probabilities.size(); ++i) probabilities[i] /= sum;
+  if (sum <= 0.0f)
+    return probabilities;
+  for (size_t i = 0; i < probabilities.size(); ++i)
+    probabilities[i] /= sum;
   return probabilities;
 }
 
@@ -476,7 +492,8 @@ int32_t QwenTextModel::sampleToken(const std::vector<float> &probabilities,
   static std::random_device rd;
   static std::mt19937 gen(rd());
   std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-  if (probabilities.empty()) return 0;
+  if (probabilities.empty())
+    return 0;
   std::vector<float> scaled(probabilities.size());
   float invTemp = 1.0f / std::max(temperature, 1e-6f);
   float sum = 0.0f;
@@ -484,25 +501,31 @@ int32_t QwenTextModel::sampleToken(const std::vector<float> &probabilities,
     scaled[i] = std::pow(probabilities[i], invTemp);
     sum += scaled[i];
   }
-  if (sum <= 0.0f) return 0;
-  for (float &p : scaled) p /= sum;
+  if (sum <= 0.0f)
+    return 0;
+  for (float &p : scaled)
+    p /= sum;
   float r = dis(gen);
   float c = 0.0f;
   for (size_t i = 0; i < scaled.size(); ++i) {
     c += scaled[i];
-    if (r <= c) return static_cast<int32_t>(i);
+    if (r <= c)
+      return static_cast<int32_t>(i);
   }
   return static_cast<int32_t>(scaled.size() - 1);
 }
 
-std::vector<float> QwenTextModel::embedTokens(const std::vector<int32_t> &tokenIds) {
+std::vector<float>
+QwenTextModel::embedTokens(const std::vector<int32_t> &tokenIds) {
   size_t hidden = options_.hiddenSize;
-  if (hidden == 0 || tokenIds.empty()) return {};
+  if (hidden == 0 || tokenIds.empty())
+    return {};
   size_t vocab = getVocabSize();
   std::vector<float> output(tokenIds.size() * hidden, 0.0f);
   for (size_t t = 0; t < tokenIds.size(); ++t) {
     int32_t id = tokenIds[t];
-    if (id < 0 || static_cast<size_t>(id) >= vocab) continue;
+    if (id < 0 || static_cast<size_t>(id) >= vocab)
+      continue;
     size_t embOffset = static_cast<size_t>(id) * hidden;
     size_t outOffset = t * hidden;
     if (embOffset + hidden <= tokenEmbeddings_.size()) {

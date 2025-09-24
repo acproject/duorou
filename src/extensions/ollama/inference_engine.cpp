@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 // Include the actual llama.cpp header files
 #ifdef _WIN32
@@ -135,10 +136,16 @@ bool MLInferenceEngine::initialize() {
       return false;
     }
     const auto &arch = gguf_parser_->getArchitecture().name;
-    use_llama_backend_ = isSupportedByLlamaCpp(arch);
+    // Allow forcing llama.cpp via environment variable DUOROU_FORCE_LLAMA
+    const char* force_llama_env = std::getenv("DUOROU_FORCE_LLAMA");
+    bool force_llama = force_llama_env && std::string(force_llama_env) != "0" && std::string(force_llama_env).size() > 0;
+
+    use_llama_backend_ = force_llama ? true : isSupportedByLlamaCpp(arch);
     std::cout << "[DEBUG] Detected architecture: '" << arch
               << "', use_llama_backend_="
-              << (use_llama_backend_ ? "true" : "false") << std::endl;
+              << (use_llama_backend_ ? "true" : "false")
+              << (force_llama ? " (forced by DUOROU_FORCE_LLAMA)" : "")
+              << std::endl;
 
     if (use_llama_backend_) {
       // Only initialize llama.cpp backend and load model when llama.cpp is selected

@@ -15,9 +15,8 @@ static const uint32_t GGUF_VERSION = 3;
 
 // 支持的架构列表
 const std::vector<std::string> GGUFParser::SUPPORTED_ARCHITECTURES = {
-    "qwen25vl", "qwen2.5vl", "qwen-2.5vl",
-    "qwen2vl", "qwen2", "llama", "mistral"
-};
+    "qwen25vl", "qwen2.5vl", "qwen-2.5vl", "qwen2vl",
+    "qwen2",    "llama",     "mistral"};
 
 // GGUFKeyValue 数据提取函数实现
 std::string GGUFKeyValue::asString() const {
@@ -105,7 +104,7 @@ bool GGUFKeyValue::asBool() const {
 
 std::vector<int32_t> GGUFKeyValue::asInt32Array() const {
   std::vector<int32_t> result;
-  
+
   if (type != GGUFType::ARRAY || data.size() < 12) {
     return result;
   }
@@ -113,7 +112,7 @@ std::vector<int32_t> GGUFKeyValue::asInt32Array() const {
   // 读取数组类型
   uint32_t array_type;
   std::memcpy(&array_type, data.data(), 4);
-  
+
   if (array_type != static_cast<uint32_t>(GGUFType::INT32)) {
     return result;
   }
@@ -127,8 +126,8 @@ std::vector<int32_t> GGUFKeyValue::asInt32Array() const {
   }
 
   result.reserve(array_length);
-  const uint8_t* ptr = data.data() + 12;
-  
+  const uint8_t *ptr = data.data() + 12;
+
   for (uint64_t i = 0; i < array_length; ++i) {
     int32_t value;
     std::memcpy(&value, ptr, 4);
@@ -141,7 +140,7 @@ std::vector<int32_t> GGUFKeyValue::asInt32Array() const {
 
 std::vector<uint64_t> GGUFKeyValue::asUInt64Array() const {
   std::vector<uint64_t> result;
-  
+
   if (type != GGUFType::ARRAY || data.size() < 12) {
     return result;
   }
@@ -149,7 +148,7 @@ std::vector<uint64_t> GGUFKeyValue::asUInt64Array() const {
   // 读取数组类型
   uint32_t array_type;
   std::memcpy(&array_type, data.data(), 4);
-  
+
   if (array_type != static_cast<uint32_t>(GGUFType::UINT64)) {
     return result;
   }
@@ -159,7 +158,7 @@ std::vector<uint64_t> GGUFKeyValue::asUInt64Array() const {
   std::memcpy(&array_length, data.data() + 4, 8);
 
   // 添加安全检查：限制最大数组长度以防止内存耗尽
-  const uint64_t MAX_ARRAY_LENGTH = 1000000;  // 最大100万个元素
+  const uint64_t MAX_ARRAY_LENGTH = 1000000; // 最大100万个元素
   if (array_length > MAX_ARRAY_LENGTH) {
     // 记录错误但不抛出异常，返回空数组
     return result;
@@ -172,15 +171,15 @@ std::vector<uint64_t> GGUFKeyValue::asUInt64Array() const {
   // 使用try-catch保护内存分配
   try {
     result.reserve(array_length);
-    const uint8_t* ptr = data.data() + 12;
-    
+    const uint8_t *ptr = data.data() + 12;
+
     for (uint64_t i = 0; i < array_length; ++i) {
       uint64_t value;
       std::memcpy(&value, ptr, 8);
       result.push_back(value);
       ptr += 8;
     }
-  } catch (const std::bad_alloc&) {
+  } catch (const std::bad_alloc &) {
     // 内存分配失败，返回空数组
     result.clear();
   }
@@ -190,7 +189,7 @@ std::vector<uint64_t> GGUFKeyValue::asUInt64Array() const {
 
 std::vector<std::string> GGUFKeyValue::asStringArray() const {
   std::vector<std::string> result;
-  
+
   if (type != GGUFType::ARRAY || data.size() < 12) {
     return result;
   }
@@ -198,7 +197,7 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
   // 读取数组类型
   uint32_t array_type;
   std::memcpy(&array_type, data.data(), 4);
-  
+
   if (array_type != static_cast<uint32_t>(GGUFType::STRING)) {
     return result;
   }
@@ -208,41 +207,42 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
   std::memcpy(&array_length, data.data() + 4, 8);
 
   // 添加安全检查：限制最大数组长度以防止内存耗尽
-  const uint64_t MAX_ARRAY_LENGTH = 200000;  // 增加限制以支持大词汇表
+  const uint64_t MAX_ARRAY_LENGTH = 200000; // 增加限制以支持大词汇表
   if (array_length > MAX_ARRAY_LENGTH) {
     // 记录错误但不抛出异常，返回空数组
-    std::cout << "[DEBUG] Array length " << array_length << " exceeds maximum " << MAX_ARRAY_LENGTH << std::endl;
+    std::cout << "[DEBUG] Array length " << array_length << " exceeds maximum "
+              << MAX_ARRAY_LENGTH << std::endl;
     return result;
   }
 
   // 使用try-catch保护内存分配
   try {
     result.reserve(array_length);
-    const uint8_t* ptr = data.data() + 12;
-    const uint8_t* end = data.data() + data.size();
-    
+    const uint8_t *ptr = data.data() + 12;
+    const uint8_t *end = data.data() + data.size();
+
     for (uint64_t i = 0; i < array_length; ++i) {
       if (ptr + 8 > end) {
         break; // 数据不足
       }
-      
+
       // 读取字符串长度
       uint64_t str_length;
       std::memcpy(&str_length, ptr, 8);
       ptr += 8;
-      
+
       // 检查单个字符串长度是否合理
-      const uint64_t MAX_STRING_LENGTH = 1000000;  // 单个字符串最大1MB
+      const uint64_t MAX_STRING_LENGTH = 1000000; // 单个字符串最大1MB
       if (str_length > MAX_STRING_LENGTH || ptr + str_length > end) {
         break; // 字符串过长或数据不足
       }
-      
+
       // 读取字符串内容
-      std::string str(reinterpret_cast<const char*>(ptr), str_length);
+      std::string str(reinterpret_cast<const char *>(ptr), str_length);
       result.push_back(str);
       ptr += str_length;
     }
-  } catch (const std::bad_alloc&) {
+  } catch (const std::bad_alloc &) {
     // 内存分配失败，返回空数组
     result.clear();
   }
@@ -253,14 +253,17 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
 // GGUFParser 实现
 GGUFParser::GGUFParser(bool verbose)
     : verbose_(verbose), file_parsed_(false), tensor_data_offset_(0),
-      use_mmap_(true), fd_(-1), mapped_data_(nullptr), file_size_(0), current_offset_(0) 
+      use_mmap_(true), fd_(-1), mapped_data_(nullptr), file_size_(0),
+      current_offset_(0)
 #ifdef _WIN32
-    , file_handle_(INVALID_HANDLE_VALUE), mapping_handle_(nullptr)
+      ,
+      file_handle_(INVALID_HANDLE_VALUE), mapping_handle_(nullptr)
 #endif
 {
   std::memset(&header_, 0, sizeof(header_));
   std::memset(&architecture_, 0, sizeof(architecture_));
-  log("DEBUG", "GGUFParser initialized with verbose=" + std::to_string(verbose) + ", mmap enabled");
+  log("DEBUG", "GGUFParser initialized with verbose=" +
+                   std::to_string(verbose) + ", mmap enabled");
 }
 
 GGUFParser::~GGUFParser() {
@@ -275,7 +278,8 @@ bool GGUFParser::parseFile(const std::string &file_path) {
   tensor_infos_.clear();
   tensor_name_to_index_.clear();
 
-  log("INFO", "Starting to parse GGUF file: " + file_path + (use_mmap_ ? " (using mmap)" : " (using ifstream)"));
+  log("INFO", "Starting to parse GGUF file: " + file_path +
+                  (use_mmap_ ? " (using mmap)" : " (using ifstream)"));
 
   if (use_mmap_) {
     // 使用内存映射模式
@@ -307,7 +311,7 @@ bool GGUFParser::parseFile(const std::string &file_path) {
       return false;
     }
     log("DEBUG", "Metadata read successfully");
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Exception in readMetadata: " + std::string(e.what()));
     return false;
   }
@@ -319,7 +323,7 @@ bool GGUFParser::parseFile(const std::string &file_path) {
       return false;
     }
     log("DEBUG", "Tensor info read successfully");
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Exception in readTensorInfo: " + std::string(e.what()));
     return false;
   }
@@ -334,7 +338,7 @@ bool GGUFParser::parseFile(const std::string &file_path) {
       return false;
     }
     log("DEBUG", "Architecture parsed successfully");
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Exception in parseArchitecture: " + std::string(e.what()));
     return false;
   }
@@ -348,12 +352,12 @@ bool GGUFParser::parseFile(const std::string &file_path) {
   return true;
 }
 
-const GGUFKeyValue* GGUFParser::getMetadata(const std::string &key) const {
+const GGUFKeyValue *GGUFParser::getMetadata(const std::string &key) const {
   auto it = metadata_.find(key);
   return (it != metadata_.end()) ? &it->second : nullptr;
 }
 
-const GGUFTensorInfo* GGUFParser::getTensorInfo(const std::string &name) const {
+const GGUFTensorInfo *GGUFParser::getTensorInfo(const std::string &name) const {
   auto it = tensor_name_to_index_.find(name);
   if (it != tensor_name_to_index_.end() && it->second < tensor_infos_.size()) {
     return &tensor_infos_[it->second];
@@ -381,10 +385,10 @@ bool GGUFParser::validateFile() const {
 
   // 打印所有可用的元数据键用于调试
   std::cout << "[DEBUG] GGUFParser: Available metadata keys:" << std::endl;
-  for (const auto& pair : metadata_) {
+  for (const auto &pair : metadata_) {
     std::cout << "[DEBUG]   - " << pair.first << std::endl;
   }
-  
+
   // 检查必需的元数据键
   const std::vector<std::string> required_keys = {"general.architecture"};
 
@@ -398,9 +402,9 @@ bool GGUFParser::validateFile() const {
   return true;
 }
 
-bool GGUFParser::isSupportedArchitecture(const std::string& arch_name) {
-  return std::find(SUPPORTED_ARCHITECTURES.begin(), 
-                   SUPPORTED_ARCHITECTURES.end(), 
+bool GGUFParser::isSupportedArchitecture(const std::string &arch_name) {
+  return std::find(SUPPORTED_ARCHITECTURES.begin(),
+                   SUPPORTED_ARCHITECTURES.end(),
                    arch_name) != SUPPORTED_ARCHITECTURES.end();
 }
 
@@ -411,8 +415,8 @@ bool GGUFParser::readHeader(std::ifstream &file) {
     return false;
   }
 
-  std::string debug_msg = "GGUF Header: magic=0x" + 
-      std::to_string(header_.magic) + 
+  std::string debug_msg =
+      "GGUF Header: magic=0x" + std::to_string(header_.magic) +
       ", version=" + std::to_string(header_.version) +
       ", tensor_count=" + std::to_string(header_.tensor_count) +
       ", metadata_kv_count=" + std::to_string(header_.metadata_kv_count);
@@ -423,48 +427,58 @@ bool GGUFParser::readHeader(std::ifstream &file) {
 
 bool GGUFParser::readMetadata(std::ifstream &file) {
   for (uint64_t i = 0; i < header_.metadata_kv_count; ++i) {
-    log("DEBUG", "Reading metadata key-value pair " + std::to_string(i + 1) + "/" + std::to_string(header_.metadata_kv_count));
+    log("DEBUG", "Reading metadata key-value pair " + std::to_string(i + 1) +
+                     "/" + std::to_string(header_.metadata_kv_count));
     GGUFKeyValue kv = readKeyValue(file);
     if (kv.key.empty()) {
-      log("ERROR", "Failed to read metadata key-value pair " + std::to_string(i));
+      log("ERROR",
+          "Failed to read metadata key-value pair " + std::to_string(i));
       return false;
     }
-    log("DEBUG", "Successfully read metadata key: " + kv.key + ", data size: " + std::to_string(kv.data.size()) + " bytes");
+    log("DEBUG", "Successfully read metadata key: " + kv.key + ", data size: " +
+                     std::to_string(kv.data.size()) + " bytes");
     metadata_[kv.key] = std::move(kv);
   }
 
-  log("DEBUG", "Read " + std::to_string(metadata_.size()) + " metadata entries");
+  log("DEBUG",
+      "Read " + std::to_string(metadata_.size()) + " metadata entries");
   return true;
 }
 
 bool GGUFParser::readTensorInfo(std::ifstream &file) {
-  log("DEBUG", "Starting to read tensor info, tensor count: " + std::to_string(header_.tensor_count));
-  
+  log("DEBUG", "Starting to read tensor info, tensor count: " +
+                   std::to_string(header_.tensor_count));
+
   try {
     tensor_infos_.reserve(header_.tensor_count);
     tensor_name_to_index_.reserve(header_.tensor_count);
-    log("DEBUG", "Successfully reserved memory for " + std::to_string(header_.tensor_count) + " tensors");
-  } catch (const std::exception& e) {
-    log("ERROR", "Failed to reserve memory for tensors: " + std::string(e.what()));
+    log("DEBUG", "Successfully reserved memory for " +
+                     std::to_string(header_.tensor_count) + " tensors");
+  } catch (const std::exception &e) {
+    log("ERROR",
+        "Failed to reserve memory for tensors: " + std::string(e.what()));
     return false;
   }
 
   for (uint64_t i = 0; i < header_.tensor_count; ++i) {
-    log("DEBUG", "Reading tensor " + std::to_string(i + 1) + "/" + std::to_string(header_.tensor_count));
+    log("DEBUG", "Reading tensor " + std::to_string(i + 1) + "/" +
+                     std::to_string(header_.tensor_count));
     GGUFTensorInfo tensor_info;
 
     // 读取张量名称
     tensor_info.name = readString(file);
     log("DEBUG", "Read tensor name: " + tensor_info.name);
     if (tensor_info.name.empty()) {
-      log("ERROR", "Failed to read tensor name for tensor " + std::to_string(i));
+      log("ERROR",
+          "Failed to read tensor name for tensor " + std::to_string(i));
       return false;
     }
 
     // 读取维度数量
     file.read(reinterpret_cast<char *>(&tensor_info.n_dimensions), 4);
     if (file.gcount() != 4) {
-      log("ERROR", "Failed to read n_dimensions for tensor " + tensor_info.name);
+      log("ERROR",
+          "Failed to read n_dimensions for tensor " + tensor_info.name);
       return false;
     }
 
@@ -473,8 +487,8 @@ bool GGUFParser::readTensorInfo(std::ifstream &file) {
     for (uint32_t j = 0; j < tensor_info.n_dimensions; ++j) {
       file.read(reinterpret_cast<char *>(&tensor_info.dimensions[j]), 8);
       if (file.gcount() != 8) {
-        log("ERROR", "Failed to read dimension " + std::to_string(j) + 
-            " for tensor " + tensor_info.name);
+        log("ERROR", "Failed to read dimension " + std::to_string(j) +
+                         " for tensor " + tensor_info.name);
         return false;
       }
     }
@@ -503,123 +517,139 @@ bool GGUFParser::readTensorInfo(std::ifstream &file) {
     tensor_infos_.push_back(std::move(tensor_info));
   }
 
-  log("DEBUG", "Read " + std::to_string(tensor_infos_.size()) + " tensor infos");
+  log("DEBUG",
+      "Read " + std::to_string(tensor_infos_.size()) + " tensor infos");
   return true;
 }
 
 bool GGUFParser::parseArchitecture() {
   // 获取架构名称
-  const auto* arch_kv = getMetadata("general.architecture");
+  const auto *arch_kv = getMetadata("general.architecture");
   if (!arch_kv) {
     log("ERROR", "Missing general.architecture metadata");
     return false;
   }
-  
+
   architecture_.name = arch_kv->asString();
-  
+
   if (!isSupportedArchitecture(architecture_.name)) {
     log("WARNING", "Unsupported architecture: " + architecture_.name);
   }
 
   // 根据架构类型解析参数
   std::string arch_prefix = architecture_.name;
-  
+
   // 对于qwen25vl，使用qwen25vl前缀
-  if (architecture_.name == "qwen25vl" || architecture_.name == "qwen2.5vl" || architecture_.name == "qwen-2.5vl") {
+  if (architecture_.name == "qwen25vl" || architecture_.name == "qwen2.5vl" ||
+      architecture_.name == "qwen-2.5vl") {
     arch_prefix = "qwen25vl";
   }
 
   // 解析基本架构参数
-  if (const auto* kv = getMetadata(arch_prefix + ".context_length")) {
+  if (const auto *kv = getMetadata(arch_prefix + ".context_length")) {
     architecture_.context_length = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".embedding_length")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".embedding_length")) {
     architecture_.embedding_length = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".block_count")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".block_count")) {
     architecture_.block_count = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".feed_forward_length")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".feed_forward_length")) {
     architecture_.feed_forward_length = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".attention.head_count")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".attention.head_count")) {
     architecture_.attention_head_count = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".attention.head_count_kv")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".attention.head_count_kv")) {
     architecture_.attention_head_count_kv = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".attention.layer_norm_rms_epsilon")) {
+
+  if (const auto *kv =
+          getMetadata(arch_prefix + ".attention.layer_norm_rms_epsilon")) {
     architecture_.layer_norm_rms_epsilon = kv->asFloat32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".rope.dimension_count")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".rope.dimension_count")) {
     architecture_.rope_dimension_count = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".rope.freq_base")) {
+
+  if (const auto *kv = getMetadata(arch_prefix + ".rope.freq_base")) {
     architecture_.rope_freq_base = kv->asFloat32();
   }
-  
+
   // 解析RoPE维度分段（数组类型）
-  if (const auto* kv = getMetadata(arch_prefix + ".rope.mrope_section")) {
-    log("DEBUG", "Found rope.mrope_section metadata, data size: " + std::to_string(kv->data.size()) + " bytes");
-    
+  if (const auto *kv = getMetadata(arch_prefix + ".rope.mrope_section")) {
+    log("DEBUG", "Found rope.mrope_section metadata, data size: " +
+                     std::to_string(kv->data.size()) + " bytes");
+
     // 检查数组长度以避免内存问题
     if (kv->type == GGUFType::ARRAY && kv->data.size() >= 12) {
       uint64_t array_length;
       std::memcpy(&array_length, kv->data.data() + 4, 8);
-      log("DEBUG", "rope.mrope_section array length: " + std::to_string(array_length));
-      
-      if (array_length > 1000000) {  // 限制数组长度避免内存问题
-        log("ERROR", "rope.mrope_section array too large: " + std::to_string(array_length) + " elements");
+      log("DEBUG",
+          "rope.mrope_section array length: " + std::to_string(array_length));
+
+      if (array_length > 1000000) { // 限制数组长度避免内存问题
+        log("ERROR", "rope.mrope_section array too large: " +
+                         std::to_string(array_length) + " elements");
       } else {
         auto sections = kv->asUInt64Array();
         architecture_.rope_dimension_sections = sections;
-        log("DEBUG", "Successfully parsed rope.mrope_section with " + std::to_string(sections.size()) + " elements");
+        log("DEBUG", "Successfully parsed rope.mrope_section with " +
+                         std::to_string(sections.size()) + " elements");
       }
     }
   }
 
   // 解析视觉相关参数（用于多模态模型）
-  if (const auto* kv = getMetadata(arch_prefix + ".vision.patch_size")) {
+  if (const auto *kv = getMetadata(arch_prefix + ".vision.patch_size")) {
     architecture_.has_vision = true;
     architecture_.vision_patch_size = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".vision.spatial_patch_size")) {
+
+  if (const auto *kv =
+          getMetadata(arch_prefix + ".vision.spatial_patch_size")) {
     architecture_.vision_spatial_patch_size = kv->asUInt32();
   }
-  
-  if (const auto* kv = getMetadata(arch_prefix + ".vision.fullatt_block_indexes")) {
-    log("DEBUG", "Found vision.fullatt_block_indexes metadata, data size: " + std::to_string(kv->data.size()) + " bytes");
-    
+
+  if (const auto *kv =
+          getMetadata(arch_prefix + ".vision.fullatt_block_indexes")) {
+    log("DEBUG", "Found vision.fullatt_block_indexes metadata, data size: " +
+                     std::to_string(kv->data.size()) + " bytes");
+
     // 检查数组长度以避免内存问题
     if (kv->type == GGUFType::ARRAY && kv->data.size() >= 12) {
       uint64_t array_length;
       std::memcpy(&array_length, kv->data.data() + 4, 8);
-      log("DEBUG", "vision.fullatt_block_indexes array length: " + std::to_string(array_length));
-      
-      if (array_length > 1000000) {  // 限制数组长度避免内存问题
-        log("ERROR", "vision.fullatt_block_indexes array too large: " + std::to_string(array_length) + " elements");
+      log("DEBUG", "vision.fullatt_block_indexes array length: " +
+                       std::to_string(array_length));
+
+      if (array_length > 1000000) { // 限制数组长度避免内存问题
+        log("ERROR", "vision.fullatt_block_indexes array too large: " +
+                         std::to_string(array_length) + " elements");
       } else {
         auto indexes = kv->asUInt64Array();
         architecture_.vision_fullatt_block_indexes = indexes;
-        log("DEBUG", "Successfully parsed vision.fullatt_block_indexes with " + std::to_string(indexes.size()) + " elements");
+        log("DEBUG", "Successfully parsed vision.fullatt_block_indexes with " +
+                         std::to_string(indexes.size()) + " elements");
       }
     }
   }
 
   log("INFO", "Parsed architecture: " + architecture_.name);
-  log("INFO", "  Context length: " + std::to_string(architecture_.context_length));
-  log("INFO", "  Embedding length: " + std::to_string(architecture_.embedding_length));
+  log("INFO",
+      "  Context length: " + std::to_string(architecture_.context_length));
+  log("INFO",
+      "  Embedding length: " + std::to_string(architecture_.embedding_length));
   log("INFO", "  Block count: " + std::to_string(architecture_.block_count));
-  log("INFO", std::string("  Has vision: ") + (architecture_.has_vision ? "Yes" : "No"));
+  log("INFO", std::string("  Has vision: ") +
+                  (architecture_.has_vision ? "Yes" : "No"));
 
   return true;
 }
@@ -664,160 +694,172 @@ GGUFKeyValue GGUFParser::readKeyValue(std::ifstream &file) {
 
   // 根据类型读取数据
   switch (kv.type) {
-    case GGUFType::UINT8:
-    case GGUFType::INT8:
-    case GGUFType::BOOL:
-      kv.data.resize(1);
-      file.read(reinterpret_cast<char *>(kv.data.data()), 1);
-      break;
+  case GGUFType::UINT8:
+  case GGUFType::INT8:
+  case GGUFType::BOOL:
+    kv.data.resize(1);
+    file.read(reinterpret_cast<char *>(kv.data.data()), 1);
+    break;
 
-    case GGUFType::UINT16:
-    case GGUFType::INT16:
-      kv.data.resize(2);
-      file.read(reinterpret_cast<char *>(kv.data.data()), 2);
-      break;
+  case GGUFType::UINT16:
+  case GGUFType::INT16:
+    kv.data.resize(2);
+    file.read(reinterpret_cast<char *>(kv.data.data()), 2);
+    break;
 
-    case GGUFType::UINT32:
-    case GGUFType::INT32:
-    case GGUFType::FLOAT32:
-      kv.data.resize(4);
-      file.read(reinterpret_cast<char *>(kv.data.data()), 4);
-      break;
+  case GGUFType::UINT32:
+  case GGUFType::INT32:
+  case GGUFType::FLOAT32:
+    kv.data.resize(4);
+    file.read(reinterpret_cast<char *>(kv.data.data()), 4);
+    break;
 
-    case GGUFType::UINT64:
-    case GGUFType::INT64:
-    case GGUFType::FLOAT64:
-      kv.data.resize(8);
-      file.read(reinterpret_cast<char *>(kv.data.data()), 8);
-      break;
+  case GGUFType::UINT64:
+  case GGUFType::INT64:
+  case GGUFType::FLOAT64:
+    kv.data.resize(8);
+    file.read(reinterpret_cast<char *>(kv.data.data()), 8);
+    break;
 
-    case GGUFType::STRING: {
-      std::string str = readString(file);
-      uint64_t len = str.length();
-      kv.data.resize(8 + len);
-      std::memcpy(kv.data.data(), &len, 8);
-      std::memcpy(kv.data.data() + 8, str.c_str(), len);
-      break;
-    }
+  case GGUFType::STRING: {
+    std::string str = readString(file);
+    uint64_t len = str.length();
+    kv.data.resize(8 + len);
+    std::memcpy(kv.data.data(), &len, 8);
+    std::memcpy(kv.data.data() + 8, str.c_str(), len);
+    break;
+  }
 
-    case GGUFType::ARRAY: {
-      // 读取数组类型
-      uint32_t array_type;
-      file.read(reinterpret_cast<char *>(&array_type), 4);
-      if (file.gcount() != 4) {
-        log("ERROR", "Failed to read array type for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 读取数组长度
-      uint64_t array_length;
-      file.read(reinterpret_cast<char *>(&array_length), 8);
-      if (file.gcount() != 8) {
-        log("ERROR", "Failed to read array length for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 验证数组长度合理性
-      log("DEBUG", "Reading array for key: " + kv.key + ", type: " + std::to_string(array_type) + ", length: " + std::to_string(array_length));
-      if (array_length > 1000000) { // 限制数组长度
-        log("ERROR", "Array length too large: " + std::to_string(array_length) + " for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 处理不同类型的数组
-      if (array_type == static_cast<uint32_t>(GGUFType::STRING)) {
-        // STRING数组需要特殊处理，因为每个字符串都有长度前缀
-        std::vector<uint8_t> temp_data;
-        temp_data.resize(4 + 8); // 类型和长度
-        std::memcpy(temp_data.data(), &array_type, 4);
-        std::memcpy(temp_data.data() + 4, &array_length, 8);
-        
-        for (uint64_t i = 0; i < array_length; i++) {
-          uint64_t str_length;
-          file.read(reinterpret_cast<char *>(&str_length), 8);
-          if (file.gcount() != 8) {
-            log("ERROR", "Failed to read string length in array for key: " + kv.key);
-            kv.key.clear();
-            return kv;
-          }
-          
-          // 添加字符串长度到数据中
-          size_t old_size = temp_data.size();
-          temp_data.resize(old_size + 8 + str_length);
-          std::memcpy(temp_data.data() + old_size, &str_length, 8);
-          
-          // 读取字符串内容
-          if (str_length > 0) {
-            file.read(reinterpret_cast<char *>(temp_data.data() + old_size + 8), str_length);
-            if (static_cast<uint64_t>(file.gcount()) != str_length) {
-              log("ERROR", "Failed to read string data in array for key: " + kv.key);
-              kv.key.clear();
-              return kv;
-            }
-          }
-        }
-        
-        kv.data = std::move(temp_data);
-      } else {
-        // 处理固定大小的数组元素
-        uint32_t element_size = getTypeSize(static_cast<GGUFType>(array_type));
-        if (element_size == 0) {
-          log("ERROR", "Unsupported array element type: " + std::to_string(array_type) + " for key: " + kv.key);
-          kv.key.clear();
-          return kv;
-        }
-        
-        // 分配数据空间
-        size_t total_size = 4 + 8 + array_length * element_size;
-        try {
-          kv.data.resize(total_size);
-        } catch (const std::exception& e) {
-          log("ERROR", "Failed to allocate memory for array data: " + std::string(e.what()) + " for key: " + kv.key);
-          kv.key.clear();
-          return kv;
-        }
-        
-        // 写入数组类型和长度
-        std::memcpy(kv.data.data(), &array_type, 4);
-        std::memcpy(kv.data.data() + 4, &array_length, 8);
-        
-        // 读取数组数据
-        if (array_length > 0) {
-          file.read(reinterpret_cast<char *>(kv.data.data() + 12), 
-                    array_length * element_size);
-          if (static_cast<uint64_t>(file.gcount()) != array_length * element_size) {
-            log("ERROR", "Failed to read array data for key: " + kv.key);
-            kv.key.clear();
-            return kv;
-          }
-        }
-      }
-      break;
-    }
-
-    default:
-      log("ERROR", "Unsupported GGUF type: " + std::to_string(static_cast<uint32_t>(kv.type)));
+  case GGUFType::ARRAY: {
+    // 读取数组类型
+    uint32_t array_type;
+    file.read(reinterpret_cast<char *>(&array_type), 4);
+    if (file.gcount() != 4) {
+      log("ERROR", "Failed to read array type for key: " + kv.key);
       kv.key.clear();
       return kv;
+    }
+
+    // 读取数组长度
+    uint64_t array_length;
+    file.read(reinterpret_cast<char *>(&array_length), 8);
+    if (file.gcount() != 8) {
+      log("ERROR", "Failed to read array length for key: " + kv.key);
+      kv.key.clear();
+      return kv;
+    }
+
+    // 验证数组长度合理性
+    log("DEBUG", "Reading array for key: " + kv.key +
+                     ", type: " + std::to_string(array_type) +
+                     ", length: " + std::to_string(array_length));
+    if (array_length > 1000000) { // 限制数组长度
+      log("ERROR", "Array length too large: " + std::to_string(array_length) +
+                       " for key: " + kv.key);
+      kv.key.clear();
+      return kv;
+    }
+
+    // 处理不同类型的数组
+    if (array_type == static_cast<uint32_t>(GGUFType::STRING)) {
+      // STRING数组需要特殊处理，因为每个字符串都有长度前缀
+      std::vector<uint8_t> temp_data;
+      temp_data.resize(4 + 8); // 类型和长度
+      std::memcpy(temp_data.data(), &array_type, 4);
+      std::memcpy(temp_data.data() + 4, &array_length, 8);
+
+      for (uint64_t i = 0; i < array_length; i++) {
+        uint64_t str_length;
+        file.read(reinterpret_cast<char *>(&str_length), 8);
+        if (file.gcount() != 8) {
+          log("ERROR",
+              "Failed to read string length in array for key: " + kv.key);
+          kv.key.clear();
+          return kv;
+        }
+
+        // 添加字符串长度到数据中
+        size_t old_size = temp_data.size();
+        temp_data.resize(old_size + 8 + str_length);
+        std::memcpy(temp_data.data() + old_size, &str_length, 8);
+
+        // 读取字符串内容
+        if (str_length > 0) {
+          file.read(reinterpret_cast<char *>(temp_data.data() + old_size + 8),
+                    str_length);
+          if (static_cast<uint64_t>(file.gcount()) != str_length) {
+            log("ERROR",
+                "Failed to read string data in array for key: " + kv.key);
+            kv.key.clear();
+            return kv;
+          }
+        }
+      }
+
+      kv.data = std::move(temp_data);
+    } else {
+      // 处理固定大小的数组元素
+      uint32_t element_size = getTypeSize(static_cast<GGUFType>(array_type));
+      if (element_size == 0) {
+        log("ERROR", "Unsupported array element type: " +
+                         std::to_string(array_type) + " for key: " + kv.key);
+        kv.key.clear();
+        return kv;
+      }
+
+      // 分配数据空间
+      size_t total_size = 4 + 8 + array_length * element_size;
+      try {
+        kv.data.resize(total_size);
+      } catch (const std::exception &e) {
+        log("ERROR", "Failed to allocate memory for array data: " +
+                         std::string(e.what()) + " for key: " + kv.key);
+        kv.key.clear();
+        return kv;
+      }
+
+      // 写入数组类型和长度
+      std::memcpy(kv.data.data(), &array_type, 4);
+      std::memcpy(kv.data.data() + 4, &array_length, 8);
+
+      // 读取数组数据
+      if (array_length > 0) {
+        file.read(reinterpret_cast<char *>(kv.data.data() + 12),
+                  array_length * element_size);
+        if (static_cast<uint64_t>(file.gcount()) !=
+            array_length * element_size) {
+          log("ERROR", "Failed to read array data for key: " + kv.key);
+          kv.key.clear();
+          return kv;
+        }
+      }
+    }
+    break;
+  }
+
+  default:
+    log("ERROR", "Unsupported GGUF type: " +
+                     std::to_string(static_cast<uint32_t>(kv.type)));
+    kv.key.clear();
+    return kv;
   }
 
   return kv;
 }
 
-uint64_t GGUFParser::calculateTensorSize(const GGUFTensorInfo& tensor_info) const {
+uint64_t
+GGUFParser::calculateTensorSize(const GGUFTensorInfo &tensor_info) const {
   uint64_t total_elements = 1;
   for (uint64_t dim : tensor_info.dimensions) {
     total_elements *= dim;
   }
-  
+
   uint32_t type_size = getGGMLTypeSize(tensor_info.type);
   uint64_t calculated_size = total_elements * type_size;
-  
+
   // 对于量化类型，限制计算出的大小以避免内存问题
-  if (tensor_info.type != GGMLTensorType::F32 && tensor_info.type != GGMLTensorType::F16) {
+  if (tensor_info.type != GGMLTensorType::F32 &&
+      tensor_info.type != GGMLTensorType::F16) {
     // 量化tensor的实际大小通常比计算值小得多
     // 这里使用一个保守的估计来避免过度分配
     uint64_t max_size = 100 * 1024 * 1024; // 100MB限制
@@ -825,69 +867,70 @@ uint64_t GGUFParser::calculateTensorSize(const GGUFTensorInfo& tensor_info) cons
       calculated_size = max_size;
     }
   }
-  
+
   return calculated_size;
 }
 
 uint32_t GGUFParser::getTypeSize(GGUFType type) {
   switch (type) {
-    case GGUFType::UINT8:
-    case GGUFType::INT8:
-    case GGUFType::BOOL:
-      return 1;
-    case GGUFType::UINT16:
-    case GGUFType::INT16:
-      return 2;
-    case GGUFType::UINT32:
-    case GGUFType::INT32:
-    case GGUFType::FLOAT32:
-      return 4;
-    case GGUFType::UINT64:
-    case GGUFType::INT64:
-    case GGUFType::FLOAT64:
-      return 8;
-    default:
-      return 0;
+  case GGUFType::UINT8:
+  case GGUFType::INT8:
+  case GGUFType::BOOL:
+    return 1;
+  case GGUFType::UINT16:
+  case GGUFType::INT16:
+    return 2;
+  case GGUFType::UINT32:
+  case GGUFType::INT32:
+  case GGUFType::FLOAT32:
+    return 4;
+  case GGUFType::UINT64:
+  case GGUFType::INT64:
+  case GGUFType::FLOAT64:
+    return 8;
+  default:
+    return 0;
   }
 }
 
 uint32_t GGUFParser::getGGMLTypeSize(GGMLTensorType type) {
   switch (type) {
-    case GGMLTensorType::F32:
-      return 4;
-    case GGMLTensorType::F16:
-      return 2;
-    case GGMLTensorType::Q4_0:
-    case GGMLTensorType::Q4_1:
-      return 1; // 约0.5 bytes per element (block-based)
-    case GGMLTensorType::Q5_0:
-    case GGMLTensorType::Q5_1:
-      return 1; // 约0.625 bytes per element (block-based)
-    case GGMLTensorType::Q8_0:
-    case GGMLTensorType::Q8_1:
-      return 1; // 约1.0625 bytes per element (block-based)
-    case GGMLTensorType::Q2_K:
-      return 1; // 约0.3125 bytes per element (block-based)
-    case GGMLTensorType::Q3_K:
-      return 1; // 约0.4375 bytes per element (block-based)
-    case GGMLTensorType::Q4_K:
-      return 1; // 约0.5625 bytes per element (block-based)
-    case GGMLTensorType::Q5_K:
-      return 1; // 约0.6875 bytes per element (block-based)
-    case GGMLTensorType::Q6_K:
-      return 1; // 约0.8125 bytes per element (block-based)
-    case GGMLTensorType::Q8_K:
-      return 1; // 约1.0 bytes per element (block-based)
-    default:
-      return 0;
+  case GGMLTensorType::F32:
+    return 4;
+  case GGMLTensorType::F16:
+    return 2;
+  case GGMLTensorType::Q4_0:
+  case GGMLTensorType::Q4_1:
+    return 1; // 约0.5 bytes per element (block-based)
+  case GGMLTensorType::Q5_0:
+  case GGMLTensorType::Q5_1:
+    return 1; // 约0.625 bytes per element (block-based)
+  case GGMLTensorType::Q8_0:
+  case GGMLTensorType::Q8_1:
+    return 1; // 约1.0625 bytes per element (block-based)
+  case GGMLTensorType::Q2_K:
+    return 1; // 约0.3125 bytes per element (block-based)
+  case GGMLTensorType::Q3_K:
+    return 1; // 约0.4375 bytes per element (block-based)
+  case GGMLTensorType::Q4_K:
+    return 1; // 约0.5625 bytes per element (block-based)
+  case GGMLTensorType::Q5_K:
+    return 1; // 约0.6875 bytes per element (block-based)
+  case GGMLTensorType::Q6_K:
+    return 1; // 约0.8125 bytes per element (block-based)
+  case GGMLTensorType::Q8_K:
+    return 1; // 约1.0 bytes per element (block-based)
+  default:
+    return 0;
   }
 }
 
-bool GGUFParser::initMmap(const std::string& file_path) {
+bool GGUFParser::initMmap(const std::string &file_path) {
 #ifdef _WIN32
   // Windows implementation
-  HANDLE hFile = CreateFileA(file_path.c_str(), GENERIC_READ, FILE_SHARE_READ, 
-                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE hFile =
+      CreateFileA(file_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (hFile == INVALID_HANDLE_VALUE) {
     log("ERROR", "Failed to open file for mmap: " + file_path);
     return false;
@@ -901,14 +944,16 @@ bool GGUFParser::initMmap(const std::string& file_path) {
   }
   file_size_ = fileSize.QuadPart;
 
-  HANDLE hMapping = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+  HANDLE hMapping =
+      CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
   if (hMapping == nullptr) {
     log("ERROR", "Failed to create file mapping");
     CloseHandle(hFile);
     return false;
   }
 
-  mapped_data_ = static_cast<uint8_t*>(MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0));
+  mapped_data_ =
+      static_cast<uint8_t *>(MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0));
   if (mapped_data_ == nullptr) {
     log("ERROR", "Failed to map view of file");
     CloseHandle(hMapping);
@@ -923,20 +968,23 @@ bool GGUFParser::initMmap(const std::string& file_path) {
   // Unix/Linux implementation
   fd_ = open(file_path.c_str(), O_RDONLY);
   if (fd_ == -1) {
-    log("ERROR", "Failed to open file for mmap: " + file_path + ", error: " + strerror(errno));
+    log("ERROR", "Failed to open file for mmap: " + file_path +
+                     ", error: " + strerror(errno));
     return false;
   }
 
   struct stat st;
   if (fstat(fd_, &st) == -1) {
-    log("ERROR", "Failed to get file size for mmap: " + std::string(strerror(errno)));
+    log("ERROR",
+        "Failed to get file size for mmap: " + std::string(strerror(errno)));
     close(fd_);
     fd_ = -1;
     return false;
   }
   file_size_ = st.st_size;
 
-  mapped_data_ = static_cast<uint8_t*>(mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0));
+  mapped_data_ = static_cast<uint8_t *>(
+      mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0));
   if (mapped_data_ == MAP_FAILED) {
     log("ERROR", "Failed to mmap file: " + std::string(strerror(errno)));
     close(fd_);
@@ -947,7 +995,8 @@ bool GGUFParser::initMmap(const std::string& file_path) {
 #endif
 
   current_offset_ = 0;
-  log("DEBUG", "Successfully mapped file: " + file_path + ", size: " + std::to_string(file_size_) + " bytes");
+  log("DEBUG", "Successfully mapped file: " + file_path +
+                   ", size: " + std::to_string(file_size_) + " bytes");
   return true;
 }
 
@@ -979,16 +1028,17 @@ void GGUFParser::cleanupMmap() {
   current_offset_ = 0;
 }
 
-bool GGUFParser::readFromMmap(void* buffer, size_t size) {
-   if (!mapped_data_ || current_offset_ + size > file_size_) {
-     log("ERROR", "Read beyond file boundary or invalid mmap data");
-     return false;
-   }
- 
-   std::memcpy(buffer, static_cast<uint8_t*>(mapped_data_) + current_offset_, size);
-   current_offset_ += size;
-   return true;
- }
+bool GGUFParser::readFromMmap(void *buffer, size_t size) {
+  if (!mapped_data_ || current_offset_ + size > file_size_) {
+    log("ERROR", "Read beyond file boundary or invalid mmap data");
+    return false;
+  }
+
+  std::memcpy(buffer, static_cast<uint8_t *>(mapped_data_) + current_offset_,
+              size);
+  current_offset_ += size;
+  return true;
+}
 
 std::string GGUFParser::readStringFromMmap() {
   uint64_t len;
@@ -1005,8 +1055,10 @@ std::string GGUFParser::readStringFromMmap() {
     return "";
   }
 
-  std::string str(reinterpret_cast<const char*>(static_cast<uint8_t*>(mapped_data_) + current_offset_), len);
-   current_offset_ += len;
+  std::string str(reinterpret_cast<const char *>(
+                      static_cast<uint8_t *>(mapped_data_) + current_offset_),
+                  len);
+  current_offset_ += len;
   return str;
 }
 
@@ -1026,7 +1078,7 @@ bool GGUFParser::parseWithMmap() {
       return false;
     }
     log("DEBUG", "Metadata read successfully from mmap");
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Exception in readMetadataFromMmap: " + std::string(e.what()));
     return false;
   }
@@ -1038,8 +1090,9 @@ bool GGUFParser::parseWithMmap() {
       return false;
     }
     log("DEBUG", "Tensor info read successfully from mmap");
-  } catch (const std::exception& e) {
-    log("ERROR", "Exception in readTensorInfoFromMmap: " + std::string(e.what()));
+  } catch (const std::exception &e) {
+    log("ERROR",
+        "Exception in readTensorInfoFromMmap: " + std::string(e.what()));
     return false;
   }
 
@@ -1053,7 +1106,7 @@ bool GGUFParser::parseWithMmap() {
       return false;
     }
     log("DEBUG", "Architecture parsed successfully");
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     log("ERROR", "Exception in parseArchitecture: " + std::string(e.what()));
     return false;
   }
@@ -1073,8 +1126,8 @@ bool GGUFParser::readHeaderFromMmap() {
     return false;
   }
 
-  std::string debug_msg = "GGUF Header: magic=0x" + 
-      std::to_string(header_.magic) + 
+  std::string debug_msg =
+      "GGUF Header: magic=0x" + std::to_string(header_.magic) +
       ", version=" + std::to_string(header_.version) +
       ", tensor_count=" + std::to_string(header_.tensor_count) +
       ", metadata_kv_count=" + std::to_string(header_.metadata_kv_count);
@@ -1085,47 +1138,57 @@ bool GGUFParser::readHeaderFromMmap() {
 
 bool GGUFParser::readMetadataFromMmap() {
   for (uint64_t i = 0; i < header_.metadata_kv_count; ++i) {
-    log("DEBUG", "Reading metadata key-value pair " + std::to_string(i + 1) + "/" + std::to_string(header_.metadata_kv_count));
+    log("DEBUG", "Reading metadata key-value pair " + std::to_string(i + 1) +
+                     "/" + std::to_string(header_.metadata_kv_count));
     GGUFKeyValue kv = readKeyValueFromMmap();
     if (kv.key.empty()) {
-      log("ERROR", "Failed to read metadata key-value pair " + std::to_string(i));
+      log("ERROR",
+          "Failed to read metadata key-value pair " + std::to_string(i));
       return false;
     }
-    log("DEBUG", "Successfully read metadata key: " + kv.key + ", data size: " + std::to_string(kv.data.size()) + " bytes");
+    log("DEBUG", "Successfully read metadata key: " + kv.key + ", data size: " +
+                     std::to_string(kv.data.size()) + " bytes");
     metadata_[kv.key] = std::move(kv);
   }
 
-  log("DEBUG", "Read " + std::to_string(metadata_.size()) + " metadata entries from mmap");
+  log("DEBUG", "Read " + std::to_string(metadata_.size()) +
+                   " metadata entries from mmap");
   return true;
 }
 
 bool GGUFParser::readTensorInfoFromMmap() {
-  log("DEBUG", "Starting to read tensor info from mmap, tensor count: " + std::to_string(header_.tensor_count));
-  
+  log("DEBUG", "Starting to read tensor info from mmap, tensor count: " +
+                   std::to_string(header_.tensor_count));
+
   try {
     tensor_infos_.reserve(header_.tensor_count);
     tensor_name_to_index_.reserve(header_.tensor_count);
-    log("DEBUG", "Successfully reserved memory for " + std::to_string(header_.tensor_count) + " tensors");
-  } catch (const std::exception& e) {
-    log("ERROR", "Failed to reserve memory for tensors: " + std::string(e.what()));
+    log("DEBUG", "Successfully reserved memory for " +
+                     std::to_string(header_.tensor_count) + " tensors");
+  } catch (const std::exception &e) {
+    log("ERROR",
+        "Failed to reserve memory for tensors: " + std::string(e.what()));
     return false;
   }
 
   for (uint64_t i = 0; i < header_.tensor_count; ++i) {
-    log("DEBUG", "Reading tensor " + std::to_string(i + 1) + "/" + std::to_string(header_.tensor_count));
+    log("DEBUG", "Reading tensor " + std::to_string(i + 1) + "/" +
+                     std::to_string(header_.tensor_count));
     GGUFTensorInfo tensor_info;
 
     // 读取张量名称
     tensor_info.name = readStringFromMmap();
     log("DEBUG", "Read tensor name: " + tensor_info.name);
     if (tensor_info.name.empty()) {
-      log("ERROR", "Failed to read tensor name for tensor " + std::to_string(i));
+      log("ERROR",
+          "Failed to read tensor name for tensor " + std::to_string(i));
       return false;
     }
 
     // 读取维度数量
     if (!readFromMmap(&tensor_info.n_dimensions, 4)) {
-      log("ERROR", "Failed to read n_dimensions for tensor " + tensor_info.name);
+      log("ERROR",
+          "Failed to read n_dimensions for tensor " + tensor_info.name);
       return false;
     }
 
@@ -1133,8 +1196,8 @@ bool GGUFParser::readTensorInfoFromMmap() {
     tensor_info.dimensions.resize(tensor_info.n_dimensions);
     for (uint32_t j = 0; j < tensor_info.n_dimensions; ++j) {
       if (!readFromMmap(&tensor_info.dimensions[j], 8)) {
-        log("ERROR", "Failed to read dimension " + std::to_string(j) + 
-            " for tensor " + tensor_info.name);
+        log("ERROR", "Failed to read dimension " + std::to_string(j) +
+                         " for tensor " + tensor_info.name);
         return false;
       }
     }
@@ -1161,7 +1224,8 @@ bool GGUFParser::readTensorInfoFromMmap() {
     tensor_infos_.push_back(std::move(tensor_info));
   }
 
-  log("DEBUG", "Read " + std::to_string(tensor_infos_.size()) + " tensor infos from mmap");
+  log("DEBUG", "Read " + std::to_string(tensor_infos_.size()) +
+                   " tensor infos from mmap");
   return true;
 }
 
@@ -1184,156 +1248,165 @@ GGUFKeyValue GGUFParser::readKeyValueFromMmap() {
 
   // 根据类型读取数据
   switch (kv.type) {
-    case GGUFType::UINT8:
-    case GGUFType::INT8:
-    case GGUFType::BOOL:
-      kv.data.resize(1);
-      if (!readFromMmap(kv.data.data(), 1)) {
-        kv.key.clear();
-        return kv;
-      }
-      break;
-
-    case GGUFType::UINT16:
-    case GGUFType::INT16:
-      kv.data.resize(2);
-      if (!readFromMmap(kv.data.data(), 2)) {
-        kv.key.clear();
-        return kv;
-      }
-      break;
-
-    case GGUFType::UINT32:
-    case GGUFType::INT32:
-    case GGUFType::FLOAT32:
-      kv.data.resize(4);
-      if (!readFromMmap(kv.data.data(), 4)) {
-        kv.key.clear();
-        return kv;
-      }
-      break;
-
-    case GGUFType::UINT64:
-    case GGUFType::INT64:
-    case GGUFType::FLOAT64:
-      kv.data.resize(8);
-      if (!readFromMmap(kv.data.data(), 8)) {
-        kv.key.clear();
-        return kv;
-      }
-      break;
-
-    case GGUFType::STRING: {
-      std::string str = readStringFromMmap();
-      uint64_t len = str.length();
-      kv.data.resize(8 + len);
-      std::memcpy(kv.data.data(), &len, 8);
-      std::memcpy(kv.data.data() + 8, str.c_str(), len);
-      break;
-    }
-
-    case GGUFType::ARRAY: {
-      // 读取数组类型
-      uint32_t array_type;
-      if (!readFromMmap(&array_type, 4)) {
-        log("ERROR", "Failed to read array type for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 读取数组长度
-      uint64_t array_length;
-      if (!readFromMmap(&array_length, 8)) {
-        log("ERROR", "Failed to read array length for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 验证数组长度合理性
-      log("DEBUG", "Reading array for key: " + kv.key + ", type: " + std::to_string(array_type) + ", length: " + std::to_string(array_length));
-      if (array_length > 1000000) { // 限制数组长度
-        log("ERROR", "Array length too large: " + std::to_string(array_length) + " for key: " + kv.key);
-        kv.key.clear();
-        return kv;
-      }
-      
-      // 处理不同类型的数组
-      if (array_type == static_cast<uint32_t>(GGUFType::STRING)) {
-        // STRING数组需要特殊处理，因为每个字符串都有长度前缀
-        std::vector<uint8_t> temp_data;
-        temp_data.resize(4 + 8); // 类型和长度
-        std::memcpy(temp_data.data(), &array_type, 4);
-        std::memcpy(temp_data.data() + 4, &array_length, 8);
-        
-        for (uint64_t i = 0; i < array_length; i++) {
-          uint64_t str_length;
-          if (!readFromMmap(&str_length, 8)) {
-            log("ERROR", "Failed to read string length in array for key: " + kv.key);
-            kv.key.clear();
-            return kv;
-          }
-          
-          // 添加字符串长度到数据中
-          size_t old_size = temp_data.size();
-          temp_data.resize(old_size + 8 + str_length);
-          std::memcpy(temp_data.data() + old_size, &str_length, 8);
-          
-          // 读取字符串内容
-          if (str_length > 0) {
-            if (!readFromMmap(temp_data.data() + old_size + 8, str_length)) {
-              log("ERROR", "Failed to read string data in array for key: " + kv.key);
-              kv.key.clear();
-              return kv;
-            }
-          }
-        }
-        
-        kv.data = std::move(temp_data);
-      } else {
-        // 处理固定大小的数组元素
-        uint32_t element_size = getTypeSize(static_cast<GGUFType>(array_type));
-        if (element_size == 0) {
-          log("ERROR", "Unsupported array element type: " + std::to_string(array_type) + " for key: " + kv.key);
-          kv.key.clear();
-          return kv;
-        }
-        
-        // 分配数据空间
-        size_t total_size = 4 + 8 + array_length * element_size;
-        try {
-          kv.data.resize(total_size);
-        } catch (const std::exception& e) {
-          log("ERROR", "Failed to allocate memory for array data: " + std::string(e.what()) + " for key: " + kv.key);
-          kv.key.clear();
-          return kv;
-        }
-        
-        // 写入数组类型和长度
-        std::memcpy(kv.data.data(), &array_type, 4);
-        std::memcpy(kv.data.data() + 4, &array_length, 8);
-        
-        // 读取数组数据
-        if (array_length > 0) {
-          if (!readFromMmap(kv.data.data() + 12, array_length * element_size)) {
-            log("ERROR", "Failed to read array data for key: " + kv.key);
-            kv.key.clear();
-            return kv;
-          }
-        }
-      }
-      break;
-    }
-
-    default:
-      log("ERROR", "Unsupported GGUF type: " + std::to_string(static_cast<uint32_t>(kv.type)));
+  case GGUFType::UINT8:
+  case GGUFType::INT8:
+  case GGUFType::BOOL:
+    kv.data.resize(1);
+    if (!readFromMmap(kv.data.data(), 1)) {
       kv.key.clear();
       return kv;
+    }
+    break;
+
+  case GGUFType::UINT16:
+  case GGUFType::INT16:
+    kv.data.resize(2);
+    if (!readFromMmap(kv.data.data(), 2)) {
+      kv.key.clear();
+      return kv;
+    }
+    break;
+
+  case GGUFType::UINT32:
+  case GGUFType::INT32:
+  case GGUFType::FLOAT32:
+    kv.data.resize(4);
+    if (!readFromMmap(kv.data.data(), 4)) {
+      kv.key.clear();
+      return kv;
+    }
+    break;
+
+  case GGUFType::UINT64:
+  case GGUFType::INT64:
+  case GGUFType::FLOAT64:
+    kv.data.resize(8);
+    if (!readFromMmap(kv.data.data(), 8)) {
+      kv.key.clear();
+      return kv;
+    }
+    break;
+
+  case GGUFType::STRING: {
+    std::string str = readStringFromMmap();
+    uint64_t len = str.length();
+    kv.data.resize(8 + len);
+    std::memcpy(kv.data.data(), &len, 8);
+    std::memcpy(kv.data.data() + 8, str.c_str(), len);
+    break;
+  }
+
+  case GGUFType::ARRAY: {
+    // 读取数组类型
+    uint32_t array_type;
+    if (!readFromMmap(&array_type, 4)) {
+      log("ERROR", "Failed to read array type for key: " + kv.key);
+      kv.key.clear();
+      return kv;
+    }
+
+    // 读取数组长度
+    uint64_t array_length;
+    if (!readFromMmap(&array_length, 8)) {
+      log("ERROR", "Failed to read array length for key: " + kv.key);
+      kv.key.clear();
+      return kv;
+    }
+
+    // 验证数组长度合理性
+    log("DEBUG", "Reading array for key: " + kv.key +
+                     ", type: " + std::to_string(array_type) +
+                     ", length: " + std::to_string(array_length));
+    if (array_length > 1000000) { // 限制数组长度
+      log("ERROR", "Array length too large: " + std::to_string(array_length) +
+                       " for key: " + kv.key);
+      kv.key.clear();
+      return kv;
+    }
+
+    // 处理不同类型的数组
+    if (array_type == static_cast<uint32_t>(GGUFType::STRING)) {
+      // STRING数组需要特殊处理，因为每个字符串都有长度前缀
+      std::vector<uint8_t> temp_data;
+      temp_data.resize(4 + 8); // 类型和长度
+      std::memcpy(temp_data.data(), &array_type, 4);
+      std::memcpy(temp_data.data() + 4, &array_length, 8);
+
+      for (uint64_t i = 0; i < array_length; i++) {
+        uint64_t str_length;
+        if (!readFromMmap(&str_length, 8)) {
+          log("ERROR",
+              "Failed to read string length in array for key: " + kv.key);
+          kv.key.clear();
+          return kv;
+        }
+
+        // 添加字符串长度到数据中
+        size_t old_size = temp_data.size();
+        temp_data.resize(old_size + 8 + str_length);
+        std::memcpy(temp_data.data() + old_size, &str_length, 8);
+
+        // 读取字符串内容
+        if (str_length > 0) {
+          if (!readFromMmap(temp_data.data() + old_size + 8, str_length)) {
+            log("ERROR",
+                "Failed to read string data in array for key: " + kv.key);
+            kv.key.clear();
+            return kv;
+          }
+        }
+      }
+
+      kv.data = std::move(temp_data);
+    } else {
+      // 处理固定大小的数组元素
+      uint32_t element_size = getTypeSize(static_cast<GGUFType>(array_type));
+      if (element_size == 0) {
+        log("ERROR", "Unsupported array element type: " +
+                         std::to_string(array_type) + " for key: " + kv.key);
+        kv.key.clear();
+        return kv;
+      }
+
+      // 分配数据空间
+      size_t total_size = 4 + 8 + array_length * element_size;
+      try {
+        kv.data.resize(total_size);
+      } catch (const std::exception &e) {
+        log("ERROR", "Failed to allocate memory for array data: " +
+                         std::string(e.what()) + " for key: " + kv.key);
+        kv.key.clear();
+        return kv;
+      }
+
+      // 写入数组类型和长度
+      std::memcpy(kv.data.data(), &array_type, 4);
+      std::memcpy(kv.data.data() + 4, &array_length, 8);
+
+      // 读取数组数据
+      if (array_length > 0) {
+        if (!readFromMmap(kv.data.data() + 12, array_length * element_size)) {
+          log("ERROR", "Failed to read array data for key: " + kv.key);
+          kv.key.clear();
+          return kv;
+        }
+      }
+    }
+    break;
+  }
+
+  default:
+    log("ERROR", "Unsupported GGUF type: " +
+                     std::to_string(static_cast<uint32_t>(kv.type)));
+    kv.key.clear();
+    return kv;
   }
 
   return kv;
 }
 
-void GGUFParser::log(const std::string &level, const std::string &message) const {
+void GGUFParser::log(const std::string &level,
+                     const std::string &message) const {
   if (verbose_ || level == "ERROR") {
     std::cout << "[" << level << "] GGUFParser: " << message << std::endl;
   }
