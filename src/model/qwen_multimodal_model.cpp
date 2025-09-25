@@ -436,6 +436,18 @@ bool QwenMultimodalModel::loadComponentModels() {
         }
     } else {
         std::cout << "[DEBUG] Skipping textModel_ initialize/loadModel because external_vocabulary_ is provided" << std::endl;
+        // Even when external vocabulary is provided, we still need to load real weights
+        if (!config_.textModelPath.empty()) {
+            bool ok = textModel_->loadModel(config_.textModelPath);
+            if (!ok) {
+                std::cerr << "[WARN] Failed to load text model weights from: " << config_.textModelPath << std::endl;
+                success = false;
+            } else {
+                std::cout << "[DEBUG] Loaded text model weights from GGUF: " << config_.textModelPath << std::endl;
+            }
+        } else {
+            std::cout << "[WARN] textModelPath is empty; using zero-initialized weights which may degrade output quality" << std::endl;
+        }
     }
     
     // Load vision model
@@ -965,23 +977,66 @@ duorou::ml::Tensor QwenMultimodalModel::loadTensorFromGGUF(const std::string& te
         std::cerr << "GGUF parser not initialized" << std::endl;
         return duorou::ml::Tensor();
     }
-    
-    // Get tensor info from GGUF parser
+
     const auto* tensorInfo = ggufParser_->getTensorInfo(tensorName);
     if (!tensorInfo) {
         std::cerr << "Tensor not found: " << tensorName << std::endl;
         return duorou::ml::Tensor();
     }
-    
-    // Create tensor with appropriate shape and type
+
+    // Build shape
     std::vector<int64_t> shape;
+    shape.reserve(tensorInfo->dimensions.size());
     for (auto dim : tensorInfo->dimensions) {
         shape.push_back(static_cast<int64_t>(dim));
     }
-    
-    // For now, return empty tensor with correct shape
-    // TODO: Implement actual tensor data loading from GGUF
-    return duorou::ml::Tensor::zeros(shape, duorou::ml::DataType::FLOAT32);
+
+    // Map GGML type to internal dtype
+    auto mapDType = [](duorou::extensions::ollama::GGMLTensorType t) -> duorou::ml::DataType {
+        using duorou::extensions::ollama::GGMLTensorType;
+        switch (t) {
+            case GGMLTensorType::F32: return duorou::ml::DataType::FLOAT32;
+            case GGMLTensorType::F16: return duorou::ml::DataType::FLOAT16;
+            default: return duorou::ml::DataType::INT8; // store raw bytes for quantized types
+        }
+    };
+
+    duorou::ml::DataType dtype = mapDType(tensorInfo->type);
+
+    // Select backend
+    duorou::ml::Backend *backend = nullptr;
+    if (mlContext_) backend = mlContext_->getBackend();
+    if (!backend) backend = duorou::ml::BackendManager::getInstance().getCurrentBackend();
+
+    size_t fileBytes = ggufParser_->getTensorSize(tensorName);
+
+    // Create tensor and allocate
+    duorou::ml::Tensor tensor(shape, dtype);
+    if (backend) tensor.setBackend(backend);
+    tensor.allocate(backend);
+
+    // If bytes do not match allocation (e.g., quantized layouts), fall back to raw flat buffer
+    if (tensor.nbytes() != fileBytes) {
+        std::cout << "[INFO] GGUF tensor size mismatch for '" << tensorName
+                  << "' (allocated=" << tensor.nbytes() << ", gguf=" << fileBytes
+                  << ") — using flat INT8 buffer to preserve raw data" << std::endl;
+        duorou::ml::Tensor raw({static_cast<int64_t>(fileBytes)}, duorou::ml::DataType::INT8);
+        if (backend) raw.setBackend(backend);
+        raw.allocate(backend);
+        if (!ggufParser_->readTensorData(*tensorInfo, raw.data(), fileBytes)) {
+            std::cerr << "[ERROR] Failed to read GGUF tensor data: " << tensorName << std::endl;
+            return duorou::ml::Tensor();
+        }
+        return raw;
+    }
+
+    // Read data into allocated buffer
+    if (!ggufParser_->readTensorData(*tensorInfo, tensor.data(), fileBytes)) {
+        std::cerr << "[ERROR] Failed to read GGUF tensor data: " << tensorName << std::endl;
+        return duorou::ml::Tensor();
+    }
+
+    return tensor;
 }
 
 } // namespace model

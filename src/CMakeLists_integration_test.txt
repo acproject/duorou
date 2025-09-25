@@ -12,7 +12,10 @@ else()
 endif()
 
 # 创建集成测试可执行文件
-add_executable(module_integration_test ${DUOROU_SRC_DIR}/test_module_integration.cpp)
+add_executable(module_integration_test
+    ${DUOROU_SRC_DIR}/test_module_integration.cpp
+    ${DUOROU_SRC_DIR}/core/text_generator.cpp
+)
 
 # 设置C++标准
 set_target_properties(module_integration_test PROPERTIES
@@ -23,6 +26,7 @@ set_target_properties(module_integration_test PROPERTIES
 # 包含目录
 target_include_directories(module_integration_test PRIVATE
     ${DUOROU_SRC_DIR}
+    ${DUOROU_SRC_DIR}/core
     ${DUOROU_SRC_DIR}/ml
     ${DUOROU_SRC_DIR}/kvcache
     ${DUOROU_SRC_DIR}/extensions/ollama

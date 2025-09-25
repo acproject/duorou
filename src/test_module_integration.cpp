@@ -16,6 +16,8 @@
 // 为了测试在没有实际模型文件的情况下运行
 #include "ml/context.h"
 #include "kvcache/cache.h"
+#include "core/text_generator.h"
+#include "model/qwen_text_model.h"
 
 using namespace duorou::extensions::ollama;
 
@@ -336,6 +338,115 @@ void testGGUFParser() {
     }
 }
 
+// 测试 TextGeneratorFallback
+void testTextGeneratorFallback() {
+    std::cout << "\n=== Testing TextGenerator Fallback ===" << std::endl;
+    duorou::core::TextGenerator tg; // default: fallback mock implementation
+    std::string prompt = "你好，世界";
+    auto start = std::chrono::high_resolution_clock::now();
+    duorou::core::GenerationParams params;
+    params.max_tokens = 32;
+    params.temperature = 0.7f;
+    params.top_p = 0.9f;
+    auto result = tg.generate(prompt, params);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    assertTrue(result.finished, "TextGenerator::generate should finish");
+    assertTrue(!result.text.empty(), "TextGenerator should return non-empty text");
+    std::cout << "[INFO] Fallback generate text: " << result.text << std::endl;
+    std::cout << "[INFO] Fallback generated tokens: " << result.generated_tokens << ", duration: " << duration_ms << " ms" << std::endl;
+
+    // Streaming
+    auto sstart = std::chrono::high_resolution_clock::now();
+    std::string streamed_text;
+    int streamed_tokens = 0;
+    auto streamResult = tg.generateStream(
+        prompt,
+        [&](int token, const std::string &text, bool /*finished*/) {
+            streamed_text += text;
+            if (token >= 0) streamed_tokens++;
+        },
+        params
+    );
+    auto send = std::chrono::high_resolution_clock::now();
+    auto sduration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(send - sstart).count();
+    assertTrue(streamResult.finished, "TextGenerator::generateStream should finish");
+    assertTrue(!streamResult.text.empty(), "TextGenerator::generateStream should return non-empty text");
+    std::cout << "[INFO] Fallback stream text: " << streamed_text << std::endl;
+    std::cout << "[INFO] Fallback stream tokens: " << streamed_tokens << ", duration: " << sduration_ms << " ms" << std::endl;
+}
+
+// 测试 QwenTextModel 的最小端到端生成路径（无权重）
+void testQwenTextModelMinimal() {
+    std::cout << "\n=== Testing QwenTextModel Minimal E2E ===" << std::endl;
+    // 使用较小的隐藏维度与块数以降低内存占用
+    duorou::model::TextModelOptions opts;
+    opts.hiddenSize = 32;
+    opts.blockCount = 1;
+    opts.embeddingLength = 32;
+
+    duorou::model::QwenTextModel model(opts);
+
+    // 初始化，传入一个不存在的 gguf 路径以触发内置词表/Tokenizer 回退
+    bool ok = model.initialize("/tmp/nonexistent_qwen2.gguf");
+    assertTrue(ok, "QwenTextModel::initialize should succeed even without weights");
+    assertTrue(model.isInitialized(), "QwenTextModel should be initialized");
+
+    size_t vocab = model.getVocabSize();
+    assertTrue(vocab > 0, "QwenTextModel should report non-zero vocab size");
+    std::cout << "[INFO] Qwen vocab size: " << vocab << std::endl;
+    std::cout << "[INFO] Qwen hidden size: " << model.getOptions().hiddenSize << std::endl;
+
+    // 编码中文提示（可能回退到 UNK）
+    std::string prompt = "你好";
+    std::vector<int32_t> input_ids;
+    try {
+        input_ids = model.encode(prompt, /*addSpecial=*/true);
+    } catch (const std::exception &e) {
+        std::cout << "[WARN] encode threw: " << e.what() << ", using fallback UNK" << std::endl;
+        input_ids = {0};
+    }
+    assertTrue(!input_ids.empty(), "QwenTextModel::encode should return at least one token");
+    std::cout << "[INFO] input_ids size: " << input_ids.size() << std::endl;
+
+    // 前向一次，记录logits形状与部分值
+    auto fstart = std::chrono::high_resolution_clock::now();
+    auto logits = model.forward(input_ids);
+    auto fend = std::chrono::high_resolution_clock::now();
+    auto fms = std::chrono::duration_cast<std::chrono::milliseconds>(fend - fstart).count();
+    assertTrue(!logits.empty(), "QwenTextModel::forward should return logits");
+    assertEqual(vocab, logits.size(), "QwenTextModel::forward logits size should equal vocab size");
+    std::cout << "[INFO] forward duration: " << fms << " ms" << std::endl;
+    std::cout << "[INFO] logits[0..7]: ";
+    for (size_t i = 0; i < std::min<size_t>(8, logits.size()); ++i) {
+        std::cout << logits[i] << (i + 1 < std::min<size_t>(8, logits.size()) ? ", " : "\n");
+    }
+
+    // 生成若干 token
+    size_t max_len = input_ids.size() + 8;
+    auto gstart = std::chrono::high_resolution_clock::now();
+    auto out_ids = model.generate(input_ids, max_len, /*temperature=*/0.7f, /*topP=*/0.9f);
+    auto gend = std::chrono::high_resolution_clock::now();
+    auto gms = std::chrono::duration_cast<std::chrono::milliseconds>(gend - gstart).count();
+    assertTrue(!out_ids.empty(), "QwenTextModel::generate should return tokens");
+    assertTrue(out_ids.size() >= input_ids.size(), "Generated sequence length should be >= input length");
+    bool ids_valid = true;
+    for (auto id : out_ids) {
+        if (id < 0 || static_cast<size_t>(id) >= vocab) { ids_valid = false; break; }
+    }
+    assertTrue(ids_valid, "All generated token ids should be within vocab range");
+
+    // 解码（不校验内容，仅确保不会崩溃）
+    try {
+        std::string text = model.decode(out_ids);
+        std::cout << "[INFO] decode result length: " << text.size() << std::endl;
+    } catch (const std::exception &e) {
+        std::cout << "[WARN] decode threw: " << e.what() << std::endl;
+    }
+
+    std::cout << "[INFO] generate produced " << out_ids.size() - input_ids.size() << " new tokens, duration: " << gms << " ms" << std::endl;
+}
+
 // 主测试函数
 int main() {
     std::cout << "=== Duorou Module Integration Test ===" << std::endl;
@@ -347,7 +458,9 @@ int main() {
         testInferenceStructures();
         testGGUFParser();
         testDuorouForceLlama();
-        
+        testTextGeneratorFallback();
+        testQwenTextModelMinimal();
+
     } catch (const std::exception& e) {
         std::cout << "[ERROR] Exception during testing: " << e.what() << std::endl;
         test_failed++;

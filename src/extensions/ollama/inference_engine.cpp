@@ -1152,6 +1152,22 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
         break;
       }
 
+      // Validate logits size equals vocabulary size; otherwise assert and fallback to llama.cpp
+      {
+        size_t vocab_size = qwen_model_->getVocabSize();
+        if (vocab_size == 0 || logits.size() != vocab_size) {
+          std::cerr << "[ERROR] [InternalForward] Logits size mismatch: got " << logits.size()
+                    << ", expected vocab size " << vocab_size << "; falling back to llama.cpp" << std::endl;
+          // Attempt auto fallback and delegate to llama backend
+          if (tryAutoFallback("Logits size mismatch in internal forward")) {
+            return generateWithLlama(prompt, max_tokens, temperature, top_p);
+          } else {
+            // If fallback fails, return intelligent response
+            return generateIntelligentResponse(prompt, max_tokens, temperature);
+          }
+        }
+      }
+
       int32_t next_token = -1;
       if (temperature <= 0.0f) {
         // Greedy: pick argmax

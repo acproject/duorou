@@ -1,12 +1,15 @@
 #include "qwen_text_model.h"
 #include "../extensions/ollama/gguf_parser.h"
 #include "tokenizer_factory.h"
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <random>
+#include <cstring>
 
 namespace duorou {
 namespace model {
@@ -65,6 +68,7 @@ TransformerLayer::forward(const std::vector<float> &input,
   // Placeholder: input norm -> attention -> post-attention norm -> FFN
   auto hidden = input;
   // input norm (simplified)
+  (void)attentionMask; // unused placeholder
   // attention
   hidden = attention_->forward(hidden, attentionMask);
   // post-attention norm (simplified)
@@ -198,8 +202,7 @@ bool QwenTextModel::initialize(const std::string &configPath) {
         tokenizer_ = createTextProcessorFromGGUF(parser, opts);
 
         if (tokenizer_) {
-          std::cout << "[DEBUG] QwenTextModel: Tokenizer created from GGUF "
-                       "successfully"
+          std::cout << "[DEBUG] QwenTextModel: Tokenizer created from GGUF successfully"
                     << std::endl;
           // Ensure embedding/output sizes match tokenizer vocab size
           size_t newVocab = tokenizer_->getVocabSize();
@@ -223,8 +226,7 @@ bool QwenTextModel::initialize(const std::string &configPath) {
               << std::endl;
         }
       } else {
-        std::cerr << "[WARN] QwenTextModel: Failed to parse GGUF file; falling "
-                     "back to default vocab"
+        std::cerr << "[WARN] QwenTextModel: Failed to parse GGUF file; falling back to default vocab"
                   << std::endl;
       }
     }
@@ -238,11 +240,6 @@ bool QwenTextModel::initialize(const std::string &configPath) {
     std::vector<float> defaultScores;
     std::vector<std::string> defaultMerges;
 
-    // IMPORTANT: do NOT call getVocabSize() here because we have just created
-    // an empty `vocabulary_`, which would incorrectly return 0 and lead to
-    // initializing a tiny fallback vocab (e.g., 259 tokens). Instead, default
-    // to Qwen's known vocab size unless an existing non-empty vocabulary is
-    // set.
     size_t vocabSize = 151936; // Qwen default vocab size
     if (vocabulary_ && vocabulary_->size() > 0) {
       vocabSize = vocabulary_->size();
@@ -281,9 +278,9 @@ bool QwenTextModel::initialize(const std::string &configPath) {
 
     // Create tokenizer via factory for Qwen architecture
     std::cout << "[DEBUG] Creating Qwen tokenizer via factory..." << std::endl;
-    TokenizerFactoryOptions opts;
-    opts.override_type = "bpe";
-    tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts);
+    TokenizerFactoryOptions opts2;
+    opts2.override_type = "bpe";
+    tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts2);
 
     if (!tokenizer_) {
       std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture" << std::endl;
@@ -402,6 +399,7 @@ QwenTextModel::forward(const std::vector<int32_t> &inputIds) {
       logits[i] = sum;
     }
   } else {
+    // Fallback: copy a slice
     for (size_t i = 0; i < logits.size() && i < hiddenSize; ++i) {
       logits[i] = hidden[lastTokenStart + i];
     }
@@ -417,7 +415,7 @@ QwenTextModel::applyPositionalEncoding(const std::vector<float> &embeddings,
   for (size_t pos = 0; pos < sequenceLength; ++pos) {
     for (size_t i = 0; i < hiddenSize; ++i) {
       size_t idx = pos * hiddenSize + i;
-      result[idx] += std::sin(pos / 10000.0f * (i + 1));
+      result[idx] += std::sin(static_cast<float>(pos) / 10000.0f * (i + 1));
     }
   }
   return result;
@@ -426,8 +424,10 @@ QwenTextModel::applyPositionalEncoding(const std::vector<float> &embeddings,
 bool QwenTextModel::loadConfig(const std::string &configPath) {
   std::ifstream file(configPath);
   if (!file.is_open()) {
+    // Optional config; proceed
     return true;
   }
+  // TODO: parse if needed
   return true;
 }
 
@@ -464,7 +464,7 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
   std::string ggufFile = pickGGUF(weightsPath);
   if (ggufFile.empty()) {
     std::cout << "[WARN] QwenTextModel::loadWeights: No GGUF file found near " << weightsPath << std::endl;
-    return true;
+    return true; // not fatal for now
   }
 
   duorou::extensions::ollama::GGUFParser parser(/*verbose=*/false);
@@ -490,7 +490,7 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
       } else {
         float m = mant / 1024.0f;
         float val = std::ldexp(m, -14);
-        f = *reinterpret_cast<uint32_t*>(&val);
+        std::memcpy(&f, &val, sizeof(float));
       }
     } else if (exp == 0x1F) {
       f = sign | 0x7F800000 | (mant << 13);
@@ -618,29 +618,60 @@ std::vector<float> QwenTextModel::softmax(const std::vector<float> &logits) {
 }
 
 int32_t QwenTextModel::sampleToken(const std::vector<float> &probabilities,
-                                   float temperature, float /*topP*/) {
+                                   float temperature, float topP) {
   static std::random_device rd;
   static std::mt19937 gen(rd());
   std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-  if (probabilities.empty())
-    return 0;
-  std::vector<float> scaled(probabilities.size());
+  if (probabilities.empty()) return 0;
+
+  // 1) Temperature scaling
   float invTemp = 1.0f / std::max(temperature, 1e-6f);
+  std::vector<float> scaled(probabilities.size());
   float sum = 0.0f;
   for (size_t i = 0; i < probabilities.size(); ++i) {
-    scaled[i] = std::pow(probabilities[i], invTemp);
+    float p = probabilities[i];
+    p = std::max(p, 0.0f);
+    scaled[i] = std::pow(p, invTemp);
     sum += scaled[i];
   }
-  if (sum <= 0.0f)
-    return 0;
-  for (float &p : scaled)
-    p /= sum;
+  if (sum <= 0.0f) return 0;
+  for (float &p : scaled) p /= sum;
+
+  // 2) Nucleus (top-p) sampling
+  topP = std::clamp(topP, 0.0f, 1.0f);
+  if (topP > 0.0f && topP < 1.0f) {
+    // sort indices by prob desc
+    std::vector<size_t> idx(scaled.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return scaled[a] > scaled[b]; });
+    // accumulate until reaching topP
+    float csum = 0.0f;
+    size_t cutoff = 0;
+    for (; cutoff < idx.size(); ++cutoff) {
+      csum += scaled[idx[cutoff]];
+      if (csum >= topP) { ++cutoff; break; }
+    }
+    if (cutoff == 0) cutoff = 1; // ensure at least one token
+    // renormalize selected subset
+    float subsetSum = 0.0f;
+    for (size_t i = 0; i < cutoff; ++i) subsetSum += scaled[idx[i]];
+    if (subsetSum <= 0.0f) return static_cast<int32_t>(idx[0]);
+    // sample within subset
+    float r = dis(gen);
+    float acc = 0.0f;
+    for (size_t i = 0; i < cutoff; ++i) {
+      acc += scaled[idx[i]] / subsetSum;
+      if (r <= acc) return static_cast<int32_t>(idx[i]);
+    }
+    return static_cast<int32_t>(idx[cutoff - 1]);
+  }
+
+  // Fallback: sample from full distribution
   float r = dis(gen);
   float c = 0.0f;
   for (size_t i = 0; i < scaled.size(); ++i) {
     c += scaled[i];
-    if (r <= c)
-      return static_cast<int32_t>(i);
+    if (r <= c) return static_cast<int32_t>(i);
   }
   return static_cast<int32_t>(scaled.size() - 1);
 }
