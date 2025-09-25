@@ -1,25 +1,28 @@
 #ifndef DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H
 #define DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H
 
+#ifdef __cplusplus
+
 #include <cstdint>
 #include <fstream>
 #include <vector>
 #include <string>
 #include <unordered_map>
 #include <memory>
-
 #ifdef _WIN32
-    #ifndef NOMINMAX
-    #define NOMINMAX
-    #endif
-    #include <windows.h>
-    #include <io.h>
-#else
-    #include <sys/mman.h>
-    #include <sys/stat.h>
-    #include <fcntl.h>
-    #include <unistd.h>
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
+#include <windows.h>
+#include <io.h>
+#else
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+#include <cstring>
+#include <algorithm>
 
 namespace duorou {
 namespace extensions {
@@ -198,6 +201,33 @@ public:
    */
   void setVerbose(bool verbose) { verbose_ = verbose; }
 
+  // ===== New tensor data access APIs =====
+  /**
+   * Get a direct pointer to the tensor data if mmap is enabled.
+   * Returns nullptr if mmap is disabled or tensor is not found.
+   */
+  const uint8_t* getTensorDataPtr(const std::string& name) const;
+
+  /**
+   * Read tensor data into destination buffer. Supports both mmap and stream IO.
+   * @param name Tensor name
+   * @param dst Destination buffer
+   * @param bytes Number of bytes to read (clamped to tensor size - offset)
+   * @param offset Byte offset within the tensor data
+   * @return true on success
+   */
+  bool readTensorData(const std::string& name, void* dst, size_t bytes, size_t offset = 0) const;
+
+  /**
+   * Overload: read by tensor info
+   */
+  bool readTensorData(const GGUFTensorInfo& info, void* dst, size_t bytes, size_t offset = 0) const;
+
+  /**
+   * Get tensor data size by name, returns 0 if not found
+   */
+  size_t getTensorSize(const std::string& name) const;
+
 private:
   /**
    * Read GGUF file header
@@ -220,74 +250,29 @@ private:
    */
   bool readTensorInfo(std::ifstream &file);
 
-  /**
-   * Parse architecture information
-   * @return Returns true on success
-   */
+  // Parse and helpers
   bool parseArchitecture();
-
-  /**
-   * Read string
-   * @param file File stream
-   * @return String content
-   */
   std::string readString(std::ifstream &file);
-
-  /**
-   * Read key-value pair
-   * @param file File stream
-   * @return Key-value pair
-   */
   GGUFKeyValue readKeyValue(std::ifstream &file);
-
-  /**
-   * Calculate tensor data size
-   * @param tensor_info Tensor information
-   * @return Data size (bytes)
-   */
   uint64_t calculateTensorSize(const GGUFTensorInfo& tensor_info) const;
-
-  /**
-   * Get data type size
-   * @param type Data type
-   * @return Type size (bytes)
-   */
   static uint32_t getTypeSize(GGUFType type);
-
-  /**
-   * Get GGML tensor type size
-   * @param type GGML tensor data type
-   * @return Type size (bytes)
-   */
   static uint32_t getGGMLTypeSize(GGMLTensorType type);
-
-  /**
-   * Log output
-   * @param level Log level
-   * @param message Log message
-   */
   void log(const std::string &level, const std::string &message) const;
   
-  /**
-   * Memory mapping related
-   */
+  // Memory mapping related
   bool initMmap(const std::string& file_path);
   void cleanupMmap();
-  
-  /**
-   * Memory mapping read methods
-   */
   bool readHeaderMmap();
-   bool readMetadataMmap();
-   bool readTensorInfoMmap();
-   bool readKeyValueMmap(size_t& offset, GGUFKeyValue& kv);
-   bool readFromMmap(void* buffer, size_t size);
-    std::string readStringFromMmap();
-    bool parseWithMmap();
-    bool readHeaderFromMmap();
-    bool readMetadataFromMmap();
-    bool readTensorInfoFromMmap();
-    GGUFKeyValue readKeyValueFromMmap();
+  bool readMetadataMmap();
+  bool readTensorInfoMmap();
+  bool readKeyValueMmap(size_t& offset, GGUFKeyValue& kv);
+  bool readFromMmap(void* buffer, size_t size);
+  std::string readStringFromMmap();
+  bool parseWithMmap();
+  bool readHeaderFromMmap();
+  bool readMetadataFromMmap();
+  bool readTensorInfoFromMmap();
+  GGUFKeyValue readKeyValueFromMmap();
 
 private:
   std::string file_path_;                                  // Current file path
@@ -300,7 +285,7 @@ private:
   bool verbose_;                                           // Verbose output mode
   bool file_parsed_;                                       // Whether file has been parsed
   
-  // Memory mapping related
+  // Memory mapping state
   bool use_mmap_;
   int fd_;
   void* mapped_data_;
@@ -308,17 +293,73 @@ private:
   size_t current_offset_;
 
 #ifdef _WIN32
-  // Windows specific handles
   HANDLE file_handle_;
   HANDLE mapping_handle_;
 #endif
 
-  // List of supported architectures
   static const std::vector<std::string> SUPPORTED_ARCHITECTURES;
 };
 
 } // namespace ollama
 } // namespace extensions
 } // namespace duorou
+
+// ===== Inline implementations for new tensor data access APIs =====
+namespace duorou {
+namespace extensions {
+namespace ollama {
+
+inline const uint8_t* GGUFParser::getTensorDataPtr(const std::string& name) const {
+  if (!file_parsed_ || !use_mmap_ || mapped_data_ == nullptr) {
+    return nullptr;
+  }
+  const GGUFTensorInfo* info = getTensorInfo(name);
+  if (!info) return nullptr;
+  const size_t base = static_cast<size_t>(tensor_data_offset_) + static_cast<size_t>(info->offset);
+  if (base >= file_size_) return nullptr;
+  return static_cast<const uint8_t*>(mapped_data_) + base;
+}
+
+inline bool GGUFParser::readTensorData(const std::string& name, void* dst, size_t bytes, size_t offset) const {
+  const GGUFTensorInfo* info = getTensorInfo(name);
+  if (!info || dst == nullptr) return false;
+  return readTensorData(*info, dst, bytes, offset);
+}
+
+inline bool GGUFParser::readTensorData(const GGUFTensorInfo& info, void* dst, size_t bytes, size_t offset) const {
+  if (dst == nullptr) return false;
+  if (!file_parsed_) return false;
+  if (offset > info.size) return false;
+  const size_t max_bytes = static_cast<size_t>(info.size) - static_cast<size_t>(offset);
+  const size_t to_read = std::min(bytes, max_bytes);
+  if (to_read == 0) return true;
+
+  const size_t base = static_cast<size_t>(tensor_data_offset_) + static_cast<size_t>(info.offset) + static_cast<size_t>(offset);
+
+  if (use_mmap_) {
+    if (mapped_data_ == nullptr) return false;
+    if (base + to_read > file_size_) return false;
+    std::memcpy(dst, static_cast<const uint8_t*>(mapped_data_) + base, to_read);
+    return true;
+  } else {
+    std::ifstream file(file_path_, std::ios::binary);
+    if (!file.is_open()) return false;
+    file.seekg(static_cast<std::streamoff>(base), std::ios::beg);
+    if (!file.good()) return false;
+    file.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(to_read));
+    return static_cast<size_t>(file.gcount()) == to_read;
+  }
+}
+
+inline size_t GGUFParser::getTensorSize(const std::string& name) const {
+  const GGUFTensorInfo* info = getTensorInfo(name);
+  return info ? static_cast<size_t>(info->size) : 0ULL;
+}
+
+} // namespace ollama
+} // namespace extensions
+} // namespace duorou
+
+#endif // __cplusplus
 
 #endif // DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H

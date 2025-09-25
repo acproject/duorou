@@ -2,6 +2,7 @@
 #include "cpu_backend.h"
 #include <iostream>
 #include <algorithm>
+#include "ggml_backend.h"
 
 namespace duorou {
 namespace ml {
@@ -33,10 +34,11 @@ std::vector<DeviceType> BackendFactory::getAvailableBackendTypes() const {
 }
 
 std::unique_ptr<Backend> BackendFactory::createBestBackend() {
-    // Priority order: CUDA > METAL > CPU
+    // Priority order: CUDA > METAL > GGML > CPU
     std::vector<DeviceType> priority = {
         DeviceType::CUDA,
         DeviceType::METAL,
+        DeviceType::GGML,
         DeviceType::CPU
     };
     
@@ -62,6 +64,11 @@ bool BackendManager::initializeBackends() {
     // Register CPU backend
     factory.registerBackend(DeviceType::CPU, []() {
         return std::make_unique<CPUBackend>();
+    });
+
+    // Register GGML backend
+    factory.registerBackend(DeviceType::GGML, []() {
+        return std::make_unique<GGMLBackend>();
     });
     
     // Try to create all available backends
@@ -116,6 +123,7 @@ std::string deviceTypeToString(DeviceType type) {
         case DeviceType::METAL: return "METAL";
         case DeviceType::OPENCL: return "OPENCL";
         case DeviceType::VULKAN: return "VULKAN";
+        case DeviceType::GGML: return "GGML";
         default: return "UNKNOWN";
     }
 }
@@ -126,6 +134,7 @@ DeviceType stringToDeviceType(const std::string& typeStr) {
     if (typeStr == "METAL") return DeviceType::METAL;
     if (typeStr == "OPENCL") return DeviceType::OPENCL;
     if (typeStr == "VULKAN") return DeviceType::VULKAN;
+    if (typeStr == "GGML") return DeviceType::GGML;
     return DeviceType::CPU; // Default to CPU
 }
 

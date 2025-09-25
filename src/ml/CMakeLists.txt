@@ -6,6 +6,7 @@ set(ML_SOURCES
     # Backend source files
     backend/backend.cpp
     backend/cpu_backend.cpp
+    backend/ggml_backend.cpp
     
     # Core source files
     tensor.cpp
@@ -22,6 +23,7 @@ set(ML_HEADERS
     # Backend header files
     backend/backend.h
     backend/cpu_backend.h
+    backend/ggml_backend.h
     
     # Core header files
     tensor.h

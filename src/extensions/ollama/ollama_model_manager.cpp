@@ -579,10 +579,17 @@ OllamaModelManager::generateModelId(const std::string &file_path) const {
 
 std::string
 OllamaModelManager::normalizeModelId(const std::string &model_name) const {
-  std::string model_id = model_name;
-  // 将特殊字符替换为下划线（与registerModelByName中的逻辑保持一致）
+  // 修剪前后空白字符
+  auto trim = [](const std::string &s) {
+    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base();
+    if (begin >= end) return std::string();
+    return std::string(begin, end);
+  };
+  std::string model_id = trim(model_name);
+  // 仅替换不允许的字符，允许字符集: 字母数字、下划线、横杠、点、冒号、斜杠
   for (char &c : model_id) {
-    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
       c = '_';
     }
   }
@@ -596,7 +603,7 @@ bool OllamaModelManager::isValidModelId(const std::string &model_id) const {
 
   // 检查是否包含有效字符
   for (char c : model_id) {
-    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
       return false;
     }
   }
