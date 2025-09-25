@@ -524,6 +524,19 @@ std::vector<int32_t> BytePairEncoding::applyBPE(const std::string &text) const {
       int32_t id = vocab_->encode(token);
       if (id >= 0) {
         result.push_back(id);
+      } else {
+        // Fallback: for each original mapped rune, try to emit its vocab ID
+        // If still not found, emit raw byte ID as ultimate fallback
+        for (const auto &idx : merge.runes) {
+          const std::string &rune = runes[idx];
+          int32_t rid = vocab_->encode(rune);
+          if (rid >= 0) {
+            result.push_back(rid);
+          } else {
+            uint8_t b = static_cast<uint8_t>(processedText[idx]);
+            result.push_back(static_cast<int32_t>(b));
+          }
+        }
       }
     }
   }

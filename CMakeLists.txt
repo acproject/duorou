@@ -72,6 +72,8 @@ option(DUOROU_ENABLE_VULKAN "Enable Vulkan support" OFF)
 option(DUOROU_ENABLE_OPENCL "Enable OpenCL support" OFF)
 
 option(DUOROU_BUILD_EXAMPLES "Build examples" OFF)
+# 新增：可选构建 GUI（GTK4）
+option(DUOROU_BUILD_GUI "Build GUI components and executable (requires GTK4)" ON)
 
 # 自动启用平台特定选项
 if(APPLE AND NOT DUOROU_ENABLE_METAL)
@@ -83,35 +85,39 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 # GTK4 依赖
-if(WIN32)
-    # Windows 平台使用 vcpkg 查找 GTK4
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(GTK4 gtk4)
+if(DUOROU_BUILD_GUI)
+    if(WIN32)
+        # Windows 平台使用 vcpkg 查找 GTK4
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(GTK4 gtk4)
+        endif()
+        
+        if(NOT GTK4_FOUND)
+            # 尝试使用 vcpkg 安装的 GTK4
+            find_package(gtk QUIET)
+            if(gtk_FOUND)
+                set(GTK4_FOUND TRUE)
+                set(GTK4_LIBRARIES gtk::gtk)
+                set(GTK4_INCLUDE_DIRS ${gtk_INCLUDE_DIRS})
+                message(STATUS "Found GTK4 via vcpkg")
+            else()
+                message(WARNING "GTK4 not found via vcpkg. Please install with: vcpkg install gtk:x64-windows")
+                message(STATUS "Alternative: install MSYS2 and use: pacman -S mingw-w64-x86_64-gtk4")
+            endif()
+        endif()
+    else()
+        # 非 Windows 平台使用 pkg-config
+        pkg_check_modules(GTK4 REQUIRED gtk4)
     endif()
     
-    if(NOT GTK4_FOUND)
-        # 尝试使用 vcpkg 安装的 GTK4
-        find_package(gtk QUIET)
-        if(gtk_FOUND)
-            set(GTK4_FOUND TRUE)
-            set(GTK4_LIBRARIES gtk::gtk)
-            set(GTK4_INCLUDE_DIRS ${gtk_INCLUDE_DIRS})
-            message(STATUS "Found GTK4 via vcpkg")
-        else()
-            message(WARNING "GTK4 not found via vcpkg. Please install with: vcpkg install gtk:x64-windows")
-            message(STATUS "Alternative: install MSYS2 and use: pacman -S mingw-w64-x86_64-gtk4")
-        endif()
+    if(GTK4_FOUND)
+        message(STATUS "Found GTK4: ${GTK4_VERSION}")
+    else()
+        message(FATAL_ERROR "GTK4 not found. Please install GTK4 development packages or configure with -DDUOROU_BUILD_GUI=OFF to build non-GUI components.")
     endif()
 else()
-    # 非 Windows 平台使用 pkg-config
-    pkg_check_modules(GTK4 REQUIRED gtk4)
-endif()
-
-if(GTK4_FOUND)
-    message(STATUS "Found GTK4: ${GTK4_VERSION}")
-else()
-    message(FATAL_ERROR "GTK4 not found. Please install GTK4 development packages.")
+    message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GTK4 detection.")
 endif()
 
 # 线程支持
@@ -221,7 +227,6 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMemory/src/server
-    ${GTK4_INCLUDE_DIRS}
 )
 
 # 添加视频音频库的包含目录
@@ -241,10 +246,10 @@ if(OpenCV_FOUND)
     include_directories(${OpenCV_INCLUDE_DIRS})
 endif()
 
-# 链接目录
-link_directories(
-    ${GTK4_LIBRARY_DIRS}
-)
+# 链接目录（仅在启用 GUI 且找到 GTK4 时添加）
+if(DUOROU_BUILD_GUI AND GTK4_FOUND)
+    link_directories(${GTK4_LIBRARY_DIRS})
+endif()
 
 # 添加视频音频库的链接目录
 if(FFMPEG_FOUND)
@@ -259,13 +264,15 @@ if(PORTAUDIO_FOUND)
     link_directories(${PORTAUDIO_LIBRARY_DIRS})
 endif()
 
-# 编译定义
+# 编译定义（基础定义 + 条件 GTK 定义）
 add_definitions(
-    ${GTK4_CFLAGS_OTHER}
     -DDUOROU_VERSION="${PROJECT_VERSION}"
     -DDUOROU_PLATFORM="${DUOROU_PLATFORM}"
-    -DHAVE_GTK
 )
+
+if(DUOROU_BUILD_GUI AND GTK4_FOUND)
+    add_definitions(${GTK4_CFLAGS_OTHER} -DHAVE_GTK)
+endif()
 
 # 添加视频音频库的编译定义
 if(FFMPEG_FOUND)
@@ -474,36 +481,40 @@ if(NOT DUOROU_SOURCES)
     set(DUOROU_HEADERS ${DUOROU_HEADERS_LIST})
 endif()
 
-# 只有当存在源文件时才构建可执行文件
-if(DUOROU_SOURCES)
+# 只有当存在源文件且启用 GUI 时才构建可执行文件
+if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     list(LENGTH DUOROU_SOURCES DUOROU_SOURCES_COUNT)
     message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
-    # 设置包含目录
+    # 设置包含目录（GTK 目录按条件添加）
     target_include_directories(duorou PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
-        ${GTK4_INCLUDE_DIRS}
     )
+    if(GTK4_FOUND)
+        target_include_directories(duorou PRIVATE ${GTK4_INCLUDE_DIRS})
+    endif()
     
-    # 链接库
+    # 链接库（GTK4 按条件链接）
     target_link_libraries(duorou
         llama
         stable-diffusion
         duorou_ollama_extension
         duorou_model
         duorou_utils
-        ${GTK4_LIBRARIES}
         Threads::Threads
         nlohmann_json::nlohmann_json
         CURL::libcurl
         OpenSSL::SSL
         OpenSSL::Crypto
     )
+    if(GTK4_FOUND)
+        target_link_libraries(duorou ${GTK4_LIBRARIES})
+    endif()
     
     # 链接视频音频处理库
     if(FFMPEG_FOUND)
@@ -564,6 +575,8 @@ if(DUOROU_SOURCES)
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
     )
+elseif(NOT DUOROU_BUILD_GUI)
+    message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GUI executable build.")
 else()
     message(STATUS "No source files found. Skipping executable build.")
     message(STATUS "To build the executable, create the source files listed in DUOROU_SOURCES_LIST.")
@@ -614,24 +627,26 @@ endif()
 
 include(CPack)
 
-# 复制GUI资源文件到build目录
-set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
-file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
+# 复制GUI资源文件到build目录（仅在启用 GUI 时）
+if(DUOROU_BUILD_GUI)
+    set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
+    file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
 
-# 复制CSS和图片文件
-set(GUI_RESOURCE_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
-)
+    # 复制CSS和图片文件
+    set(GUI_RESOURCE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
+    )
 
-foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
-    get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
-    configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
-endforeach()
+    foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
+        get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
+        configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
+    endforeach()
 
-message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
+    message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
+endif()
 
 # 显示配置摘要
 message(STATUS "")

@@ -187,6 +187,14 @@ void Tensor::copyToHost(void* hostData, size_t bytes) const {
     }
 }
 
+bool Tensor::isValid() const {
+    // A tensor is valid if it has a non-empty shape, a positive number of elements,
+    // and its data buffer has been allocated.
+    if (shape_.empty()) return false;
+    if (numel() <= 0) return false;
+    return data_ != nullptr;
+}
+
 // Static factory methods implementation
 Tensor Tensor::zeros(const std::vector<int64_t>& shape, DataType dtype) {
     Tensor tensor(shape, dtype);

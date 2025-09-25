@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
+#include <unordered_set>
 
 // Include the actual llama.cpp header files
 #ifdef _WIN32
@@ -124,10 +125,10 @@ bool MLInferenceEngine::initialize() {
     }
 
     // Create ML context using the selected backend
-    ml_context_ = new ml::Context(backendMgr.getCurrentBackend());
+    ml_context_ = new duorou::ml::Context(backendMgr.getCurrentBackend());
 
     // Create attention mechanism (simplified configuration)
-    attention_ = new ml::nn::MultiHeadAttention(512,  // embed_dim
+    attention_ = new duorou::ml::nn::MultiHeadAttention(512,  // embed_dim
                                                 8,    // num_heads
                                                 -1,   // kv_heads (default)
                                                 true, // bias
@@ -211,36 +212,62 @@ bool MLInferenceEngine::initialize() {
         // Even if loading fails, continue initializing other components for basic inference capability
       }
 
+      // Check internal forward support based on GGUF architecture and parsed config
+      if (!checkInternalForwardSupport()) {
+        std::cerr << "[WARN] Internal forward not supported for architecture: " << arch << ", trying llama.cpp fallback" << std::endl;
+        if (tryAutoFallback("internal_forward_not_supported")) {
+          return true;
+        }
+        initialized_ = false;
+        return false;
+      }
+
+      // Parse model configuration
       if (!parseModelConfig()) {
-        std::cerr << "[ERROR] Failed to parse model configuration" << std::endl;
+        std::cerr << "[ERROR] Failed to parse model configuration from GGUF" << std::endl;
+        if (tryAutoFallback("parse_model_config_failed")) {
+          return true;
+        }
         initialized_ = false;
         return false;
       }
+
+      // Load model weights
       if (!loadModelWeights()) {
-        std::cerr << "[ERROR] Failed to load model weights" << std::endl;
+        std::cerr << "[ERROR] Failed to load model weights from GGUF" << std::endl;
+        if (tryAutoFallback("load_model_weights_failed")) {
+          return true;
+        }
         initialized_ = false;
         return false;
       }
+
+      // Initialize KV cache
       if (!initializeKVCache()) {
         std::cerr << "[ERROR] Failed to initialize KV cache" << std::endl;
+        if (tryAutoFallback("initialize_kv_cache_failed")) {
+          return true;
+        }
         initialized_ = false;
         return false;
       }
+
+      // Precompute RoPE frequencies
       if (!precomputeRoPEFreqs()) {
-        std::cerr << "[ERROR] Failed to precompute RoPE frequencies"
-                  << std::endl;
+        std::cerr << "[ERROR] Failed to precompute RoPE frequencies" << std::endl;
+        if (tryAutoFallback("precompute_rope_failed")) {
+          return true;
+        }
         initialized_ = false;
         return false;
       }
+
       initialized_ = true;
-      std::cout << "[DEBUG] MLInferenceEngine initialized successfully with "
-                   "internal forward (Qwen model)"
-                << std::endl;
+      std::cout << "[DEBUG] MLInferenceEngine initialized successfully with internal forward" << std::endl;
       return true;
     }
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception during initialization: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Exception during initialize: " << e.what() << std::endl;
     initialized_ = false;
     return false;
   }
@@ -670,83 +697,125 @@ bool MLInferenceEngine::parseModelConfig() {
   }
 
   try {
-    // Read model configuration parameters from GGUF file
-    // Need to get configuration based on actual GGUFParser interface
-    // Assume GGUFParser provides methods to get configuration
+    // 1) 架构字段对齐
+    const auto &arch = gguf_parser_->getArchitecture();
 
-    // Get vocabulary size
-    vocab_size_ = 32000; // Default value, should be read from GGUF file
+    // 直接映射基础参数
+    n_layers_   = arch.block_count ? arch.block_count : n_layers_;
+    n_heads_    = arch.attention_head_count ? arch.attention_head_count : n_heads_;
+    n_kv_heads_ = arch.attention_head_count_kv ? arch.attention_head_count_kv : (n_kv_heads_ ? n_kv_heads_ : n_heads_);
+    n_embd_     = arch.embedding_length ? arch.embedding_length : n_embd_;
+    n_ctx_      = arch.context_length ? arch.context_length : n_ctx_;
 
-    // Get number of model layers
-    n_layers_ = 32; // Default value, should be read from GGUF file
+    // RoPE 参数
+    rope_dim_       = arch.rope_dimension_count ? arch.rope_dimension_count : (n_heads_ ? (n_embd_ / n_heads_) : 0);
+    rope_freq_base_ = arch.rope_freq_base > 0.0f ? arch.rope_freq_base : 10000.0f;
 
-    // Get number of attention heads
-    n_heads_ = 32; // Default value, should be read from GGUF file
+    // 2) 词表大小优先从 {arch}.vocab_size 读取，退化到 tokenizer.ggml.tokens 长度
+    uint32_t vocab_from_meta = 0;
+    if (!arch.name.empty()) {
+      std::string key_vs = arch.name + ".vocab_size";
+      if (const auto *kvVS = gguf_parser_->getMetadata(key_vs)) {
+        // GGUF 中 {arch}.vocab_size 通常为 uint32
+        vocab_from_meta = kvVS->asUInt32();
+      }
+    }
 
-    // Get embedding dimension
-    n_embd_ = 4096; // Default value, should be read from GGUF file
+    if (vocab_from_meta > 0) {
+      vocab_size_ = vocab_from_meta;
+    } else {
+      // 回退：使用 tokenizer.ggml.tokens 的数量
+      if (const auto *kvTokens = gguf_parser_->getMetadata("tokenizer.ggml.tokens")) {
+        const auto tokens = kvTokens->asStringArray();
+        if (!tokens.empty()) {
+          vocab_size_ = static_cast<uint32_t>(tokens.size());
+        }
+      }
+    }
 
-    // Get context length
-    n_ctx_ = 2048; // Default value, should be read from GGUF file
+    // 保底默认值（避免为 0 导致后续崩溃）
+    if (vocab_size_ == 0) vocab_size_ = 32000;
+    if (n_layers_   == 0) n_layers_   = 32;
+    if (n_heads_    == 0) n_heads_    = 32;
+    if (n_kv_heads_ == 0) n_kv_heads_ = n_heads_;
+    if (n_embd_     == 0) n_embd_     = 4096;
+    if (n_ctx_      == 0) n_ctx_      = 2048;
+    if (rope_dim_   == 0) rope_dim_   = (n_heads_ ? (n_embd_ / n_heads_) : 0);
+
+    // 调试输出（含 RoPE mrope sections）
+    std::cout << "[DEBUG] Parsed GGUF architecture: '" << arch.name << "'" << std::endl;
+    if (!arch.rope_dimension_sections.empty()) {
+      std::cout << "[DEBUG] RoPE mrope sections: ";
+      for (size_t i = 0; i < arch.rope_dimension_sections.size(); ++i) {
+        std::cout << arch.rope_dimension_sections[i] << (i + 1 < arch.rope_dimension_sections.size() ? "," : "");
+      }
+      std::cout << std::endl;
+    }
 
     std::cout << "[DEBUG] Model config - vocab_size: " << vocab_size_
               << ", n_layers: " << n_layers_ << ", n_heads: " << n_heads_
-              << ", n_embd: " << n_embd_ << ", n_ctx: " << n_ctx_ << std::endl;
+              << ", n_kv_heads: " << n_kv_heads_ << ", n_embd: " << n_embd_
+              << ", n_ctx: " << n_ctx_ << ", rope_dim: " << rope_dim_
+              << ", rope_freq_base: " << rope_freq_base_ << std::endl;
+
+    // 基本合法性检查
+    if (n_layers_ == 0 || n_heads_ == 0 || n_embd_ == 0 || n_ctx_ == 0 || vocab_size_ == 0) {
+      std::cerr << "[ERROR] Invalid model configuration parsed from GGUF" << std::endl;
+      return false;
+    }
 
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to parse model config: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Failed to parse model config: " << e.what() << std::endl;
     return false;
   }
 }
 
 bool MLInferenceEngine::loadModelWeights() {
   try {
-    std::cout << "[DEBUG] Loading model weights for " << n_layers_ << " layers"
-              << std::endl;
+    std::cout << "[DEBUG] Loading model weights from GGUF" << std::endl;
 
-    // Clean up previous weights
+    // Clean up previous weights (will be handled by cleanupResources uniqueness too)
     for (auto *weight : model_weights_) {
       delete weight;
     }
     model_weights_.clear();
 
-    // Create weight tensors for each layer
-    // This is a simplified implementation, should actually read weight data from GGUF file
-    for (uint32_t i = 0; i < n_layers_; ++i) {
-      // Create attention weights
-      auto *attn_weight =
-          new ml::Tensor({n_embd_, n_embd_}, ml::DataType::FLOAT32);
-      model_weights_.push_back(attn_weight);
-
-      // Create feedforward network weights
-      auto *ffn_weight =
-          new ml::Tensor({n_embd_, n_embd_ * 4}, ml::DataType::FLOAT32);
-      model_weights_.push_back(ffn_weight);
+    if (!gguf_parser_) {
+      std::cerr << "[ERROR] GGUF parser not initialized" << std::endl;
+      return false;
     }
 
-    std::cout << "[DEBUG] Loaded " << model_weights_.size() << " weight tensors"
-              << std::endl;
-    return true;
+    // Map all tensors from GGUF into weight_map_
+    if (!mapTensorWeights()) {
+      std::cerr << "[ERROR] Failed to map tensor weights from GGUF" << std::endl;
+      return false;
+    }
 
+    // Populate model_weights_ vector for convenience/legacy paths
+    model_weights_.reserve(weight_map_.size());
+    for (const auto &kv : weight_map_) {
+      model_weights_.push_back(kv.second);
+    }
+
+    std::cout << "[DEBUG] Loaded " << model_weights_.size() << " tensors via GGUF mapping" << std::endl;
+    return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to load model weights: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Failed to load model weights: " << e.what() << std::endl;
     return false;
   }
 }
 
 bool MLInferenceEngine::initializeKVCache() {
   try {
-    std::cout << "[DEBUG] Initializing KV cache with context length: " << n_ctx_
-              << std::endl;
+    std::cout << "[DEBUG] Initializing KV cache with context length: " << n_ctx_ << std::endl;
 
     // Configure KV cache
     cache_config_.maxSeqLen = n_ctx_;
     cache_config_.maxBatchSize = 32; // Default batch size
     cache_config_.numLayers = n_layers_;
-    cache_config_.numHeads = n_heads_;
+    // 对齐 KV 头数（GQA）：优先使用 n_kv_heads_
+    cache_config_.numHeads = (n_kv_heads_ > 0 ? n_kv_heads_ : n_heads_);
     cache_config_.headDim = n_heads_ ? (n_embd_ / n_heads_) : 0;
     cache_config_.dtype = kvcache::DType::FLOAT32;
 
@@ -785,8 +854,7 @@ bool MLInferenceEngine::initializeKVCache() {
     return true;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to initialize KV cache: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Failed to initialize KV cache: " << e.what() << std::endl;
     return false;
   }
 }
@@ -801,27 +869,28 @@ bool MLInferenceEngine::precomputeRoPEFreqs() {
     }
 
     const uint32_t head_dim = n_embd_ / n_heads_;
-    const float theta = 10000.0f;
+    const uint32_t rope_dim = rope_dim_ > 0 ? rope_dim_ : head_dim;
+    const float theta = rope_freq_base_ > 0.0f ? rope_freq_base_ : 10000.0f;
 
     // Clean up previous frequencies
     rope_freqs_.clear();
-    rope_freqs_.reserve(head_dim / 2);
+    rope_freqs_.reserve(rope_dim / 2);
 
-    // Calculate RoPE frequencies
-    for (uint32_t i = 0; i < head_dim / 2; ++i) {
-      float freq = 1.0f / std::pow(theta, (2.0f * i) / head_dim);
+    // Calculate RoPE frequencies（与 GGUF 的 rope.dimension_count & rope.freq_base 对齐）
+    for (uint32_t i = 0; i < rope_dim / 2; ++i) {
+      float freq = 1.0f / std::pow(theta, (2.0f * i) / static_cast<float>(rope_dim));
       rope_freqs_.push_back(freq);
     }
 
     rope_initialized_ = true;
 
     std::cout << "[DEBUG] Precomputed " << rope_freqs_.size()
-              << " RoPE frequencies" << std::endl;
+              << " RoPE frequencies (rope_dim=" << rope_dim
+              << ", theta=" << theta << ")" << std::endl;
     return true;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to precompute RoPE frequencies: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Failed to precompute RoPE frequencies: " << e.what() << std::endl;
     return false;
   }
 }
@@ -1158,11 +1227,21 @@ void MLInferenceEngine::cleanupResources() {
   delete ml_context_;
   ml_context_ = nullptr;
 
-  // Clean up model weights
-  for (auto *weight : model_weights_) {
-    delete weight;
+  // Delete unique tensors referenced by model_weights_ and weight_map_
+  {
+    std::unordered_set<duorou::ml::Tensor*> unique;
+    for (auto *w : model_weights_) {
+      if (w) unique.insert(w);
+    }
+    for (auto &kv : weight_map_) {
+      if (kv.second) unique.insert(kv.second);
+    }
+    for (auto *t : unique) {
+      delete t;
+    }
   }
   model_weights_.clear();
+  weight_map_.clear();
 
   // Clean up KV cache
   kv_cache_.reset();
@@ -1175,8 +1254,11 @@ void MLInferenceEngine::cleanupResources() {
   vocab_size_ = 0;
   n_layers_ = 0;
   n_heads_ = 0;
+  n_kv_heads_ = 0;
   n_embd_ = 0;
   n_ctx_ = 0;
+  rope_dim_ = 0;
+  rope_freq_base_ = 10000.0f;
 
   std::cout << "[DEBUG] Resource cleanup completed" << std::endl;
 }
@@ -1184,3 +1266,125 @@ void MLInferenceEngine::cleanupResources() {
 } // namespace ollama
 } // namespace extensions
 } // namespace duorou
+
+duorou::ml::DataType duorou::extensions::ollama::MLInferenceEngine::convertGGMLDataType(GGMLTensorType ggmlType) {
+  switch (ggmlType) {
+  case GGMLTensorType::F32:
+    return duorou::ml::DataType::FLOAT32;
+  case GGMLTensorType::F16:
+    return duorou::ml::DataType::FLOAT16;
+  default:
+    // For quantized types, store as INT8 by default (block-quantized layout)
+    return duorou::ml::DataType::INT8;
+  }
+}
+
+bool duorou::extensions::ollama::MLInferenceEngine::loadTensorData(const std::string &tensorName, duorou::ml::Tensor *tensor) {
+  if (!gguf_parser_) {
+    std::cerr << "[ERROR] GGUF parser not initialized" << std::endl;
+    return false;
+  }
+  const auto *info = gguf_parser_->getTensorInfo(tensorName);
+  if (!info) {
+    std::cerr << "[WARN] Tensor info not found in GGUF: " << tensorName << std::endl;
+    return false;
+  }
+
+  // Ensure tensor has memory allocated
+  if (!tensor->backend()) {
+    // Attach current backend
+    if (ml_context_ && ml_context_->getBackend()) {
+      tensor->setBackend(ml_context_->getBackend());
+    }
+  }
+  if (!tensor->isValid()) {
+    tensor->allocate(tensor->backend());
+  }
+
+  const size_t bytes = gguf_parser_->getTensorSize(tensorName);
+  if (bytes == 0) {
+    std::cerr << "[WARN] Tensor size is 0 in GGUF: " << tensorName << std::endl;
+    return false;
+  }
+
+  // Read tensor data into tensor->data()
+  if (!gguf_parser_->readTensorData(*info, tensor->data(), bytes)) {
+    std::cerr << "[ERROR] Failed to read tensor data: " << tensorName << std::endl;
+    return false;
+  }
+  return true;
+}
+
+bool duorou::extensions::ollama::MLInferenceEngine::mapTensorWeights() {
+  if (!gguf_parser_) {
+    std::cerr << "[ERROR] GGUF parser not initialized for mapping" << std::endl;
+    return false;
+  }
+
+  const auto &infos = gguf_parser_->getAllTensorInfos();
+  if (infos.empty()) {
+    std::cerr << "[ERROR] No tensor infos found in GGUF" << std::endl;
+    return false;
+  }
+
+  size_t mapped = 0;
+  for (const auto &info : infos) {
+    // Build shape from dimensions
+    std::vector<int64_t> shape;
+    shape.reserve(info.dimensions.size());
+    for (auto d : info.dimensions) {
+      shape.push_back(static_cast<int64_t>(d));
+    }
+    duorou::ml::DataType dtype = convertGGMLDataType(info.type);
+    auto *t = new duorou::ml::Tensor(shape, dtype);
+    // Attach backend and allocate
+    if (ml_context_ && ml_context_->getBackend()) {
+      t->setBackend(ml_context_->getBackend());
+    }
+    t->allocate(t->backend());
+
+    if (!loadTensorData(info.name, t)) {
+      std::cerr << "[WARN] Skipping tensor due to read failure: " << info.name << std::endl;
+      delete t;
+      continue;
+    }
+
+    weight_map_[info.name] = t;
+    mapped++;
+  }
+  std::cout << "[DEBUG] mapTensorWeights: mapped " << mapped << " tensors" << std::endl;
+  return mapped > 0;
+}
+
+bool duorou::extensions::ollama::MLInferenceEngine::checkInternalForwardSupport() {
+  if (!gguf_parser_) return false;
+  std::string arch = gguf_parser_->getArchitecture().name;
+  std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
+  // Prefer internal forward for Qwen-family architectures, esp. multimodal variants (vl)
+  bool is_qwen = arch.find("qwen") != std::string::npos;
+  if (!is_qwen) {
+    return false;
+  }
+  // Basic config presence check
+  return true;
+}
+
+bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(const std::string &reason) {
+  std::cerr << "[INFO] Attempting auto fallback to llama.cpp due to: " << reason << std::endl;
+  use_llama_backend_ = true;
+  try {
+    llama_backend_init();
+    if (!loadLlamaModel(model_path_)) {
+      std::cerr << "[ERROR] Auto fallback failed: could not load llama.cpp model" << std::endl;
+      use_llama_backend_ = false;
+      return false;
+    }
+    initialized_ = true;
+    std::cout << "[DEBUG] Auto fallback to llama.cpp succeeded" << std::endl;
+    return true;
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Exception during auto fallback: " << e.what() << std::endl;
+    use_llama_backend_ = false;
+    return false;
+  }
+}

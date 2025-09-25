@@ -211,6 +211,10 @@ bool QwenTextModel::initialize(const std::string &configPath) {
               outputNormWeights_.assign(hidden, 1.0f);
             }
           }
+          // Try to load weights from GGUF
+          if (!loadWeights(ggufFile)) {
+            std::cout << "[WARN] QwenTextModel: Failed to load weights from GGUF, continuing with zeros" << std::endl;
+          }
           initialized_ = true;
           return true;
         } else {
@@ -260,39 +264,20 @@ bool QwenTextModel::initialize(const std::string &configPath) {
     defaultTypes.push_back(duorou::model::TOKEN_TYPE_CONTROL);
     defaultScores.push_back(0.0f);
 
-    // Add some ASCII bytes for basic coverage (optional)
-    for (int i = 0; i < 256 && defaultVocab.size() < vocabSize; ++i) {
-      std::string byteToken;
-      if (i < 32 || i >= 127) {
-        byteToken = std::string("<0x") + std::to_string(i) + ">";
-      } else {
-        byteToken = std::string(1, static_cast<char>(i));
-      }
-      defaultVocab.push_back(byteToken);
-      defaultTypes.push_back(duorou::model::TOKEN_TYPE_NORMAL);
-      defaultScores.push_back(0.0f);
-    }
-
     // Fill remaining with placeholder tokens
     while (defaultVocab.size() < vocabSize) {
-      defaultVocab.push_back("<token_" + std::to_string(defaultVocab.size()) +
-                             ">");
+      defaultVocab.push_back("<token_" + std::to_string(defaultVocab.size()) + ">");
       defaultTypes.push_back(duorou::model::TOKEN_TYPE_NORMAL);
       defaultScores.push_back(0.0f);
     }
 
     // Initialize vocabulary and specials
-    vocabulary_->initialize(defaultVocab, defaultTypes, defaultScores,
-                            defaultMerges);
+    vocabulary_->initialize(defaultVocab, defaultTypes, defaultScores, defaultMerges);
     vocabulary_->setUNK({0});
     vocabulary_->setBOS({1}, true);
     vocabulary_->setEOS({2}, true);
 
-    std::cout << "[DEBUG] Vocabulary initialized with " << vocabulary_->size()
-              << " tokens" << std::endl;
-
-    auto vocabPtr =
-        std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary *) {});
+    auto vocabPtr = std::shared_ptr<Vocabulary>(vocabulary_.get(), [](Vocabulary*){});
 
     // Create tokenizer via factory for Qwen architecture
     std::cout << "[DEBUG] Creating Qwen tokenizer via factory..." << std::endl;
@@ -301,8 +286,7 @@ bool QwenTextModel::initialize(const std::string &configPath) {
     tokenizer_ = createTextProcessorForArchitecture("qwen", vocabPtr, opts);
 
     if (!tokenizer_) {
-      std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture"
-                << std::endl;
+      std::cerr << "[ERROR] Failed to create tokenizer for Qwen architecture" << std::endl;
       return false;
     }
 
@@ -337,8 +321,7 @@ bool QwenTextModel::initialize(const std::string &configPath) {
   }
 }
 
-bool QwenTextModel::initialize(const std::string &configPath,
-                               bool skipVocabInit) {
+bool QwenTextModel::initialize(const std::string &configPath, bool skipVocabInit) {
   if (skipVocabInit) {
     try {
       if (!loadConfig(configPath)) {
@@ -352,13 +335,10 @@ bool QwenTextModel::initialize(const std::string &configPath,
         }
       }
       initialized_ = true;
-      std::cout << "[DEBUG] QwenTextModel initialized with external vocabulary "
-                   "(skipped vocab init)"
-                << std::endl;
+      std::cout << "[DEBUG] QwenTextModel initialized with external vocabulary (skipped vocab init)" << std::endl;
       return true;
     } catch (const std::exception &e) {
-      std::cerr << "Error initializing QwenTextModel with skipVocabInit: "
-                << e.what() << std::endl;
+      std::cerr << "Error initializing QwenTextModel with skipVocabInit: " << e.what() << std::endl;
       return false;
     }
   }
@@ -408,9 +388,23 @@ QwenTextModel::forward(const std::vector<int32_t> &inputIds) {
   hidden = layerNorm(hidden, outputNormWeights_);
   size_t hiddenSize = options_.hiddenSize;
   size_t lastTokenStart = (inputIds.size() - 1) * hiddenSize;
-  std::vector<float> logits(getVocabSize(), 0.0f);
-  for (size_t i = 0; i < logits.size() && i < hiddenSize; ++i) {
-    logits[i] = hidden[lastTokenStart + i];
+
+  size_t vocab = getVocabSize();
+  std::vector<float> logits(vocab, 0.0f);
+  if (!outputWeights_.empty() && outputWeights_.size() == hiddenSize * vocab) {
+    const float *h = hidden.data() + lastTokenStart;
+    const float *W = outputWeights_.data();
+    for (size_t i = 0; i < vocab; ++i) {
+      float sum = 0.0f;
+      for (size_t j = 0; j < hiddenSize; ++j) {
+        sum += h[j] * W[j * vocab + i];
+      }
+      logits[i] = sum;
+    }
+  } else {
+    for (size_t i = 0; i < logits.size() && i < hiddenSize; ++i) {
+      logits[i] = hidden[lastTokenStart + i];
+    }
   }
   return logits;
 }
@@ -434,11 +428,147 @@ bool QwenTextModel::loadConfig(const std::string &configPath) {
   if (!file.is_open()) {
     return true;
   }
-  // TODO: parse and set options_
   return true;
 }
 
-bool QwenTextModel::loadWeights(const std::string & /*weightsPath*/) {
+bool QwenTextModel::loadWeights(const std::string &weightsPath) {
+  namespace fs = std::filesystem;
+  auto pickGGUF = [](const std::string &path) -> std::string {
+    try {
+      fs::path p(path);
+      if (fs::exists(p) && fs::is_regular_file(p) && p.extension() == ".gguf") {
+        return p.string();
+      }
+      if (fs::exists(p) && fs::is_directory(p)) {
+        for (const auto &entry : fs::directory_iterator(p)) {
+          if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
+            return entry.path().string();
+          }
+        }
+      }
+      if (fs::exists(p) && fs::is_regular_file(p)) {
+        auto parent = p.parent_path();
+        if (!parent.empty() && fs::exists(parent) && fs::is_directory(parent)) {
+          for (const auto &entry : fs::directory_iterator(parent)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
+              return entry.path().string();
+            }
+          }
+        }
+      }
+    } catch (...) {
+    }
+    return std::string();
+  };
+
+  std::string ggufFile = pickGGUF(weightsPath);
+  if (ggufFile.empty()) {
+    std::cout << "[WARN] QwenTextModel::loadWeights: No GGUF file found near " << weightsPath << std::endl;
+    return true;
+  }
+
+  duorou::extensions::ollama::GGUFParser parser(/*verbose=*/false);
+  if (!parser.parseFile(ggufFile)) {
+    std::cerr << "[ERROR] QwenTextModel::loadWeights: Failed to parse GGUF: " << ggufFile << std::endl;
+    return false;
+  }
+
+  auto arch = parser.getArchitecture();
+  if (arch.embedding_length > 0 && arch.embedding_length != options_.hiddenSize) {
+    options_.hiddenSize = arch.embedding_length;
+    std::cout << "[DEBUG] Updated hiddenSize from GGUF to " << options_.hiddenSize << std::endl;
+  }
+
+  auto halfToFloat = [](uint16_t h) -> float {
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exp = (h & 0x7C00) >> 10;
+    uint32_t mant = (h & 0x03FF);
+    uint32_t f;
+    if (exp == 0) {
+      if (mant == 0) {
+        f = sign;
+      } else {
+        float m = mant / 1024.0f;
+        float val = std::ldexp(m, -14);
+        f = *reinterpret_cast<uint32_t*>(&val);
+      }
+    } else if (exp == 0x1F) {
+      f = sign | 0x7F800000 | (mant << 13);
+    } else {
+      int32_t exp32 = int32_t(exp) - 15 + 127;
+      f = sign | (uint32_t(exp32) << 23) | (mant << 13);
+    }
+    float out;
+    std::memcpy(&out, &f, sizeof(float));
+    return out;
+  };
+
+  auto readTensorToFloat = [&](const std::string &name, std::vector<float> &dst, size_t expectedCount) -> bool {
+    const auto *info = parser.getTensorInfo(name);
+    if (!info) {
+      std::cout << "[WARN] Tensor not found in GGUF: " << name << std::endl;
+      return false;
+    }
+    size_t bytes = parser.getTensorSize(name);
+    if (bytes == 0) {
+      std::cout << "[WARN] Tensor size is 0: " << name << std::endl;
+      return false;
+    }
+    dst.resize(0);
+    if (info->type == duorou::extensions::ollama::GGMLTensorType::F32) {
+      size_t count = bytes / sizeof(float);
+      std::vector<float> buf(count);
+      if (!parser.readTensorData(name, buf.data(), bytes)) return false;
+      dst.swap(buf);
+    } else if (info->type == duorou::extensions::ollama::GGMLTensorType::F16) {
+      size_t count = bytes / sizeof(uint16_t);
+      std::vector<uint16_t> hbuf(count);
+      if (!parser.readTensorData(name, hbuf.data(), bytes)) return false;
+      dst.resize(count);
+      for (size_t i = 0; i < count; ++i) dst[i] = halfToFloat(hbuf[i]);
+    } else {
+      std::cout << "[WARN] Unsupported tensor type for " << name << ", skipping" << std::endl;
+      return false;
+    }
+    if (expectedCount > 0 && dst.size() != expectedCount) {
+      std::cout << "[WARN] Unexpected element count for " << name << ": got " << dst.size() << ", expected " << expectedCount << std::endl;
+    }
+    return true;
+  };
+
+  size_t vocab = getVocabSize();
+  size_t hidden = options_.hiddenSize;
+
+  {
+    std::vector<float> emb;
+    if (readTensorToFloat("token_embd.weight", emb, vocab * hidden)) {
+      tokenEmbeddings_.swap(emb);
+      std::cout << "[DEBUG] Loaded token_embd.weight (" << tokenEmbeddings_.size() << " floats)" << std::endl;
+    } else {
+      std::cout << "[WARN] Using zero-initialized token embeddings" << std::endl;
+    }
+  }
+
+  {
+    std::vector<float> onorm;
+    if (readTensorToFloat("output_norm.weight", onorm, hidden)) {
+      outputNormWeights_ = onorm;
+      std::cout << "[DEBUG] Loaded output_norm.weight (" << outputNormWeights_.size() << " floats)" << std::endl;
+    } else if (outputNormWeights_.size() != hidden) {
+      outputNormWeights_.assign(hidden, 1.0f);
+    }
+  }
+
+  {
+    std::vector<float> lm;
+    if (readTensorToFloat("output.weight", lm, hidden * vocab)) {
+      outputWeights_.swap(lm);
+      std::cout << "[DEBUG] Loaded output.weight (" << outputWeights_.size() << " floats)" << std::endl;
+    } else {
+      std::cout << "[WARN] Using zero-initialized output weights" << std::endl;
+    }
+  }
+
   return true;
 }
 
@@ -556,7 +686,6 @@ bool QwenTextModel::loadModel(const std::string &modelPath) {
   return ok;
 }
 
-// Factory function
 std::unique_ptr<BaseModel> createQwenTextModel(const std::string &configPath) {
   auto model = std::make_unique<QwenTextModel>();
   if (model->initialize(configPath)) {

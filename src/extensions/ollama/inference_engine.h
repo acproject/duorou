@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 // 前向声明 llama.cpp 结构体和类型
 struct llama_model;
@@ -71,8 +72,8 @@ private:
   bool initialized_;
 
   // ML组件指针（使用前向声明）
-  ml::Context *ml_context_;
-  ml::nn::MultiHeadAttention *attention_;
+  duorou::ml::Context *ml_context_;
+  duorou::ml::nn::MultiHeadAttention *attention_;
 
   // GGUF相关
   std::unique_ptr<GGUFParser> gguf_parser_;
@@ -83,16 +84,20 @@ private:
   kvcache::CacheConfig cache_config_;
 
   // 模型权重和配置
-  std::vector<ml::Tensor *> model_weights_;
+  std::vector<duorou::ml::Tensor *> model_weights_;
+  std::unordered_map<std::string, duorou::ml::Tensor*> weight_map_; // 权重名称到张量的映射
   uint32_t vocab_size_;
   uint32_t n_layers_;
   uint32_t n_heads_;
+  uint32_t n_kv_heads_; // 来自 GGUF 的 KV 头数（attention.head_count_kv）
   uint32_t n_embd_;
   uint32_t n_ctx_;
 
-  // RoPE频率
+  // RoPE参数
   std::vector<float> rope_freqs_;
   bool rope_initialized_;
+  uint32_t rope_dim_;      // rope.dimension_count（若缺失则使用 head_dim）
+  float rope_freq_base_;   // rope.freq_base（默认 10000.0）
 
   // llama.cpp 相关成员
   llama_model *llama_model_;
@@ -133,6 +138,13 @@ private:
                                           uint32_t max_tokens,
                                           float temperature, float top_p);
   void cleanupResources();
+  
+  // 权重加载映射辅助方法
+  bool mapTensorWeights();
+  bool checkInternalForwardSupport();
+  bool tryAutoFallback(const std::string& reason);
+  duorou::ml::DataType convertGGMLDataType(GGMLTensorType ggmlType);
+  bool loadTensorData(const std::string& tensorName, duorou::ml::Tensor* tensor);
 };
 
 } // namespace ollama
