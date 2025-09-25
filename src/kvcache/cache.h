@@ -63,9 +63,11 @@ private:
     DType dtype_;
     void* data_;
     size_t size_;
+    Backend* backend_;
 
 public:
     Tensor(const std::vector<int>& shape, DType dtype);
+    Tensor(const std::vector<int>& shape, DType dtype, Backend* backend);
     ~Tensor();
     
     const std::vector<int>& shape() const { return shape_; }

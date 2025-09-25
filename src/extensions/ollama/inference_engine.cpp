@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <cstring>
 
 // Include the actual llama.cpp header files
 #ifdef _WIN32
@@ -27,6 +28,8 @@
 #include "../../ml/context.h"
 #include "../../ml/nn/attention.h"
 #include "../../ml/tensor.h"
+#include "../../ml/backend/backend.h"
+#include "../../kvcache/causal.h"
 #include "ollama_model_manager.h"
 
 namespace duorou {
@@ -90,6 +93,9 @@ MLInferenceEngine::~MLInferenceEngine() {
   }
 
   cleanupResources();
+
+  // Cleanup ML backends
+  duorou::ml::BackendManager::getInstance().cleanup();
 }
 
 bool MLInferenceEngine::initialize() {
@@ -101,8 +107,23 @@ bool MLInferenceEngine::initialize() {
   }
 
   try {
-    // Create ML context
-    ml_context_ = new ml::Context();
+    // Initialize and select ML backend (prefer GGML for internal forward path)
+    auto &backendMgr = duorou::ml::BackendManager::getInstance();
+    if (!backendMgr.getCurrentBackend()) {
+      backendMgr.initializeBackends();
+      // Prefer GGML if available; fallback to existing current backend
+      bool switched = backendMgr.setCurrentBackend(duorou::ml::DeviceType::GGML);
+      std::cout << "[DEBUG] Backend initialized, selected="
+                << duorou::ml::deviceTypeToString(
+                       switched ? duorou::ml::DeviceType::GGML
+                                : backendMgr.getCurrentBackend()
+                                      ? backendMgr.getCurrentBackend()->getType()
+                                      : duorou::ml::DeviceType::CPU)
+                << std::endl;
+    }
+
+    // Create ML context using the selected backend
+    ml_context_ = new ml::Context(backendMgr.getCurrentBackend());
 
     // Create attention mechanism (simplified configuration)
     attention_ = new ml::nn::MultiHeadAttention(512,  // embed_dim
@@ -725,17 +746,37 @@ bool MLInferenceEngine::initializeKVCache() {
     cache_config_.maxBatchSize = 32; // Default batch size
     cache_config_.numLayers = n_layers_;
     cache_config_.numHeads = n_heads_;
-    cache_config_.headDim = n_embd_ / n_heads_;
+    cache_config_.headDim = n_heads_ ? (n_embd_ / n_heads_) : 0;
     cache_config_.dtype = kvcache::DType::FLOAT32;
 
-    // Note: Cache is an abstract class, needs concrete implementation
-    // Temporarily commented out, waiting for concrete Cache implementation class
-    // kv_cache_ = std::make_unique<kvcache::ConcreteCache>();
+    // Adapter bridging ml::Backend to kvcache::Backend for backend-aware KV cache allocations
+    struct MLKVBackendAdapter : public duorou::kvcache::Backend {
+      explicit MLKVBackendAdapter(duorou::ml::Backend* backend) : mlBackend(backend) {}
+      void* allocate(size_t bytes) override {
+        if (mlBackend) return mlBackend->allocate(bytes);
+        return std::malloc(bytes);
+      }
+      void deallocate(void* ptr) override {
+        if (!ptr) return;
+        if (mlBackend) mlBackend->deallocate(ptr);
+        else std::free(ptr);
+      }
+      void copy(void* dst, const void* src, size_t bytes) override {
+        if (!dst || !src || bytes == 0) return;
+        if (mlBackend) mlBackend->copyDeviceToDevice(dst, src, bytes);
+        else std::memcpy(dst, src, bytes);
+      }
+      duorou::ml::Backend* mlBackend;
+    };
 
-    // Temporarily set to nullptr, indicating KV cache configuration is ready but not instantiated
-    kv_cache_ = nullptr;
+    MLKVBackendAdapter kvAdapter(ml_context_ ? ml_context_->getBackend() : nullptr);
+    kvcache::Context kvCtx(&kvAdapter);
 
-    std::cout << "[DEBUG] KV cache configuration prepared (maxSeqLen: "
+    // Instantiate causal KV cache and initialize with backend-aware context
+    kv_cache_ = std::make_unique<kvcache::CausalCache>();
+    kv_cache_->init(kvCtx, cache_config_);
+
+    std::cout << "[DEBUG] KV cache instantiated and initialized (type=Causal, maxSeqLen: "
               << cache_config_.maxSeqLen
               << ", numLayers: " << cache_config_.numLayers
               << ", numHeads: " << cache_config_.numHeads

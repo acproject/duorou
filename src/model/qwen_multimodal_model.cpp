@@ -6,6 +6,8 @@
 #include <cmath>
 #include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
+#include "../ml/backend/backend.h"
+
 namespace duorou {
 namespace model {
 
@@ -835,7 +837,15 @@ PixelValues PixelValues::fromRawData(const std::vector<float>& rawData,
                                   static_cast<int64_t>(w)};
     result.data = duorou::ml::Tensor(shape, duorou::ml::DataType::FLOAT32);
     
-    // Copy data to tensor
+    // Backend-aware allocation: use current ML backend if available
+    {
+        duorou::ml::Backend *backend = duorou::ml::BackendManager::getInstance().getCurrentBackend();
+        if (backend) {
+            result.data.setBackend(backend);
+        }
+    }
+    
+    // Copy data to tensor (will allocate via backend if set)
     result.data.copyFromHost(rawData.data(), rawData.size() * sizeof(float));
     
     return result;
@@ -845,6 +855,13 @@ PixelValues PixelValues::fromRawData(const std::vector<float>& rawData,
 bool QwenMultimodalModel::initializeMLComponents() {
     try {
         mlContext_ = std::make_unique<duorou::ml::Context>();
+        // Ensure Context uses the active backend (set by the engine)
+        {
+            duorou::ml::Backend *backend = duorou::ml::BackendManager::getInstance().getCurrentBackend();
+            if (backend) {
+                mlContext_->setBackend(backend);
+            }
+        }
         kvCache_ = std::make_unique<duorou::kvcache::CacheWrapper>(duorou::kvcache::CacheType::CAUSAL);
         
         // Initialize attention with default parameters
@@ -866,6 +883,13 @@ bool QwenMultimodalModel::initializeMLComponents() {
 duorou::ml::Tensor QwenMultimodalModel::convertToTensor(const std::vector<int32_t>& data) {
     std::vector<int64_t> shape = {static_cast<int64_t>(data.size())};
     duorou::ml::Tensor tensor(shape, duorou::ml::DataType::INT32);
+    // Backend-aware allocation: prefer model Context backend, fallback to global current backend
+    {
+        duorou::ml::Backend *backend = nullptr;
+        if (mlContext_) backend = mlContext_->getBackend();
+        if (!backend) backend = duorou::ml::BackendManager::getInstance().getCurrentBackend();
+        if (backend) tensor.setBackend(backend);
+    }
     tensor.copyFromHost(data.data(), data.size() * sizeof(int32_t));
     return tensor;
 }
@@ -873,6 +897,13 @@ duorou::ml::Tensor QwenMultimodalModel::convertToTensor(const std::vector<int32_
 duorou::ml::Tensor QwenMultimodalModel::convertToTensor(const std::vector<float>& data, 
                                                         const std::vector<int64_t>& shape) {
     duorou::ml::Tensor tensor(shape, duorou::ml::DataType::FLOAT32);
+    // Backend-aware allocation: prefer model Context backend, fallback to global current backend
+    {
+        duorou::ml::Backend *backend = nullptr;
+        if (mlContext_) backend = mlContext_->getBackend();
+        if (!backend) backend = duorou::ml::BackendManager::getInstance().getCurrentBackend();
+        if (backend) tensor.setBackend(backend);
+    }
     tensor.copyFromHost(data.data(), data.size() * sizeof(float));
     return tensor;
 }

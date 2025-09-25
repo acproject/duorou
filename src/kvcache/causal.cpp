@@ -24,8 +24,8 @@ void CausalCache::setLayer(int layer) {
 std::tuple<Tensor, Tensor> CausalCache::get(Context& ctx, int seq, int32_t startPos, int32_t endPos) {
     // Create empty key-value tensors as placeholders
     std::vector<int> shape = {1, 1, 1};
-    Tensor key(shape, DType::FLOAT32);
-    Tensor value(shape, DType::FLOAT32);
+    Tensor key(shape, DType::FLOAT32, ctx.backend());
+    Tensor value(shape, DType::FLOAT32, ctx.backend());
     return std::make_tuple(key, value);
 }
 
@@ -75,9 +75,9 @@ void CausalCache::remove(int seq, int32_t beginIndex, int32_t endIndex) {
 std::tuple<Tensor, Tensor, Tensor> CausalCache::buildOutputTensors(Context& ctx, const std::vector<int>& activeSeqs) {
     // Implementation for building output tensors
     std::vector<int> shape = {static_cast<int>(activeSeqs.size()), config_.numHeads, config_.headDim};
-    Tensor key(shape, DType::FLOAT32);
-    Tensor value(shape, DType::FLOAT32);
-    Tensor mask(shape, DType::FLOAT32);
+    Tensor key(shape, DType::FLOAT32, ctx.backend());
+    Tensor value(shape, DType::FLOAT32, ctx.backend());
+    Tensor mask(shape, DType::FLOAT32, ctx.backend());
     return std::make_tuple(key, value, mask);
 }
 

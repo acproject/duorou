@@ -7,7 +7,7 @@ namespace kvcache {
 
 // Tensor class implementation
 Tensor::Tensor(const std::vector<int>& shape, DType dtype) 
-    : shape_(shape), dtype_(dtype), data_(nullptr), size_(0) {
+    : shape_(shape), dtype_(dtype), data_(nullptr), size_(0), backend_(nullptr) {
     
     // Calculate total number of elements
     size_t totalElements = 1;
@@ -43,9 +43,56 @@ Tensor::Tensor(const std::vector<int>& shape, DType dtype)
     }
 }
 
+Tensor::Tensor(const std::vector<int>& shape, DType dtype, Backend* backend)
+    : shape_(shape), dtype_(dtype), data_(nullptr), size_(0), backend_(backend) {
+    // Calculate total number of elements
+    size_t totalElements = 1;
+    for (int dim : shape) {
+        totalElements *= dim;
+    }
+
+    // Calculate byte size based on data type
+    size_t elementSize = 0;
+    switch (dtype) {
+        case DType::FLOAT32:
+            elementSize = 4;
+            break;
+        case DType::FLOAT16:
+            elementSize = 2;
+            break;
+        case DType::INT32:
+            elementSize = 4;
+            break;
+        case DType::INT64:
+            elementSize = 8;
+            break;
+    }
+
+    size_ = totalElements * elementSize;
+
+    // Allocate using backend if provided, otherwise fallback to malloc
+    if (size_ > 0) {
+        if (backend_) {
+            data_ = backend_->allocate(size_);
+            if (data_) {
+                std::memset(data_, 0, size_);
+            }
+        } else {
+            data_ = std::malloc(size_);
+            if (data_) {
+                std::memset(data_, 0, size_);
+            }
+        }
+    }
+}
+
 Tensor::~Tensor() {
     if (data_) {
-        std::free(data_);
+        if (backend_) {
+            backend_->deallocate(data_);
+        } else {
+            std::free(data_);
+        }
         data_ = nullptr;
     }
 }
