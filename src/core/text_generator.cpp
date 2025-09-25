@@ -360,10 +360,17 @@ void TextGenerator::initializeRNG(int64_t seed) {
 }
 
 std::string TextGenerator::normalizeModelId(const std::string &model_name) const {
-  std::string model_id = model_name;
-  // Replace special characters with underscores (consistent with logic in OllamaModelManager)
+  // Trim whitespace to be consistent with OllamaModelManager
+  auto trim = [](const std::string &s) {
+    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base();
+    if (begin >= end) return std::string();
+    return std::string(begin, end);
+  };
+  std::string model_id = trim(model_name);
+  // Allow the same character set as OllamaModelManager: alnum, '_', '-', '.', ':', '/'
   for (char &c : model_id) {
-    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
       c = '_';
     }
   }

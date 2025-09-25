@@ -313,9 +313,15 @@ duorou::ml::Tensor QwenMultimodalModel::forward(
         visionFeatures = processVisionFeatures(pixelValues);
     }
     
-    // Convert input tensor to vector for text model
-    auto inputVector = convertFromTensor(inputIds);
-    std::vector<int32_t> inputIds_vec(inputVector.begin(), inputVector.end());
+    // Convert input tensor (expected INT32 token ids) to std::vector<int32_t>
+    std::vector<int32_t> inputIds_vec;
+    if (inputIds.numel() > 0) {
+        if (inputIds.dtype() != duorou::ml::DataType::INT32) {
+            std::cerr << "[WARN] QwenMultimodalModel::forward expected INT32 inputIds but got different dtype; attempting to interpret as INT32" << std::endl;
+        }
+        inputIds_vec.resize(static_cast<size_t>(inputIds.numel()));
+        inputIds.copyToHost(inputIds_vec.data(), inputIds_vec.size() * sizeof(int32_t));
+    }
     
     // Forward pass through text model
     auto textFeatures = textModel_->forward(inputIds_vec);

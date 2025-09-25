@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 
 // Include the actual llama.cpp header files
 #ifdef _WIN32
@@ -943,18 +944,17 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
                                                uint32_t max_tokens,
                                                float temperature, float top_p) {
   try {
-    std::cout << "[DEBUG] [InternalForward] Starting Qwen model inference"
-              << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Starting Qwen model tensor forward with KV cache" << std::endl;
 
-    // Check if Qwen model is available
-    if (!qwen_model_) {
-      std::cerr << "[ERROR] Qwen model not initialized" << std::endl;
+    // Check if Qwen model and ML context are available
+    if (!qwen_model_ || !ml_context_) {
+      std::cerr << "[ERROR] Qwen model or ML context not initialized" << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
     // First encode text to token IDs
     std::vector<int32_t> input_ids;
-    
+
     // If llama_model_ exists, use llama.cpp tokenization
     if (llama_model_) {
       std::vector<llama_token> llama_tokens = tokenize(prompt);
@@ -970,9 +970,7 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     }
 
     if (input_ids.empty()) {
-      std::cout
-          << "[WARN] [InternalForward] Failed to encode prompt, using fallback"
-          << std::endl;
+      std::cout << "[WARN] [InternalForward] Failed to encode prompt, using fallback" << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
@@ -982,43 +980,146 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     // Remove trailing EOS from input to allow generation to proceed,
     // and remember prompt length so we can strip it from the final output
     size_t prompt_len = input_ids.size();
-    if (!llama_model_) {
-      const duorou::model::Vocabulary* v = qwen_model_->getVocabulary();
-      int32_t eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
-      if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
-        input_ids.pop_back();
-        prompt_len = input_ids.size();
-        std::cout << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens" << std::endl;
+    const duorou::model::Vocabulary* v = qwen_model_->getVocabulary();
+    int32_t eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
+    if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
+      input_ids.pop_back();
+      prompt_len = input_ids.size();
+      std::cout << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens" << std::endl;
+    }
+
+    // Prepare generation loop
+    std::vector<int32_t> sequence_ids = input_ids; // prompt + generated
+
+    // Ensure KV cache is initialized
+    if (!kv_cache_) {
+      std::cout << "[WARN] [InternalForward] KV cache not initialized; proceeding without cache" << std::endl;
+    } else {
+      std::cout << "[DEBUG] [InternalForward] KV cache available; will be passed into forward()" << std::endl;
+    }
+
+    // Random engine for sampling
+    static thread_local std::mt19937 rng(std::random_device{}());
+
+    auto apply_temperature = [&](std::vector<float>& logits, float temp){
+      if (temp <= 0.0f) return; // handled by argmax path later
+      for (auto &x : logits) {
+        x /= temp;
+      }
+    };
+
+    auto softmax = [&](const std::vector<float>& logits){
+      std::vector<float> probs(logits.size());
+      if (logits.empty()) return probs;
+      float max_logit = *std::max_element(logits.begin(), logits.end());
+      double sum = 0.0;
+      for (size_t i = 0; i < logits.size(); ++i) {
+        double e = std::exp(static_cast<double>(logits[i] - max_logit));
+        probs[i] = static_cast<float>(e);
+        sum += e;
+      }
+      if (sum > 0.0) {
+        for (auto &p : probs) p = static_cast<float>(p / sum);
+      }
+      return probs;
+    };
+
+    auto sample_top_p = [&](const std::vector<float>& probs, float tp){
+      if (probs.empty()) return int32_t(-1);
+      if (tp >= 1.0f) {
+        // Full distribution sampling
+        std::discrete_distribution<int> dist(probs.begin(), probs.end());
+        return static_cast<int32_t>(dist(rng));
+      }
+      // Sort indices by prob desc
+      std::vector<int> idx(probs.size());
+      std::iota(idx.begin(), idx.end(), 0);
+      std::sort(idx.begin(), idx.end(), [&](int a, int b){ return probs[a] > probs[b]; });
+      // Accumulate until reaching top_p
+      std::vector<int> kept;
+      std::vector<float> kept_probs;
+      float acc = 0.0f;
+      for (int id : idx) {
+        kept.push_back(id);
+        kept_probs.push_back(probs[id]);
+        acc += probs[id];
+        if (acc >= tp) break;
+      }
+      // Normalize kept_probs
+      if (acc > 0.0f) {
+        for (auto &p : kept_probs) p = p / acc;
+      }
+      // Sample among kept
+      std::discrete_distribution<int> dist(kept_probs.begin(), kept_probs.end());
+      int pick = dist(rng);
+      return static_cast<int32_t>(kept[pick]);
+    };
+
+    // Main generation loop performing tensor forward per step
+    size_t generated = 0;
+    while (generated < max_tokens) {
+      // Build input tensor from current sequence
+      // duorou::ml::Tensor input_tensor = qwen_model_->convertToTensor(sequence_ids);
+      duorou::ml::Tensor input_tensor({static_cast<int64_t>(sequence_ids.size())}, duorou::ml::DataType::INT32);
+      if (ml_context_->getBackend()) {
+        input_tensor.setBackend(ml_context_->getBackend());
+      }
+      if (!sequence_ids.empty()) {
+        input_tensor.copyFromHost(sequence_ids.data(), sequence_ids.size() * sizeof(int32_t));
+      }
+
+      // Forward pass using tensors and (optionally) KV cache
+      duorou::ml::Tensor logits_tensor = qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+
+      // Convert logits to host vector
+      // std::vector<float> logits = qwen_model_->convertFromTensor(logits_tensor);
+      std::vector<float> logits;
+      if (logits_tensor.numel() > 0) {
+        logits.resize(static_cast<size_t>(logits_tensor.numel()));
+        logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
+      }
+      if (logits.empty()) {
+        std::cout << "[WARN] [InternalForward] Empty logits from forward(); breaking" << std::endl;
+        break;
+      }
+
+      int32_t next_token = -1;
+      if (temperature <= 0.0f) {
+        // Greedy: pick argmax
+        next_token = static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
+      } else {
+        // Temperature scaling then top-p sampling
+        apply_temperature(logits, temperature);
+        std::vector<float> probs = softmax(logits);
+        next_token = sample_top_p(probs, std::clamp(top_p, 0.0f, 1.0f));
+      }
+
+      if (next_token < 0) {
+        std::cout << "[WARN] [InternalForward] Sampling returned invalid token; stopping" << std::endl;
+        break;
+      }
+
+      sequence_ids.push_back(next_token);
+      generated += 1;
+
+      // Stop at EOS if available
+      if (eos_id >= 0 && next_token == eos_id) {
+        std::cout << "[DEBUG] [InternalForward] Reached EOS token; stopping generation" << std::endl;
+        break;
       }
     }
-
-    // Call Qwen model's multimodal generation method (without passing images)
-    std::vector<int32_t> output_ids =
-        qwen_model_->generateMultimodal(input_ids, {}, // Empty image data
-                                        max_tokens, temperature, top_p);
-
-    if (output_ids.empty()) {
-      std::cout << "[WARN] [InternalForward] Qwen model returned empty output, "
-                   "using fallback"
-                << std::endl;
-      return generateIntelligentResponse(prompt, max_tokens, temperature);
-    }
-
-    std::cout << "[DEBUG] [InternalForward] Qwen model generated "
-              << output_ids.size() << " output tokens" << std::endl;
 
     // Decode output token IDs to text
     std::string result;
-    
-    // If llama_model_ exists, use llama.cpp decoding
-    if (llama_model_) {
-      // Only decode newly generated tokens (exclude the prompt)
-      std::vector<int32_t> gen_ids;
-      if (output_ids.size() > prompt_len) {
-        gen_ids.assign(output_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), output_ids.end());
-      }
 
-      // Always decode only newly generated tokens; if none, return empty string
+    // Only decode newly generated tokens (exclude the prompt)
+    std::vector<int32_t> gen_ids;
+    if (sequence_ids.size() > prompt_len) {
+      gen_ids.assign(sequence_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), sequence_ids.end());
+    }
+
+    if (llama_model_) {
+      // llama.cpp detokenization
       std::vector<llama_token> llama_tokens;
       llama_tokens.reserve(gen_ids.size());
       for (int32_t token_id : gen_ids) {
@@ -1027,21 +1128,13 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       result = gen_ids.empty() ? std::string() : detokenize(llama_tokens);
       std::cout << "[DEBUG] [InternalForward] Using llama.cpp detokenization (excluded prompt tokens)" << std::endl;
     } else {
-      // Fall back to Qwen model decoder
-      // Only decode newly generated tokens (exclude the prompt)
-      std::vector<int32_t> gen_ids;
-      if (output_ids.size() > prompt_len) {
-        gen_ids.assign(output_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), output_ids.end());
-      }
-      // Always decode only newly generated tokens; if none, result will be empty
+      // Qwen decoder
       result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
       std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization (excluded prompt tokens)" << std::endl;
     }
 
     if (result.empty()) {
-      std::cout << "[WARN] [InternalForward] Failed to decode output tokens, "
-                   "using fallback"
-                << std::endl;
+      std::cout << "[WARN] [InternalForward] Failed to decode output tokens, using fallback" << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
@@ -1050,8 +1143,7 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     return result;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in generateWithInternalForward: "
-              << e.what() << std::endl;
+    std::cerr << "[ERROR] Exception in generateWithInternalForward: " << e.what() << std::endl;
     return "Error: " + std::string(e.what());
   }
 }
