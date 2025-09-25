@@ -104,6 +104,7 @@ bool MainWindow::initialize() {
   // Set model manager for ChatView
   if (chat_view_ && application_) {
     chat_view_->set_model_manager(application_->getModelManager());
+    chat_view_->set_config_manager(application_->getConfigManager());
   }
 
   // Add sub views to stack

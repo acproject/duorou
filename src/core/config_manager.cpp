@@ -464,6 +464,8 @@ void ConfigManager::createDefaultConfig() {
     config_map_["model.auto_unload"] = true;
     config_map_["model.default_language_model"] = std::string("");
     config_map_["model.default_diffusion_model"] = std::string("");
+    // 新增：文本生成后端强制开关（true=llama.cpp，false=内部前向）
+    config_map_["model.force_llama"] = false;
     
     // Workflow settings
     config_map_["workflow.worker_threads"] = 0; // 0 means auto-detect

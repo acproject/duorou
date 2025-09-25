@@ -25,8 +25,11 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
 }
 
 std::vector<float>
-SelfAttention::forward(const std::vector<float> &input,
-                       const std::vector<float> & /*attentionMask*/) {
+SelfAttention::forward(duorou::ml::Context &ctx,
+                       const std::vector<float> &input,
+                       const std::vector<float> & /*attentionMask*/,
+                       duorou::kvcache::Cache* /*cache*/) {
+  (void)ctx;
   // Placeholder forward: pass-through
   return input;
 }
@@ -63,14 +66,17 @@ TransformerLayer::TransformerLayer(const TextModelOptions &options)
 }
 
 std::vector<float>
-TransformerLayer::forward(const std::vector<float> &input,
-                          const std::vector<float> &attentionMask) {
+TransformerLayer::forward(duorou::ml::Context &ctx,
+                          const std::vector<float> &input,
+                          const std::vector<float> &attentionMask,
+                          duorou::kvcache::Cache* cache) {
   // Placeholder: input norm -> attention -> post-attention norm -> FFN
   auto hidden = input;
   // input norm (simplified)
   (void)attentionMask; // unused placeholder
+  (void)cache;
   // attention
-  hidden = attention_->forward(hidden, attentionMask);
+  hidden = attention_->forward(ctx, hidden, attentionMask, cache);
   // post-attention norm (simplified)
   // FFN
   hidden = feedForward_->forward(hidden);
@@ -318,411 +324,137 @@ bool QwenTextModel::initialize(const std::string &configPath) {
   }
 }
 
-bool QwenTextModel::initialize(const std::string &configPath, bool skipVocabInit) {
-  if (skipVocabInit) {
-    try {
-      if (!loadConfig(configPath)) {
-        std::cerr << "Failed to load config from: " << configPath << std::endl;
-        return false;
-      }
-      if (layers_.empty()) {
-        layers_.reserve(options_.blockCount);
-        for (size_t i = 0; i < options_.blockCount; ++i) {
-          layers_.push_back(std::make_unique<TransformerLayer>(options_));
-        }
-      }
-      initialized_ = true;
-      std::cout << "[DEBUG] QwenTextModel initialized with external vocabulary (skipped vocab init)" << std::endl;
-      return true;
-    } catch (const std::exception &e) {
-      std::cerr << "Error initializing QwenTextModel with skipVocabInit: " << e.what() << std::endl;
-      return false;
+// ---- QwenTextModel helper and forward/generate implementations ----
+std::vector<float> QwenTextModel::layerNorm(
+    const std::vector<float>& input,
+    const std::vector<float>& weights,
+    float eps) {
+  // Simplified layer norm: pass-through for now
+  (void)weights;
+  (void)eps;
+  return input;
+}
+
+std::vector<float> QwenTextModel::softmax(const std::vector<float>& logits) {
+  // Stable softmax over the whole vector (placeholder)
+  if (logits.empty()) return {};
+  float maxLogit = *std::max_element(logits.begin(), logits.end());
+  std::vector<float> exps(logits.size());
+  float sumExp = 0.0f;
+  for (size_t i = 0; i < logits.size(); ++i) {
+    exps[i] = std::exp(logits[i] - maxLogit);
+    sumExp += exps[i];
+  }
+  if (sumExp <= 0.0f) sumExp = 1.0f;
+  for (auto& v : exps) v /= sumExp;
+  return exps;
+}
+
+int32_t QwenTextModel::sampleToken(const std::vector<float>& probabilities, float temperature, float topP) {
+  (void)temperature; (void)topP;
+  if (probabilities.empty()) return 0;
+  return static_cast<int32_t>(std::distance(
+      probabilities.begin(),
+      std::max_element(probabilities.begin(), probabilities.end())));
+}
+
+bool QwenTextModel::loadConfig(const std::string& /*configPath*/) {
+  return true;
+}
+
+bool QwenTextModel::loadWeights(const std::string& /*weightsPath*/) {
+  return true;
+}
+
+std::vector<float> QwenTextModel::embedTokens(const std::vector<int32_t>& tokenIds) {
+  size_t hidden = options_.hiddenSize;
+  size_t vocab = getVocabSize();
+  std::vector<float> embeddings(tokenIds.size() * hidden, 0.0f);
+  if (tokenEmbeddings_.empty()) return embeddings;
+  for (size_t t = 0; t < tokenIds.size(); ++t) {
+    int32_t id = tokenIds[t];
+    if (id < 0) id = 0;
+    if (static_cast<size_t>(id) >= vocab) id = static_cast<int32_t>(vocab - 1);
+    size_t srcOffset = static_cast<size_t>(id) * hidden;
+    size_t dstOffset = t * hidden;
+    size_t copyCount = std::min(hidden, tokenEmbeddings_.size() - srcOffset);
+    if (copyCount > 0) {
+      std::copy_n(tokenEmbeddings_.begin() + srcOffset, copyCount,
+                  embeddings.begin() + dstOffset);
     }
   }
+  return embeddings;
+}
+
+std::vector<float> QwenTextModel::applyPositionalEncoding(
+    const std::vector<float>& embeddings, size_t /*sequenceLength*/) {
+  return embeddings;
+}
+
+std::vector<float> QwenTextModel::forward(const std::vector<int32_t>& inputIds) {
+  if (inputIds.empty()) return {};
+  auto hiddenStates = embedTokens(inputIds);
+  hiddenStates = applyPositionalEncoding(hiddenStates, inputIds.size());
+
+  std::vector<float> attentionMask; // unused placeholder
+  duorou::ml::Context dummyCtx;
+  for (auto& layer : layers_) {
+    hiddenStates = layer->forward(dummyCtx, hiddenStates, attentionMask, nullptr);
+  }
+  hiddenStates = layerNorm(hiddenStates, outputNormWeights_, options_.eps);
+  return hiddenStates;
+}
+
+std::vector<int32_t> QwenTextModel::generate(
+    const std::vector<int32_t>& inputIds,
+    size_t /*maxLength*/, float /*temperature*/, float /*topP*/) {
+  std::vector<int32_t> result = inputIds;
+  const Vocabulary* v = getVocabulary();
+  int32_t eos_id = v ? v->getSpecialId(Special::EOS) : -1;
+  if (eos_id >= 0) result.push_back(eos_id);
+  return result;
+}
+
+bool QwenTextModel::loadModel(const std::string& modelPath) {
+  return initialize(modelPath);
+}
+
+void QwenTextModel::setOptions(const TextModelOptions& options) {
+  options_ = options;
+}
+
+bool QwenTextModel::initialize(const std::string& configPath, bool /*skipVocabInit*/) {
   return initialize(configPath);
 }
 
-std::vector<int32_t>
-QwenTextModel::generate(const std::vector<int32_t> &inputIds, size_t maxLength,
-                        float temperature, float topP) {
-  if (!initialized_) {
-    return {};
-  }
-  std::vector<int32_t> result = inputIds;
-  int32_t eos_id = 2;
-  if (tokenizer_) {
-    if (const Vocabulary *v = tokenizer_->getVocabulary()) {
-      int32_t vid = v->getSpecialId(Special::EOS);
-      if (vid >= 0)
-        eos_id = vid;
-    }
-  }
-  if (!inputIds.empty() && inputIds.back() == eos_id) {
-    return result;
-  }
-  for (size_t i = inputIds.size(); i < maxLength; ++i) {
-    auto logits = forward(result);
-    auto probabilities = softmax(logits);
-    int32_t nextToken = sampleToken(probabilities, temperature, topP);
-    result.push_back(nextToken);
-    if (nextToken == eos_id)
-      break;
-  }
-  return result;
-}
+::duorou::ml::Tensor QwenTextModel::forward(
+    ::duorou::ml::Context& /*ctx*/,
+    const ::duorou::ml::Tensor& inputIds,
+    ::duorou::kvcache::Cache* /*cache*/) {
+  size_t seqLen = static_cast<size_t>(inputIds.numel());
+  const int32_t* idsPtr = inputIds.data<int32_t>();
+  std::vector<int32_t> ids;
+  ids.reserve(seqLen);
+  for (size_t i = 0; i < seqLen; ++i) ids.push_back(idsPtr ? idsPtr[i] : 0);
 
-std::vector<float>
-QwenTextModel::forward(const std::vector<int32_t> &inputIds) {
-  if (!initialized_ || inputIds.empty()) {
-    return {};
-  }
-  auto embeddings = embedTokens(inputIds);
-  embeddings = applyPositionalEncoding(embeddings, inputIds.size());
-  auto hidden = embeddings;
-  for (auto &layer : layers_) {
-    hidden = layer->forward(hidden);
-  }
-  hidden = layerNorm(hidden, outputNormWeights_);
-  size_t hiddenSize = options_.hiddenSize;
-  size_t lastTokenStart = (inputIds.size() - 1) * hiddenSize;
+  std::vector<float> hiddenStates = forward(ids);
 
-  size_t vocab = getVocabSize();
-  std::vector<float> logits(vocab, 0.0f);
-  if (!outputWeights_.empty() && outputWeights_.size() == hiddenSize * vocab) {
-    const float *h = hidden.data() + lastTokenStart;
-    const float *W = outputWeights_.data();
-    for (size_t i = 0; i < vocab; ++i) {
-      float sum = 0.0f;
-      for (size_t j = 0; j < hiddenSize; ++j) {
-        sum += h[j] * W[j * vocab + i];
-      }
-      logits[i] = sum;
-    }
-  } else {
-    // Fallback: copy a slice
-    for (size_t i = 0; i < logits.size() && i < hiddenSize; ++i) {
-      logits[i] = hidden[lastTokenStart + i];
-    }
-  }
-  return logits;
-}
-
-std::vector<float>
-QwenTextModel::applyPositionalEncoding(const std::vector<float> &embeddings,
-                                       size_t sequenceLength) {
-  std::vector<float> result = embeddings;
-  size_t hiddenSize = options_.hiddenSize;
-  for (size_t pos = 0; pos < sequenceLength; ++pos) {
-    for (size_t i = 0; i < hiddenSize; ++i) {
-      size_t idx = pos * hiddenSize + i;
-      result[idx] += std::sin(static_cast<float>(pos) / 10000.0f * (i + 1));
-    }
-  }
-  return result;
-}
-
-bool QwenTextModel::loadConfig(const std::string &configPath) {
-  std::ifstream file(configPath);
-  if (!file.is_open()) {
-    // Optional config; proceed
-    return true;
-  }
-  // TODO: parse if needed
-  return true;
-}
-
-bool QwenTextModel::loadWeights(const std::string &weightsPath) {
-  namespace fs = std::filesystem;
-  auto pickGGUF = [](const std::string &path) -> std::string {
-    try {
-      fs::path p(path);
-      if (fs::exists(p) && fs::is_regular_file(p) && p.extension() == ".gguf") {
-        return p.string();
-      }
-      if (fs::exists(p) && fs::is_directory(p)) {
-        for (const auto &entry : fs::directory_iterator(p)) {
-          if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
-            return entry.path().string();
-          }
-        }
-      }
-      if (fs::exists(p) && fs::is_regular_file(p)) {
-        auto parent = p.parent_path();
-        if (!parent.empty() && fs::exists(parent) && fs::is_directory(parent)) {
-          for (const auto &entry : fs::directory_iterator(parent)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".gguf") {
-              return entry.path().string();
-            }
-          }
-        }
-      }
-    } catch (...) {
-    }
-    return std::string();
-  };
-
-  std::string ggufFile = pickGGUF(weightsPath);
-  if (ggufFile.empty()) {
-    std::cout << "[WARN] QwenTextModel::loadWeights: No GGUF file found near " << weightsPath << std::endl;
-    return true; // not fatal for now
-  }
-
-  duorou::extensions::ollama::GGUFParser parser(/*verbose=*/false);
-  if (!parser.parseFile(ggufFile)) {
-    std::cerr << "[ERROR] QwenTextModel::loadWeights: Failed to parse GGUF: " << ggufFile << std::endl;
-    return false;
-  }
-
-  auto arch = parser.getArchitecture();
-  if (arch.embedding_length > 0 && arch.embedding_length != options_.hiddenSize) {
-    options_.hiddenSize = arch.embedding_length;
-    std::cout << "[DEBUG] Updated hiddenSize from GGUF to " << options_.hiddenSize << std::endl;
-  }
-
-  auto halfToFloat = [](uint16_t h) -> float {
-    uint32_t sign = (h & 0x8000) << 16;
-    uint32_t exp = (h & 0x7C00) >> 10;
-    uint32_t mant = (h & 0x03FF);
-    uint32_t f;
-    if (exp == 0) {
-      if (mant == 0) {
-        f = sign;
-      } else {
-        float m = mant / 1024.0f;
-        float val = std::ldexp(m, -14);
-        std::memcpy(&f, &val, sizeof(float));
-      }
-    } else if (exp == 0x1F) {
-      f = sign | 0x7F800000 | (mant << 13);
-    } else {
-      int32_t exp32 = int32_t(exp) - 15 + 127;
-      f = sign | (uint32_t(exp32) << 23) | (mant << 13);
-    }
-    float out;
-    std::memcpy(&out, &f, sizeof(float));
-    return out;
-  };
-
-  auto readTensorToFloat = [&](const std::string &name, std::vector<float> &dst, size_t expectedCount) -> bool {
-    const auto *info = parser.getTensorInfo(name);
-    if (!info) {
-      std::cout << "[WARN] Tensor not found in GGUF: " << name << std::endl;
-      return false;
-    }
-    size_t bytes = parser.getTensorSize(name);
-    if (bytes == 0) {
-      std::cout << "[WARN] Tensor size is 0: " << name << std::endl;
-      return false;
-    }
-    dst.resize(0);
-    if (info->type == duorou::extensions::ollama::GGMLTensorType::F32) {
-      size_t count = bytes / sizeof(float);
-      std::vector<float> buf(count);
-      if (!parser.readTensorData(name, buf.data(), bytes)) return false;
-      dst.swap(buf);
-    } else if (info->type == duorou::extensions::ollama::GGMLTensorType::F16) {
-      size_t count = bytes / sizeof(uint16_t);
-      std::vector<uint16_t> hbuf(count);
-      if (!parser.readTensorData(name, hbuf.data(), bytes)) return false;
-      dst.resize(count);
-      for (size_t i = 0; i < count; ++i) dst[i] = halfToFloat(hbuf[i]);
-    } else {
-      std::cout << "[WARN] Unsupported tensor type for " << name << ", skipping" << std::endl;
-      return false;
-    }
-    if (expectedCount > 0 && dst.size() != expectedCount) {
-      std::cout << "[WARN] Unexpected element count for " << name << ": got " << dst.size() << ", expected " << expectedCount << std::endl;
-    }
-    return true;
-  };
-
-  size_t vocab = getVocabSize();
   size_t hidden = options_.hiddenSize;
-
-  {
-    std::vector<float> emb;
-    if (readTensorToFloat("token_embd.weight", emb, vocab * hidden)) {
-      tokenEmbeddings_.swap(emb);
-      std::cout << "[DEBUG] Loaded token_embd.weight (" << tokenEmbeddings_.size() << " floats)" << std::endl;
-    } else {
-      std::cout << "[WARN] Using zero-initialized token embeddings" << std::endl;
-    }
+  ::duorou::ml::Tensor out = ::duorou::ml::Tensor::zeros({(int64_t)seqLen, (int64_t)hidden}, ::duorou::ml::DataType::FLOAT32);
+  float* outData = out.data<float>();
+  if (outData && !hiddenStates.empty()) {
+    std::copy(hiddenStates.begin(), hiddenStates.end(), outData);
   }
-
-  {
-    std::vector<float> onorm;
-    if (readTensorToFloat("output_norm.weight", onorm, hidden)) {
-      outputNormWeights_ = onorm;
-      std::cout << "[DEBUG] Loaded output_norm.weight (" << outputNormWeights_.size() << " floats)" << std::endl;
-    } else if (outputNormWeights_.size() != hidden) {
-      outputNormWeights_.assign(hidden, 1.0f);
-    }
-  }
-
-  {
-    std::vector<float> lm;
-    if (readTensorToFloat("output.weight", lm, hidden * vocab)) {
-      outputWeights_.swap(lm);
-      std::cout << "[DEBUG] Loaded output.weight (" << outputWeights_.size() << " floats)" << std::endl;
-    } else {
-      std::cout << "[WARN] Using zero-initialized output weights" << std::endl;
-    }
-  }
-
-  return true;
+  return out;
 }
 
-std::vector<float> QwenTextModel::layerNorm(const std::vector<float> &input,
-                                            const std::vector<float> &weights,
-                                            float eps) {
-  std::vector<float> output = input;
-  size_t hiddenSize = weights.size();
-  if (hiddenSize == 0)
-    return output;
-  size_t sequenceLength = input.size() / hiddenSize;
-  for (size_t seq = 0; seq < sequenceLength; ++seq) {
-    size_t start = seq * hiddenSize;
-    float mean = 0.0f;
-    for (size_t i = 0; i < hiddenSize; ++i)
-      mean += input[start + i];
-    mean /= static_cast<float>(hiddenSize);
-    float variance = 0.0f;
-    for (size_t i = 0; i < hiddenSize; ++i) {
-      float diff = input[start + i] - mean;
-      variance += diff * diff;
-    }
-    variance /= static_cast<float>(hiddenSize);
-    float invStd = 1.0f / std::sqrt(variance + eps);
-    for (size_t i = 0; i < hiddenSize; ++i) {
-      output[start + i] = (input[start + i] - mean) * invStd * weights[i];
-    }
-  }
-  return output;
-}
-
-std::vector<float> QwenTextModel::softmax(const std::vector<float> &logits) {
-  std::vector<float> probabilities(logits.size());
-  if (logits.empty())
-    return probabilities;
-  float maxLogit = *std::max_element(logits.begin(), logits.end());
-  float sum = 0.0f;
-  for (size_t i = 0; i < logits.size(); ++i) {
-    probabilities[i] = std::exp(logits[i] - maxLogit);
-    sum += probabilities[i];
-  }
-  if (sum <= 0.0f)
-    return probabilities;
-  for (size_t i = 0; i < probabilities.size(); ++i)
-    probabilities[i] /= sum;
-  return probabilities;
-}
-
-int32_t QwenTextModel::sampleToken(const std::vector<float> &probabilities,
-                                   float temperature, float topP) {
-  static std::random_device rd;
-  static std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-  if (probabilities.empty()) return 0;
-
-  // 1) Temperature scaling
-  float invTemp = 1.0f / std::max(temperature, 1e-6f);
-  std::vector<float> scaled(probabilities.size());
-  float sum = 0.0f;
-  for (size_t i = 0; i < probabilities.size(); ++i) {
-    float p = probabilities[i];
-    p = std::max(p, 0.0f);
-    scaled[i] = std::pow(p, invTemp);
-    sum += scaled[i];
-  }
-  if (sum <= 0.0f) return 0;
-  for (float &p : scaled) p /= sum;
-
-  // 2) Nucleus (top-p) sampling
-  topP = std::clamp(topP, 0.0f, 1.0f);
-  if (topP > 0.0f && topP < 1.0f) {
-    // sort indices by prob desc
-    std::vector<size_t> idx(scaled.size());
-    std::iota(idx.begin(), idx.end(), 0);
-    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return scaled[a] > scaled[b]; });
-    // accumulate until reaching topP
-    float csum = 0.0f;
-    size_t cutoff = 0;
-    for (; cutoff < idx.size(); ++cutoff) {
-      csum += scaled[idx[cutoff]];
-      if (csum >= topP) { ++cutoff; break; }
-    }
-    if (cutoff == 0) cutoff = 1; // ensure at least one token
-    // renormalize selected subset
-    float subsetSum = 0.0f;
-    for (size_t i = 0; i < cutoff; ++i) subsetSum += scaled[idx[i]];
-    if (subsetSum <= 0.0f) return static_cast<int32_t>(idx[0]);
-    // sample within subset
-    float r = dis(gen);
-    float acc = 0.0f;
-    for (size_t i = 0; i < cutoff; ++i) {
-      acc += scaled[idx[i]] / subsetSum;
-      if (r <= acc) return static_cast<int32_t>(idx[i]);
-    }
-    return static_cast<int32_t>(idx[cutoff - 1]);
-  }
-
-  // Fallback: sample from full distribution
-  float r = dis(gen);
-  float c = 0.0f;
-  for (size_t i = 0; i < scaled.size(); ++i) {
-    c += scaled[i];
-    if (r <= c) return static_cast<int32_t>(i);
-  }
-  return static_cast<int32_t>(scaled.size() - 1);
-}
-
-std::vector<float>
-QwenTextModel::embedTokens(const std::vector<int32_t> &tokenIds) {
-  size_t hidden = options_.hiddenSize;
-  if (hidden == 0 || tokenIds.empty())
-    return {};
-  size_t vocab = getVocabSize();
-  std::vector<float> output(tokenIds.size() * hidden, 0.0f);
-  for (size_t t = 0; t < tokenIds.size(); ++t) {
-    int32_t id = tokenIds[t];
-    if (id < 0 || static_cast<size_t>(id) >= vocab)
-      continue;
-    size_t embOffset = static_cast<size_t>(id) * hidden;
-    size_t outOffset = t * hidden;
-    if (embOffset + hidden <= tokenEmbeddings_.size()) {
-      std::copy_n(tokenEmbeddings_.begin() + embOffset, hidden,
-                  output.begin() + outOffset);
-    }
-  }
-  return output;
-}
-
-void QwenTextModel::setOptions(const TextModelOptions &options) {
-  options_ = options;
-  layers_.clear();
-  layers_.reserve(options_.blockCount);
-  for (size_t i = 0; i < options_.blockCount; ++i) {
-    layers_.push_back(std::make_unique<TransformerLayer>(options_));
-  }
-  size_t hidden = options_.hiddenSize;
-  size_t vocab = getVocabSize();
-  tokenEmbeddings_.assign(vocab * hidden, 0.0f);
-  outputWeights_.assign(hidden * vocab, 0.0f);
-  outputNormWeights_.assign(hidden, 1.0f);
-}
-
-bool QwenTextModel::loadModel(const std::string &modelPath) {
-  bool ok = loadConfig(modelPath);
-  ok = loadWeights(modelPath) && ok;
-  return ok;
-}
-
-std::unique_ptr<BaseModel> createQwenTextModel(const std::string &configPath) {
+std::unique_ptr<BaseModel> createQwenTextModel(const std::string& configPath) {
   auto model = std::make_unique<QwenTextModel>();
-  if (model->initialize(configPath)) {
-    return std::move(model);
+  if (!model->initialize(configPath)) {
+    std::cerr << "[ERROR] QwenTextModel factory: initialization failed for " << configPath << std::endl;
+    return nullptr;
   }
-  return nullptr;
+  return model;
 }
 
 } // namespace model

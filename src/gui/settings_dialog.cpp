@@ -227,6 +227,12 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(llama_combo_box, 5);
     gtk_box_append(GTK_BOX(model_group), llama_combo_box);
     
+    // Add Force LLaMA backend checkbox
+    force_llama_check_ = gtk_check_button_new_with_label("Force LLaMA backend (use llama.cpp for text generation)");
+    gtk_widget_set_margin_start(force_llama_check_, 15);
+    gtk_widget_set_margin_bottom(force_llama_check_, 5);
+    gtk_box_append(GTK_BOX(model_group), force_llama_check_);
+    
     // Llama.cpp model path
     GtkWidget* llama_path_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* llama_path_label = gtk_label_new("Llama.cpp Models Path:");
@@ -472,6 +478,10 @@ void SettingsDialog::load_settings() {
     bool gpu_enabled = config_manager->getBool("performance.gpu_enabled", false);
     int threads = config_manager->getInt("performance.threads", 4);
     int memory_limit = config_manager->getInt("performance.memory_limit", 8);
+    bool force_llama = config_manager->getBool("model.force_llama", false);
+    if (force_llama_check_) {
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(force_llama_check_), force_llama);
+    }
     
     std::string llama_selected = config_manager->getString("models.llama_selected", "");
     std::string sd_path = config_manager->getString("models.sd_path", "");

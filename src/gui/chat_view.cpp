@@ -2,6 +2,7 @@
 #include "../core/logger.h"
 #include "../core/model_manager.h"
 #include "../core/text_generator.h"
+#include "../core/config_manager.h"
 #include "../extensions/ollama/ollama_model_manager.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <cstdlib>
 
 namespace duorou {
 namespace gui {
@@ -28,7 +30,7 @@ ChatView::ChatView()
       enhanced_video_window_(std::make_unique<EnhancedVideoCaptureWindow>()),
       video_source_dialog_(std::make_unique<VideoSourceDialog>()),
       is_recording_(false), updating_button_state_(false),
-      session_manager_(nullptr), model_manager_(nullptr), cached_video_frame_(nullptr),
+      session_manager_(nullptr), model_manager_(nullptr), config_manager_(nullptr), cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()) {
   // Initialize enhanced video window
@@ -1873,6 +1875,10 @@ void ChatView::set_model_manager(core::ModelManager *model_manager) {
   update_model_selector();
 }
 
+void ChatView::set_config_manager(core::ConfigManager *config_manager) {
+  config_manager_ = config_manager;
+}
+
 void ChatView::update_model_selector() {
   if (!model_manager_ || !model_selector_) {
     return;
@@ -1923,6 +1929,19 @@ std::string ChatView::generate_ai_response(const std::string &message) {
     return "Error: Model selector not available.";
   }
   std::cout << "[DEBUG] ChatView: Model selector is available" << std::endl;
+
+  // Read config 'model.force_llama' and set environment variable DUOROU_FORCE_LLAMA
+  if (config_manager_) {
+    bool force_llama = config_manager_->getBool("model.force_llama", false);
+    if (force_llama) {
+      setenv("DUOROU_FORCE_LLAMA", "1", 1);
+    } else {
+      unsetenv("DUOROU_FORCE_LLAMA");
+    }
+    std::cout << "[DEBUG] ChatView: DUOROU_FORCE_LLAMA " << (force_llama ? "enabled" : "disabled") << " via config" << std::endl;
+  } else {
+    std::cout << "[DEBUG] ChatView: Config manager not available, skipping DUOROU_FORCE_LLAMA config" << std::endl;
+  }
 
   // Get selected model index
   guint selected_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));

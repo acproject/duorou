@@ -59,6 +59,7 @@ private:
     GtkWidget* sd_lora_entry_;         // LoRA model directory
     GtkWidget* model_path_entry_;
     GtkWidget* ollama_path_entry_;
+    GtkWidget* force_llama_check_;     // Force llama.cpp backend
     
     // Performance settings page
     GtkWidget* performance_page_;

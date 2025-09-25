@@ -387,8 +387,8 @@ void testQwenTextModelMinimal() {
 
     duorou::model::QwenTextModel model(opts);
 
-    // 初始化，传入一个不存在的 gguf 路径以触发内置词表/Tokenizer 回退
-    bool ok = model.initialize("/tmp/nonexistent_qwen2.gguf");
+    // 初始化，传入真实的 gguf 路径（Ollama blobs 哈希文件名也应被接受）
+    bool ok = model.initialize("/Users/acproject/.ollama/models/blobs/sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025");
     assertTrue(ok, "QwenTextModel::initialize should succeed even without weights");
     assertTrue(model.isInitialized(), "QwenTextModel should be initialized");
 

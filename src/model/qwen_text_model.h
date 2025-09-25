@@ -7,6 +7,10 @@
 #include <string>
 #include <memory>
 #include <cstdint>
+#include "../ml/nn/attention.h"
+#include "../ml/context.h"
+#include "../ml/tensor.h"
+#include "../kvcache/cache.h"
 
 namespace duorou {
 namespace model {
@@ -33,8 +37,10 @@ public:
     
     // Forward pass for self-attention
     std::vector<float> forward(
+        duorou::ml::Context& ctx,
         const std::vector<float>& input,
-        const std::vector<float>& attentionMask = {}
+        const std::vector<float>& attentionMask = {},
+        duorou::kvcache::Cache* cache = nullptr
     );
     
     // Initialize weights (placeholder for actual weight loading)
@@ -49,6 +55,9 @@ private:
     std::vector<float> keyWeights_;
     std::vector<float> valueWeights_;
     std::vector<float> outputWeights_;
+
+    // Multi-head attention implementation (Tensor-based)
+    std::unique_ptr<duorou::ml::nn::MultiHeadAttention> mha_;
 };
 
 // Feed-forward network layer
@@ -81,8 +90,10 @@ public:
     
     // Forward pass for transformer layer
     std::vector<float> forward(
+        duorou::ml::Context& ctx,
         const std::vector<float>& input,
-        const std::vector<float>& attentionMask = {}
+        const std::vector<float>& attentionMask = {},
+        duorou::kvcache::Cache* cache = nullptr
     );
     
     // Load layer weights
@@ -124,6 +135,13 @@ public:
     ) override;
     
     std::vector<float> forward(const std::vector<int32_t>& inputIds) override;
+
+    // New: Forward with KV cache and ML Context/Tensor for multimodal path
+    duorou::ml::Tensor forward(
+        duorou::ml::Context& ctx,
+        const duorou::ml::Tensor& inputIds,
+        duorou::kvcache::Cache* cache = nullptr
+    );
     
     // Qwen-specific methods
     bool loadModel(const std::string& modelPath);

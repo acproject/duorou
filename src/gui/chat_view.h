@@ -19,6 +19,7 @@ namespace duorou {
   } // namespace media
   namespace core {
     class ModelManager;
+    class ConfigManager; // 新增：前向声明 ConfigManager
   } // namespace core
 } // namespace duorou
 
@@ -87,6 +88,12 @@ public:
   void set_model_manager(core::ModelManager *model_manager);
 
   /**
+   * Set config manager
+   * @param config_manager config manager pointer
+   */
+  void set_config_manager(core::ConfigManager *config_manager);
+
+  /**
    * Load and display messages for specified session
    * @param session_id session ID
    */
@@ -139,6 +146,7 @@ private:
   // Session manager pointer
   ChatSessionManager *session_manager_; // Session manager pointer
   core::ModelManager *model_manager_;   // Model manager pointer
+  core::ConfigManager *config_manager_; // 新增：配置管理器指针
 
   // Video frame cache related
   std::shared_ptr<duorou::media::VideoFrame>
