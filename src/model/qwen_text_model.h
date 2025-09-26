@@ -119,12 +119,12 @@ public:
     // BaseModel interface implementation
     std::vector<int32_t> encode(const std::string& text, bool addSpecial = true) override;
     std::string decode(const std::vector<int32_t>& ids) override;
-    std::string getModelType() const override { return "qwen-text"; }
     size_t getVocabSize() const override;
     const Vocabulary* getVocabulary() const override;
     bool initialize(const std::string& configPath) override;
     bool initialize(const std::string& configPath, bool skipVocabInit);
-    bool isInitialized() const override { return initialized_; }
+    std::string getModelType() const override; // implement BaseModel pure virtual
+    bool isInitialized() const override;       // implement BaseModel pure virtual
     
     // TextModel interface implementation
     std::vector<int32_t> generate(
@@ -141,6 +141,26 @@ public:
         duorou::ml::Context& ctx,
         const duorou::ml::Tensor& inputIds,
         duorou::kvcache::Cache* cache = nullptr
+    );
+
+    // Helper exposure
+    size_t getHiddenSize() const;
+    std::vector<float> computeLogitsFromHidden(const std::vector<float>& hidden);
+    
+    // Step-by-step decode: compute logits for the last token, optionally using KV Cache
+    duorou::ml::Tensor stepDecode(
+        duorou::ml::Context& ctx,
+        const duorou::ml::Tensor& lastTokenId,
+        duorou::kvcache::Cache* cache = nullptr
+    );
+
+    // New: nextToken helper using stepDecode with temperature and top-p sampling
+    int32_t nextToken(
+        duorou::ml::Context& ctx,
+        const duorou::ml::Tensor& lastTokenId,
+        duorou::kvcache::Cache* cache,
+        float temperature,
+        float topP
     );
     
     // Qwen-specific methods
@@ -159,12 +179,13 @@ private:
     TextModelOptions options_;
     std::vector<std::unique_ptr<TransformerLayer>> layers_;
     
-    // Embedding and output layers
+    // Weights and buffers
+    // Use BaseModel::vocabulary_ and BaseModel::tokenizer_
     std::vector<float> tokenEmbeddings_;  // Token embedding weights
     std::vector<float> outputWeights_;    // Output projection weights
     std::vector<float> outputNormWeights_; // Final layer norm weights
     
-    // Helper methods
+    // Internal helpers
     bool loadConfig(const std::string& configPath);
     bool loadWeights(const std::string& weightsPath);
     std::vector<float> layerNorm(
@@ -176,7 +197,6 @@ private:
     int32_t sampleToken(const std::vector<float>& probabilities, float temperature, float topP);
 };
 
-// Factory function for creating Qwen text models
 std::unique_ptr<BaseModel> createQwenTextModel(const std::string& configPath);
 
 } // namespace model

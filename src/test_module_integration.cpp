@@ -278,13 +278,21 @@ void testDuorouForceLlama() {
             
             std::cout << "[DEBUG] Forced load output: " << output << std::endl;
             
-            // 检查输出中包含 "forced by DUOROU_FORCE_LLAMA"
-            assertTrue(output.find("forced by DUOROU_FORCE_LLAMA") != std::string::npos,
-                      "Should show forced by DUOROU_FORCE_LLAMA when env var is set");
-            
-            // 应该显示 use_llama_backend_=true
-            assertTrue(output.find("use_llama_backend_=true") != std::string::npos,
-                      "Should force use_llama_backend_=true when DUOROU_FORCE_LLAMA is set");
+            // 兼容策略：
+            // - 若架构不受 llama.cpp 支持，应出现 WARN，并保持 use_llama_backend_=false
+            // - 若架构受支持，应出现 "forced by DUOROU_FORCE_LLAMA"，且 use_llama_backend_=true
+            bool has_warn = output.find("[WARN] DUOROU_FORCE_LLAMA requested but architecture") != std::string::npos;
+            bool has_forced = output.find("forced by DUOROU_FORCE_LLAMA") != std::string::npos;
+            assertTrue(has_warn || has_forced,
+                      "Either warn about unsupported architecture or mark as forced by DUOROU_FORCE_LLAMA");
+            if (has_warn) {
+                assertTrue(output.find("use_llama_backend_=false") != std::string::npos,
+                           "When forced but unsupported, should keep use_llama_backend_=false");
+            }
+            if (has_forced) {
+                assertTrue(output.find("use_llama_backend_=true") != std::string::npos,
+                           "When supported, should set use_llama_backend_=true");
+            }
         }
         
         GlobalModelManager::shutdown();

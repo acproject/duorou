@@ -323,16 +323,11 @@ duorou::ml::Tensor QwenMultimodalModel::forward(
         inputIds.copyToHost(inputIds_vec.data(), inputIds_vec.size() * sizeof(int32_t));
     }
     
-    // Forward pass through text model
-    auto textFeatures = textModel_->forward(inputIds_vec);
+    // Forward pass through text model (KV cache-enabled) to produce logits tensor directly
+    auto logitsTensor = textModel_->forward(ctx, inputIds, cache);
     
-    // Convert text features to tensor
-    std::vector<int64_t> shape = {static_cast<int64_t>(textFeatures.size())};
-    auto resultTensor = convertToTensor(textFeatures, shape);
-    
-    // Combine text and vision features
-    // For now, just return text features
-    return resultTensor;
+    // Combine text and vision features if needed. For now, return text logits directly.
+    return logitsTensor;
 }
 
 std::vector<int32_t> QwenMultimodalModel::generateMultimodal(

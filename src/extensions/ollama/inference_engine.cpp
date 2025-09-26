@@ -162,12 +162,16 @@ bool MLInferenceEngine::initialize() {
     // Allow forcing llama.cpp via environment variable DUOROU_FORCE_LLAMA
     const char* force_llama_env = std::getenv("DUOROU_FORCE_LLAMA");
     bool force_llama = force_llama_env && std::string(force_llama_env) != "0" && std::string(force_llama_env).size() > 0;
+    bool llama_supported = isSupportedByLlamaCpp(arch);
+    if (force_llama && !llama_supported) {
+      std::cerr << "[WARN] DUOROU_FORCE_LLAMA requested but architecture '" << arch << "' is unsupported by llama.cpp; using internal forward instead" << std::endl;
+    }
 
-    use_llama_backend_ = force_llama ? true : isSupportedByLlamaCpp(arch);
+    use_llama_backend_ = force_llama && llama_supported;
     std::cout << "[DEBUG] Detected architecture: '" << arch
               << "', use_llama_backend_="
               << (use_llama_backend_ ? "true" : "false")
-              << (force_llama ? " (forced by DUOROU_FORCE_LLAMA)" : "")
+              << ((force_llama && llama_supported) ? " (forced by DUOROU_FORCE_LLAMA)" : "")
               << std::endl;
 
     if (use_llama_backend_) {
@@ -178,92 +182,80 @@ bool MLInferenceEngine::initialize() {
         std::cerr
             << "[ERROR] MLInferenceEngine: Failed to load llama.cpp model from "
             << model_path_ << std::endl;
-        initialized_ = false;
-        return false;
+        // Gracefully fall back to internal forward initialization
+        std::cout << "[INFO] Falling back to internal forward initialization" << std::endl;
+        use_llama_backend_ = false;
+
+        // Non-llama architecture: use internal Forward flow with Qwen model
+        std::cout
+            << "[DEBUG] Initializing Qwen multimodal model for internal forward"
+            << std::endl;
+
+        // Create Qwen multimodal model
+        qwen_model_ = std::make_unique<duorou::model::QwenMultimodalModel>();
+
+        // First initialize model components (including text model)
+        if (!qwen_model_->initialize("")) {
+          std::cerr << "[WARN] Failed to initialize Qwen model components, using "
+                       "fallback initialization"
+                    << std::endl;
+          // Even if initialization fails, continue initializing other components for basic inference capability
+        }
+
+        // Try to load model from GGUF file
+        if (!qwen_model_->loadModel(model_path_)) {
+          std::cerr << "[WARN] Failed to load Qwen model from GGUF, using "
+                       "fallback initialization"
+                    << std::endl;
+          // Even if loading fails, continue initializing other components for basic inference capability
+        }
+
+        // Check internal forward support based on GGUF architecture and parsed config
+        if (!checkInternalForwardSupport()) {
+          std::cerr << "[ERROR] Internal forward not supported; aborting initialization" << std::endl;
+          initialized_ = false;
+          return false;
+        }
+
+        // Parse model configuration
+        if (!parseModelConfig()) {
+          std::cerr << "[ERROR] Failed to parse model configuration from GGUF" << std::endl;
+          initialized_ = false;
+          return false;
+        }
+
+        // Load model weights
+        if (!loadModelWeights()) {
+          std::cerr << "[ERROR] Failed to load model weights from GGUF" << std::endl;
+          initialized_ = false;
+          return false;
+        }
+
+        // Initialize KV cache
+        if (!initializeKVCache()) {
+          std::cerr << "[ERROR] Failed to initialize KV cache" << std::endl;
+          initialized_ = false;
+          return false;
+        }
+
+        // Precompute RoPE frequencies
+        if (!precomputeRoPEFreqs()) {
+          std::cerr << "[ERROR] Failed to precompute RoPE frequencies" << std::endl;
+          initialized_ = false;
+          return false;
+        }
+
+        initialized_ = true;
+        std::cout
+            << "[DEBUG] MLInferenceEngine initialized successfully with internal forward (fallback from llama.cpp)"
+            << std::endl;
+        return true;
       }
 
       initialized_ = true;
       std::cout
           << "[DEBUG] MLInferenceEngine initialized successfully with llama.cpp"
           << std::endl;
-      return true;
-    } else {
-      // Non-llama architecture: use internal Forward flow with Qwen model
-      std::cout
-          << "[DEBUG] Initializing Qwen multimodal model for internal forward"
-          << std::endl;
-
-      // Create Qwen multimodal model
-      qwen_model_ = std::make_unique<duorou::model::QwenMultimodalModel>();
-
-      // First initialize model components (including text model)
-      if (!qwen_model_->initialize("")) {
-        std::cerr << "[WARN] Failed to initialize Qwen model components, using "
-                     "fallback initialization"
-                  << std::endl;
-        // Even if initialization fails, continue initializing other components for basic inference capability
-      }
-
-      // Try to load model from GGUF file
-      if (!qwen_model_->loadModel(model_path_)) {
-        std::cerr << "[WARN] Failed to load Qwen model from GGUF, using "
-                     "fallback initialization"
-                  << std::endl;
-        // Even if loading fails, continue initializing other components for basic inference capability
-      }
-
-      // Check internal forward support based on GGUF architecture and parsed config
-      if (!checkInternalForwardSupport()) {
-        std::cerr << "[WARN] Internal forward not supported for architecture: " << arch << ", trying llama.cpp fallback" << std::endl;
-        if (tryAutoFallback("internal_forward_not_supported")) {
-          return true;
-        }
-        initialized_ = false;
-        return false;
-      }
-
-      // Parse model configuration
-      if (!parseModelConfig()) {
-        std::cerr << "[ERROR] Failed to parse model configuration from GGUF" << std::endl;
-        if (tryAutoFallback("parse_model_config_failed")) {
-          return true;
-        }
-        initialized_ = false;
-        return false;
-      }
-
-      // Load model weights
-      if (!loadModelWeights()) {
-        std::cerr << "[ERROR] Failed to load model weights from GGUF" << std::endl;
-        if (tryAutoFallback("load_model_weights_failed")) {
-          return true;
-        }
-        initialized_ = false;
-        return false;
-      }
-
-      // Initialize KV cache
-      if (!initializeKVCache()) {
-        std::cerr << "[ERROR] Failed to initialize KV cache" << std::endl;
-        if (tryAutoFallback("initialize_kv_cache_failed")) {
-          return true;
-        }
-        initialized_ = false;
-        return false;
-      }
-
-      // Precompute RoPE frequencies
-      if (!precomputeRoPEFreqs()) {
-        std::cerr << "[ERROR] Failed to precompute RoPE frequencies" << std::endl;
-        if (tryAutoFallback("precompute_rope_failed")) {
-          return true;
-        }
-        initialized_ = false;
-        return false;
-      }
-
-      initialized_ = true;
-      std::cout << "[DEBUG] MLInferenceEngine initialized successfully with internal forward" << std::endl;
       return true;
     }
   } catch (const std::exception &e) {
@@ -385,6 +377,24 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
   try {
     std::cout << "[DEBUG] Loading llama.cpp model from: " << model_path
               << std::endl;
+
+    // Check architecture support before attempting to load with llama.cpp
+    std::string arch_for_check;
+    try {
+      if (gguf_parser_ && !gguf_parser_->getArchitecture().name.empty()) {
+        arch_for_check = gguf_parser_->getArchitecture().name;
+      } else {
+        auto tmp = std::make_unique<GGUFParser>();
+        if (tmp->parseFile(model_path)) {
+          arch_for_check = tmp->getArchitecture().name;
+        }
+      }
+    } catch (...) {}
+    if (!arch_for_check.empty() && !isSupportedByLlamaCpp(arch_for_check)) {
+      std::cerr << "[WARN] llama.cpp does not support architecture '" << arch_for_check
+                << "'; skipping llama.cpp load" << std::endl;
+      return false;
+    }
 
     // Set model parameters
     llama_model_params model_params = llama_model_default_params();
@@ -1127,21 +1137,37 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     // Main generation loop performing tensor forward per step
     size_t generated = 0;
     while (generated < max_tokens) {
-      // Build input tensor from current sequence
-      // duorou::ml::Tensor input_tensor = qwen_model_->convertToTensor(sequence_ids);
-      duorou::ml::Tensor input_tensor({static_cast<int64_t>(sequence_ids.size())}, duorou::ml::DataType::INT32);
-      if (ml_context_->getBackend()) {
-        input_tensor.setBackend(ml_context_->getBackend());
-      }
-      if (!sequence_ids.empty()) {
-        input_tensor.copyFromHost(sequence_ids.data(), sequence_ids.size() * sizeof(int32_t));
-      }
+      duorou::ml::Tensor logits_tensor;
 
-      // Forward pass using tensors and (optionally) KV cache
-      duorou::ml::Tensor logits_tensor = qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+      if (generated == 0) {
+        // Prime KV cache with full prompt on first pass
+        duorou::ml::Tensor input_tensor({static_cast<int64_t>(sequence_ids.size())}, duorou::ml::DataType::INT32);
+        if (ml_context_->getBackend()) {
+          input_tensor.setBackend(ml_context_->getBackend());
+        }
+        if (!sequence_ids.empty()) {
+          input_tensor.copyFromHost(sequence_ids.data(), sequence_ids.size() * sizeof(int32_t));
+        }
+        // Forward pass using tensors and (optionally) KV cache via multimodal model
+        logits_tensor = qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+      } else {
+        // Step-by-step decode using only the last generated token via text model
+        int32_t last_id = sequence_ids.back();
+        duorou::ml::Tensor last_token_tensor({1}, duorou::ml::DataType::INT32);
+        if (ml_context_->getBackend()) {
+          last_token_tensor.setBackend(ml_context_->getBackend());
+        }
+        last_token_tensor.copyFromHost(&last_id, sizeof(int32_t));
+        auto *textModel = qwen_model_->getTextModel();
+        if (!textModel) {
+          std::cerr << "[ERROR] [InternalForward] textModel is null; falling back" << std::endl;
+          return tryAutoFallback("textModel null in stepDecode") ? generateWithLlama(prompt, max_tokens, temperature, top_p)
+                                                                  : generateIntelligentResponse(prompt, max_tokens, temperature);
+        }
+        logits_tensor = textModel->stepDecode(*ml_context_, last_token_tensor, kv_cache_.get());
+      }
 
       // Convert logits to host vector
-      // std::vector<float> logits = qwen_model_->convertFromTensor(logits_tensor);
       std::vector<float> logits;
       if (logits_tensor.numel() > 0) {
         logits.resize(static_cast<size_t>(logits_tensor.numel()));
@@ -1386,6 +1412,18 @@ bool duorou::extensions::ollama::MLInferenceEngine::checkInternalForwardSupport(
 }
 
 bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(const std::string &reason) {
+  // Check if llama.cpp supports the current architecture before attempting fallback
+  std::string arch = gguf_parser_ ? gguf_parser_->getArchitecture().name : std::string();
+  std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
+  bool llama_supported = isSupportedByLlamaCpp(arch);
+  if (!llama_supported) {
+    std::cerr << "[WARN] Auto fallback skipped: architecture '" << arch
+              << "' is unsupported by llama.cpp; staying on internal forward" << std::endl;
+    use_llama_backend_ = false;
+    // Do not attempt llama.cpp; let caller handle initialization failure gracefully
+    return false;
+  }
+
   std::cerr << "[INFO] Attempting auto fallback to llama.cpp due to: " << reason << std::endl;
   use_llama_backend_ = true;
   try {
