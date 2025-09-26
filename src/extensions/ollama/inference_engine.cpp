@@ -1164,7 +1164,21 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
           return tryAutoFallback("textModel null in stepDecode") ? generateWithLlama(prompt, max_tokens, temperature, top_p)
                                                                   : generateIntelligentResponse(prompt, max_tokens, temperature);
         }
-        logits_tensor = textModel->stepDecode(*ml_context_, last_token_tensor, kv_cache_.get());
+        // Use nextToken to perform step-by-step decoding with temperature/top-p and KV cache
+        int32_t next_token = textModel->nextToken(*ml_context_, last_token_tensor, kv_cache_.get(), temperature, std::clamp(top_p, 0.0f, 1.0f));
+        if (next_token < 0) {
+          std::cout << "[WARN] [InternalForward] Sampling returned invalid token; stopping" << std::endl;
+          break;
+        }
+        sequence_ids.push_back(next_token);
+        generated += 1;
+        // Stop at EOS if available
+        if (eos_id >= 0 && next_token == eos_id) {
+          std::cout << "[DEBUG] [InternalForward] Reached EOS token; stopping generation" << std::endl;
+          break;
+        }
+        // Continue to next step without computing logits here
+        continue;
       }
 
       // Convert logits to host vector
