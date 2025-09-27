@@ -48,3 +48,16 @@
 - 修正 QwenTextModel 的 vocab 对齐与特殊 token 读取；
 - 在 MLInferenceEngine 的内部 forward 路径完善“prefill+decode”的采样循环并加断言与诊断；
 - 若遇到未完成的权重映射，加入自动回退到 llama.cpp 的保护。
+
+--------------------------------------next-------------------------------------------
+修复QwenTextModel权重映射：将GGUF加载的权重(token_embd.weight, output.weight, blk.*.attn_q.weight等)正确分配给QwenTextModel的成员变量(tokenEmbeddings_, outputWeights_, 各层attention和MLP权重)
+
+实现SelfAttention::forward的实际计算：Q/K/V投影、scaled dot-product attention、RoPE位置编码，替换当前的占位符实现
+
+实现FeedForward::forward的实际计算：gate/up/down投影和SwiGLU激活函数，替换当前的pass-through实现
+
+修复applyPositionalEncoding方法，使用已预计算的RoPE频率(rope_freqs_)实现真正的旋转位置编码
+
+验证并修复层归一化实现，确保使用正确的GGUF权重(blk.*.attn_norm.weight, blk.*.ffn_norm.weight)
+
+添加详细的调试日志来验证tensor形状、数值范围和权重加载

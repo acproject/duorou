@@ -12,6 +12,9 @@
 #include "../ml/tensor.h"
 #include "../kvcache/cache.h"
 
+// Forward declare GGUFParser to avoid heavy include in header
+namespace duorou { namespace extensions { namespace ollama { class GGUFParser; } } }
+
 namespace duorou {
 namespace model {
 
@@ -45,11 +48,13 @@ public:
     
     // Initialize weights (placeholder for actual weight loading)
     bool loadWeights(const std::string& weightsPath);
-    
+    // New overload: load weights for a specific layer from a parsed GGUF
+    bool loadWeights(duorou::extensions::ollama::GGUFParser &parser, size_t layerIndex);
+
 private:
     TextModelOptions options_;
     bool weightsLoaded_ = false;
-    
+    friend class TransformerLayer;
     // Weight matrices (simplified representation)
     std::vector<float> queryWeights_;
     std::vector<float> keyWeights_;
@@ -71,11 +76,13 @@ public:
     
     // Initialize weights
     bool loadWeights(const std::string& weightsPath);
+    // New overload: load weights for a specific layer from a parsed GGUF
+    bool loadWeights(duorou::extensions::ollama::GGUFParser &parser, size_t layerIndex);
     
 private:
     TextModelOptions options_;
     bool weightsLoaded_ = false;
-    
+    friend class TransformerLayer;
     // Weight matrices
     std::vector<float> gateWeights_;
     std::vector<float> upWeights_;

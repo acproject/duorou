@@ -57,8 +57,6 @@ target_include_directories(tokenizer_golden_test PRIVATE
 
 target_link_libraries(tokenizer_golden_test
     duorou_model
-    duorou_ollama_extension
-    duorou_utils
 )
 
 set_target_properties(tokenizer_golden_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)

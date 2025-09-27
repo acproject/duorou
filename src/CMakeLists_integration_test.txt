@@ -35,9 +35,6 @@ target_include_directories(module_integration_test PRIVATE
 
 # 链接库
 target_link_libraries(module_integration_test
-    duorou_ml
-    duorou_kvcache
-    duorou_ollama_extension
     duorou_model
 )
 
