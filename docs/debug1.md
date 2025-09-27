@@ -61,3 +61,62 @@
 验证并修复层归一化实现，确保使用正确的GGUF权重(blk.*.attn_norm.weight, blk.*.ffn_norm.weight)
 
 添加详细的调试日志来验证tensor形状、数值范围和权重加载
+
+
+## 核心问题诊断
+### 1. EOS Token ID 不匹配
+从模型元数据可以看出：
+
+- 模型的真实EOS token ID : 151645
+- 词汇表大小 : 152064
+- 问题 : 代码中可能没有正确读取或使用这个EOS token ID，导致生成过程无法正常停止
+### 2. Logits 计算异常
+从日志分析发现：
+
+- 生成了完整的512个token（达到max_tokens限制）
+- 生成的token ID（54900, 30009, 20441等）看起来是随机的
+- 这表明logits计算可能存在问题，导致采样结果异常
+### 3. 推理流程混乱
+在 `inference_engine.cpp` 中：
+
+- 第一次使用多模态模型的forward方法
+- 后续使用文本模型的nextToken方法
+- 这种混合使用可能导致状态不一致
+## 🛠️ 建议的修复方案
+### 优先级1: 修复EOS Token检测
+```
+// 在inference_engine.cpp中添加正确的EOS检测
+const int eos_token_id = 151645; // 从GGUF
+元数据读取
+if (next_token == eos_token_id) {
+    break; // 正确停止生成
+}
+```
+### 优先级2: 验证Logits计算
+```
+// 在computeLogitsFromHidden中添加调试信息
+std::cout << "Logits range: [" << 
+*std::min_element(logits.begin(), logits.
+end()) 
+          << ", " << *std::max_element
+          (logits.begin(), logits.end()) 
+          << "]" << std::endl;
+```
+### 优先级3: 统一推理流程
+建议在整个生成过程中使用一致的推理方法，要么全部使用多模态模型的forward，要么全部使用文本模型的nextToken。
+
+### 优先级4: 权重验证
+在权重加载后添加数值范围检查，确保权重不是NaN或无穷大。
+
+## 📊 从日志看到的具体问题
+1. 1.
+   输入正确 : 你好 被正确编码为1个token
+2. 2.
+   输出异常 : 生成的内容完全是乱码，包含各种语言的随机词汇
+3. 3.
+   长度异常 : 生成了完整的512个token，说明EOS检测失败
+4. 4.
+   Token ID异常 : 生成的token ID看起来是随机分布的
+这些症状强烈表明logits计算或采样过程存在严重问题，很可能是权重加载不正确或EOS token配置错误导致的。
+
+建议首先修复EOS token ID的读取和使用，然后验证权重加载的正确性。
