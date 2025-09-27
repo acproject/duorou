@@ -1,8 +1,8 @@
 #include "qwen_text_model.h"
 #include "../extensions/ollama/gguf_parser.h"
 #include "../ml/backend/backend.h"
-#include "tokenizer_factory.h"
 #include "ggml.h"
+#include "tokenizer_factory.h"
 
 #include <algorithm>
 #include <cmath>
@@ -48,10 +48,10 @@ namespace duorou {
 namespace model {
 
 // Forward declaration for GGUF helper used in this translation unit
-static bool readGGUFTensorToFloat(duorou::extensions::ollama::GGUFParser &parser,
-                                  const std::string &name,
-                                  std::vector<float> &out,
-                                  std::vector<int64_t> *shapeOut);
+static bool
+readGGUFTensorToFloat(duorou::extensions::ollama::GGUFParser &parser,
+                      const std::string &name, std::vector<float> &out,
+                      std::vector<int64_t> *shapeOut);
 
 // ---------------- SelfAttention ----------------
 SelfAttention::SelfAttention(const TextModelOptions &options)
@@ -74,62 +74,198 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
 std::vector<float> SelfAttention::forward(
     duorou::ml::Context &ctx, const std::vector<float> &input,
     const std::vector<float> &attentionMask, duorou::kvcache::Cache *cache) {
+  (void)ctx;
   (void)attentionMask;
-  // Keep functional behavior: pass-through hidden, but wire KV cache for future
-  // acceleration
+  // Real forward: Q/K/V projections -> RoPE on Q/K -> scaled dot-product
+  // attention -> output projection
   const size_t hiddenSize = options_.hiddenSize;
-  if (!cache || hiddenSize == 0 || input.empty() ||
-      (input.size() % hiddenSize) != 0) {
+  if (hiddenSize == 0 || input.empty() || (input.size() % hiddenSize) != 0) {
     return input;
   }
-
-  // Prepare KV tensors: shape [seq_len, num_kv_heads, head_dim]
-  const size_t seqLen = input.size() / hiddenSize;
-  const int kvHeads = static_cast<int>(options_.numKVHeads);
   const int numHeads = static_cast<int>(options_.numHeads);
-  const int headDim = (numHeads > 0) ? static_cast<int>(hiddenSize / numHeads)
-                                     : static_cast<int>(options_.ropeDim);
+  const int numKVHeads = static_cast<int>(
+      options_.numKVHeads > 0 ? options_.numKVHeads : options_.numHeads);
+  const int headDim =
+      static_cast<int>(hiddenSize / static_cast<size_t>(numHeads));
+  const size_t seqLen = input.size() / hiddenSize;
 
-  MLKVBackendAdapter kvAdapter(ctx.getBackend());
-  duorou::kvcache::Context kvCtx(&kvAdapter);
+  // Helper lambda: matmul [seq, hidden] x [hidden, hidden] -> [seq, hidden]
+  auto matmul_seq_hidden =
+      [&](const std::vector<float> &A,
+          const std::vector<float> &W) -> std::vector<float> {
+    std::vector<float> out(seqLen * hiddenSize, 0.0f);
+    for (size_t t = 0; t < seqLen; ++t) {
+      const float *a = &A[t * hiddenSize];
+      float *o = &out[t * hiddenSize];
+      for (int outc = 0; outc < static_cast<int>(hiddenSize); ++outc) {
+        double acc = 0.0;
+        // Assume W is [hidden, hidden] in row-major as (in_dim, out_dim) ->
+        // index in*hidden + out
+        for (int in = 0; in < static_cast<int>(hiddenSize); ++in) {
+          acc += static_cast<double>(a[in]) *
+                 static_cast<double>(
+                     W[static_cast<size_t>(in) * hiddenSize + outc]);
+        }
+        o[outc] = static_cast<float>(acc);
+      }
+    }
+    return out;
+  };
 
-  std::vector<int> kvShape = {static_cast<int>(seqLen), kvHeads, headDim};
-  duorou::kvcache::Tensor key(kvShape, duorou::kvcache::DType::FLOAT32,
-                              &kvAdapter);
-  duorou::kvcache::Tensor value(kvShape, duorou::kvcache::DType::FLOAT32,
-                                &kvAdapter);
+  // 1) Linear projections
+  std::vector<float> qHidden = matmul_seq_hidden(input, queryWeights_);
+  std::vector<float> kHidden = matmul_seq_hidden(input, keyWeights_);
+  std::vector<float> vHidden = matmul_seq_hidden(input, valueWeights_);
 
-  // Map hidden states to K/V: simple slice of last hidden elements per token
-  const size_t kvElems =
-      static_cast<size_t>(kvHeads) * static_cast<size_t>(headDim);
-  std::vector<float> kvBuffer(seqLen * kvElems, 0.0f);
+  // 2) Reshape to [seq, heads, headDim]
+  const size_t qkvElems =
+      seqLen * static_cast<size_t>(numHeads) * static_cast<size_t>(headDim);
+  std::vector<float> Q(qkvElems), K(qkvElems), V(qkvElems);
   for (size_t t = 0; t < seqLen; ++t) {
-    const size_t hBase = t * hiddenSize;
-    const size_t kvBase = t * kvElems;
-    const size_t copyCount = std::min(kvElems, hiddenSize);
-    // Copy the first copyCount elements from hidden to K and V buffers
-    std::memcpy(kvBuffer.data() + kvBase, input.data() + hBase,
-                copyCount * sizeof(float));
-    // If kvElems > hiddenSize, remaining stays zero
+    for (int h = 0; h < numHeads; ++h) {
+      for (int d = 0; d < headDim; ++d) {
+        size_t hidIdx = static_cast<size_t>(h) * headDim + d;
+        size_t baseHidden = t * hiddenSize;
+        size_t baseHead =
+            (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
+            static_cast<size_t>(headDim);
+        Q[baseHead + d] = qHidden[baseHidden + hidIdx];
+        K[baseHead + d] = kHidden[baseHidden + hidIdx];
+        V[baseHead + d] = vHidden[baseHidden + hidIdx];
+      }
+    }
   }
 
-  // Write buffer to key and value
-  kvAdapter.copy(key.data(), kvBuffer.data(), key.bytesSize());
-  kvAdapter.copy(value.data(), kvBuffer.data(), value.bytesSize());
-
-  // Optionally read past cache (no-op for now)
-  try {
-    (void)cache->get(
-        kvCtx, /*seq*/ 0, /*startPos*/ 0,
-        /*endPos*/ static_cast<int32_t>(seqLen > 0 ? (seqLen - 1) : 0));
-  } catch (...) {
-    // Ignore cache miss or errors in placeholder integration
+  // 3) Apply RoPE to Q and K on first ropeDim dims per head
+  const int ropeDim = static_cast<int>(
+      std::min(static_cast<size_t>(headDim), options_.ropeDim));
+  const int ropePairs = ropeDim / 2;
+  for (size_t t = 0; t < seqLen; ++t) {
+    // position with scaling
+    float pos = static_cast<float>(t) /
+                (options_.ropeScale == 0.0f ? 1.0f : options_.ropeScale);
+    for (int h = 0; h < numHeads; ++h) {
+      size_t base =
+          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
+          static_cast<size_t>(headDim);
+      for (int p = 0; p < ropePairs; ++p) {
+        float freq = (p < static_cast<int>(ropeFreqs_.size()))
+                         ? ropeFreqs_[static_cast<size_t>(p)]
+                         : std::pow(options_.ropeBase,
+                                    -2.0f * static_cast<float>(p) /
+                                        static_cast<float>(ropeDim * 2));
+        float angle = pos * freq;
+        float c = std::cos(angle);
+        float s = std::sin(angle);
+        int i0 = p * 2;
+        int i1 = p * 2 + 1;
+        // Q rotate
+        float q0 = Q[base + i0];
+        float q1 = Q[base + i1];
+        Q[base + i0] = q0 * c - q1 * s;
+        Q[base + i1] = q1 * c + q0 * s;
+        // K rotate
+        float k0 = K[base + i0];
+        float k1 = K[base + i1];
+        K[base + i0] = k0 * c - k1 * s;
+        K[base + i1] = k1 * c + k0 * s;
+      }
+    }
   }
 
-  // Store current K/V
-  cache->put(kvCtx, key, value);
+  // 4) Scaled dot-product attention (with GQA mapping Q heads -> KV heads)
+  std::vector<float> context(qkvElems, 0.0f);
+  const float scale = 1.0f / std::sqrt(static_cast<float>(headDim));
+  const int groupSize = std::max(1, numHeads / std::max(1, numKVHeads));
+  std::vector<float> logits(seqLen);
+  std::vector<float> probs(seqLen);
 
-  return input;
+  for (size_t t = 0; t < seqLen; ++t) {
+    for (int h = 0; h < numHeads; ++h) {
+      int kvh = std::min(numKVHeads - 1, h / groupSize);
+      // compute logits over all s <= t (causal)
+      float maxLog = -1e30f;
+      for (size_t s = 0; s < seqLen; ++s) {
+        float dot = 0.0f;
+        size_t qBase =
+            (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
+            static_cast<size_t>(headDim);
+        size_t kBase =
+            (s * static_cast<size_t>(numHeads) + static_cast<size_t>(kvh)) *
+            static_cast<size_t>(headDim);
+        for (int d = 0; d < headDim; ++d) {
+          dot += Q[qBase + d] * K[kBase + d];
+        }
+        float l = dot * scale;
+        // causal mask: disallow attending to future positions
+        if (s > t)
+          l = -1e9f;
+        logits[s] = l;
+        if (l > maxLog)
+          maxLog = l;
+      }
+      // softmax
+      float sumExp = 0.0f;
+      for (size_t s = 0; s < seqLen; ++s) {
+        float e = std::exp(logits[s] - maxLog);
+        probs[s] = e;
+        sumExp += e;
+      }
+      float invSum = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+      for (size_t s = 0; s < seqLen; ++s)
+        probs[s] *= invSum;
+
+      // context = sum_s probs[s] * V[s, kvh]
+      size_t cBase =
+          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
+          static_cast<size_t>(headDim);
+      for (int d = 0; d < headDim; ++d) {
+        double acc = 0.0;
+        for (size_t s = 0; s < seqLen; ++s) {
+          size_t vBase =
+              (s * static_cast<size_t>(numHeads) + static_cast<size_t>(kvh)) *
+              static_cast<size_t>(headDim);
+          acc +=
+              static_cast<double>(probs[s]) * static_cast<double>(V[vBase + d]);
+        }
+        context[cBase + d] = static_cast<float>(acc);
+      }
+    }
+  }
+
+  // 5) Merge heads back to [seq, hidden]
+  std::vector<float> attnOut(seqLen * hiddenSize);
+  for (size_t t = 0; t < seqLen; ++t) {
+    for (int h = 0; h < numHeads; ++h) {
+      size_t cBase =
+          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
+          static_cast<size_t>(headDim);
+      size_t oBase = t * hiddenSize +
+                     static_cast<size_t>(h) * static_cast<size_t>(headDim);
+      std::copy_n(context.begin() + cBase, headDim, attnOut.begin() + oBase);
+    }
+  }
+
+  // 6) Output projection: [seq, hidden] x [hidden, hidden]
+  std::vector<float> out(seqLen * hiddenSize, 0.0f);
+  for (size_t t = 0; t < seqLen; ++t) {
+    const float *a = &attnOut[t * hiddenSize];
+    float *o = &out[t * hiddenSize];
+    for (int outc = 0; outc < static_cast<int>(hiddenSize); ++outc) {
+      double acc = 0.0;
+      for (int in = 0; in < static_cast<int>(hiddenSize); ++in) {
+        acc += static_cast<double>(a[in]) *
+               static_cast<double>(
+                   outputWeights_[static_cast<size_t>(in) * hiddenSize + outc]);
+      }
+      o[outc] = static_cast<float>(acc);
+    }
+  }
+
+  // (Optional) KV cache integration could be placed here to store K/V for
+  // generation; keep noop for now.
+  (void)cache;
+  return out;
 }
 
 bool SelfAttention::loadWeights(const std::string & /*weightsPath*/) {
@@ -171,8 +307,46 @@ FeedForward::FeedForward(const TextModelOptions &options) : options_(options) {
 }
 
 std::vector<float> FeedForward::forward(const std::vector<float> &input) {
-  // Placeholder forward: pass-through
-  return input;
+  // FFN with SwiGLU: y = (SiLU(xW_g) ⊙ (xW_u)) W_d
+  const size_t hidden = options_.hiddenSize;
+  if (hidden == 0 || input.empty() || (input.size() % hidden) != 0)
+    return input;
+  const size_t seqLen = input.size() / hidden;
+
+  auto matmul_seq_hidden =
+      [&](const std::vector<float> &A,
+          const std::vector<float> &W) -> std::vector<float> {
+    std::vector<float> out(seqLen * hidden, 0.0f);
+    for (size_t t = 0; t < seqLen; ++t) {
+      const float *a = &A[t * hidden];
+      float *o = &out[t * hidden];
+      for (size_t outc = 0; outc < hidden; ++outc) {
+        double acc = 0.0;
+        for (size_t in = 0; in < hidden; ++in) {
+          acc += static_cast<double>(a[in]) *
+                 static_cast<double>(W[in * hidden + outc]);
+        }
+        o[outc] = static_cast<float>(acc);
+      }
+    }
+    return out;
+  };
+
+  auto sigmoid = [](float x) -> float { return 1.0f / (1.0f + std::exp(-x)); };
+  auto silu = [&](float x) -> float { return x * sigmoid(x); };
+
+  std::vector<float> g = matmul_seq_hidden(input, gateWeights_);
+  std::vector<float> u = matmul_seq_hidden(input, upWeights_);
+
+  // element-wise SwiGLU: silu(g) * u
+  std::vector<float> inter(g.size());
+  for (size_t i = 0; i < g.size(); ++i) {
+    inter[i] = silu(g[i]) * u[i];
+  }
+
+  // down projection
+  std::vector<float> out = matmul_seq_hidden(inter, downWeights_);
+  return out;
 }
 
 bool FeedForward::loadWeights(const std::string & /*weightsPath*/) {
@@ -277,6 +451,16 @@ bool TransformerLayer::loadWeights(const std::string &weightsPath,
     postAttentionNormWeights_.resize(hidden, 1.0f);
   }
   return true;
+}
+
+void TransformerLayer::setRoPEFreqs(const std::vector<float> &freqs) {
+  if (attention_)
+    attention_->setRoPEFreqs(freqs);
+}
+
+void TransformerLayer::setApplyRopeInAttention(bool v) {
+  if (attention_)
+    attention_->setApplyRopeInAttention(v);
 }
 
 // ---------------- QwenTextModel ----------------
@@ -443,8 +627,9 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
               << std::endl;
   } else {
     if (embShape.size() != 2) {
-      std::cerr << "[WARN] token_embd.weight expected shape [vocab, hidden], got "
-                << embShape.size() << "-D tensor" << std::endl;
+      std::cerr
+          << "[WARN] token_embd.weight expected shape [vocab, hidden], got "
+          << embShape.size() << "-D tensor" << std::endl;
       consistent = false;
     } else {
       loadedVocab = static_cast<size_t>(embShape[0]);
@@ -471,7 +656,8 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
   bool outOk = get("output.weight", outputWeights_, &outShape);
   ok &= outOk;
   if (!outOk) {
-    std::cerr << "[WARN] output.weight not found or failed to load" << std::endl;
+    std::cerr << "[WARN] output.weight not found or failed to load"
+              << std::endl;
   } else {
     if (outShape.size() != 2) {
       std::cerr << "[WARN] output.weight expected shape [vocab, hidden], got "
@@ -483,7 +669,8 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
       if (outHidden != options_.hiddenSize) {
         std::cerr << "[WARN] output.weight hidden mismatch: expected "
                   << options_.hiddenSize << ", got " << outHidden << std::endl;
-        // Align hidden size to output.weight; downstream buffers will use updated hidden
+        // Align hidden size to output.weight; downstream buffers will use
+        // updated hidden
         options_.hiddenSize = outHidden;
         outputNormWeights_.resize(options_.hiddenSize, 1.0f);
       }
@@ -506,8 +693,9 @@ bool QwenTextModel::loadWeights(const std::string &weightsPath) {
   std::vector<int64_t> normShape;
   bool normOk = get("output_norm.weight", outputNormWeights_, &normShape);
   if (normOk) {
-    bool shapeMatch = (normShape.size() == 1) &&
-                      (static_cast<size_t>(normShape[0]) == options_.hiddenSize);
+    bool shapeMatch =
+        (normShape.size() == 1) &&
+        (static_cast<size_t>(normShape[0]) == options_.hiddenSize);
     if (!shapeMatch) {
       std::cerr << "[WARN] output_norm.weight shape mismatch: expected [hidden="
                 << options_.hiddenSize << "], got "
@@ -558,8 +746,44 @@ QwenTextModel::embedTokens(const std::vector<int32_t> &tokenIds) {
 
 std::vector<float>
 QwenTextModel::applyPositionalEncoding(const std::vector<float> &embeddings,
-                                       size_t /*sequenceLength*/) {
-  return embeddings;
+                                       size_t sequenceLength) {
+  // Apply Rotary Position Embedding (RoPE) to the first ropeDim dimensions of
+  // token embeddings. Uses precomputed ropeFreqs_ provided by the inference
+  // engine.
+  const size_t hidden = options_.hiddenSize;
+  if (hidden == 0 || embeddings.empty() || embeddings.size() % hidden != 0) {
+    return embeddings;
+  }
+  const size_t seqLen = std::min(sequenceLength, embeddings.size() / hidden);
+  std::vector<float> out = embeddings;
+
+  const int ropeDim =
+      static_cast<int>(std::min(static_cast<size_t>(hidden), options_.ropeDim));
+  const int ropePairs = ropeDim / 2;
+  const float scale = (options_.ropeScale == 0.0f ? 1.0f : options_.ropeScale);
+
+  for (size_t t = 0; t < seqLen; ++t) {
+    const float pos = static_cast<float>(t) / scale;
+    const size_t base = t * hidden;
+    for (int p = 0; p < ropePairs; ++p) {
+      const float freq = (p < static_cast<int>(ropeFreqs_.size()))
+                             ? ropeFreqs_[static_cast<size_t>(p)]
+                             : std::pow(options_.ropeBase,
+                                        -2.0f * static_cast<float>(p) /
+                                            static_cast<float>(ropeDim * 2));
+      const float angle = pos * freq;
+      const float c = std::cos(angle);
+      const float s = std::sin(angle);
+      const int i0 = p * 2;
+      const int i1 = p * 2 + 1;
+      // rotate (x0, x1)
+      const float x0 = out[base + i0];
+      const float x1 = out[base + i1];
+      out[base + i0] = x0 * c - x1 * s;
+      out[base + i1] = x1 * c + x0 * s;
+    }
+  }
+  return out;
 }
 
 std::vector<float> QwenTextModel::layerNorm(const std::vector<float> &input,
@@ -696,7 +920,6 @@ QwenTextModel::generate(const std::vector<int32_t> &inputIds,
   return result;
 }
 
-
 // Helper: read a GGUF tensor into float32 vector (supports F32/F16/BF16).
 // Returns true on success.
 static bool
@@ -736,7 +959,8 @@ readGGUFTensorToFloat(duorou::extensions::ollama::GGUFParser &parser,
     break;
   }
   default:
-    // Unsupported quantized type for direct float extraction in this minimal path
+    // Unsupported quantized type for direct float extraction in this minimal
+    // path
     return false;
   }
   if (shapeOut)
@@ -755,7 +979,22 @@ void QwenTextModel::setOptions(const TextModelOptions &options) {
   options_ = options;
 }
 
-// Duplicate initialize overload removed to avoid redefinition
+void QwenTextModel::setRoPEFreqs(const std::vector<float> &freqs) {
+  ropeFreqs_ = freqs;
+  for (auto &layer : layers_) {
+    if (layer) {
+      layer->setRoPEFreqs(freqs);
+    }
+  }
+}
+
+void QwenTextModel::setApplyRopeInAttention(bool v) {
+  for (auto &layer : layers_) {
+    if (layer) {
+      layer->setApplyRopeInAttention(v);
+    }
+  }
+}
 
 ::duorou::ml::Tensor
 QwenTextModel::stepDecode(::duorou::ml::Context &ctx,
@@ -912,16 +1151,8 @@ int32_t QwenTextModel::nextToken(duorou::ml::Context &ctx,
   }
   static thread_local std::mt19937 rng(std::random_device{}());
   std::discrete_distribution<int> dist(kept_probs.begin(), kept_probs.end());
-  int pick = dist(rng);
-  return static_cast<int32_t>(kept[pick]);
-}
-
-std::unique_ptr<BaseModel> createQwenTextModel(const std::string &configPath) {
-  auto model = std::make_unique<QwenTextModel>();
-  if (!model->initialize(configPath)) {
-    return nullptr;
-  }
-  return model;
+  int sampled = dist(rng);
+  return static_cast<int32_t>(kept[sampled]);
 }
 
 } // namespace model

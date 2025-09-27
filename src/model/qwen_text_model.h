@@ -51,6 +51,11 @@ public:
     // New overload: load weights for a specific layer from a parsed GGUF
     bool loadWeights(duorou::extensions::ollama::GGUFParser &parser, size_t layerIndex);
 
+    // Set precomputed RoPE frequencies (size = ropeDim/2)
+    void setRoPEFreqs(const std::vector<float>& freqs) { ropeFreqs_ = freqs; }
+    // Control where RoPE is applied: in attention (default) or at embedding stage
+    void setApplyRopeInAttention(bool v) { applyRopeInAttention_ = v; }
+
 private:
     TextModelOptions options_;
     bool weightsLoaded_ = false;
@@ -63,6 +68,11 @@ private:
 
     // Multi-head attention implementation (Tensor-based)
     std::unique_ptr<duorou::ml::nn::MultiHeadAttention> mha_;
+
+    // Precomputed RoPE frequencies
+    std::vector<float> ropeFreqs_;
+    // Whether to apply RoPE inside attention (true) or assume it has been applied on inputs (false)
+    bool applyRopeInAttention_ = true;
 };
 
 // Feed-forward network layer
@@ -105,6 +115,11 @@ public:
     
     // Load layer weights
     bool loadWeights(const std::string& weightsPath, size_t layerIndex);
+
+    // Propagate precomputed RoPE frequencies to attention
+    void setRoPEFreqs(const std::vector<float>& freqs);
+    // Control where RoPE is applied for this layer (attention vs. embeddings)
+    void setApplyRopeInAttention(bool v);
     
 private:
     TextModelOptions options_;
@@ -181,6 +196,11 @@ public:
         const std::vector<float>& embeddings,
         size_t sequenceLength
     );
+
+    // Set precomputed RoPE frequencies (propagates to layers)
+    void setRoPEFreqs(const std::vector<float>& freqs);
+    // Control where RoPE is applied (attention vs. embeddings) for all layers
+    void setApplyRopeInAttention(bool v);
     
 private:
     TextModelOptions options_;
@@ -191,6 +211,9 @@ private:
     std::vector<float> tokenEmbeddings_;  // Token embedding weights
     std::vector<float> outputWeights_;    // Output projection weights
     std::vector<float> outputNormWeights_; // Final layer norm weights
+
+    // Precomputed RoPE frequencies
+    std::vector<float> ropeFreqs_;
     
     // Internal helpers
     bool loadConfig(const std::string& configPath);
