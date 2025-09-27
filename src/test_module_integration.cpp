@@ -456,7 +456,20 @@ void testQwenTextModelMinimal() {
 }
 
 // 主测试函数
-int main() {
+int main(int argc, char** argv) {
+    // 快速路径：如果提供了命令行参数，则直接用 TextGenerator 生成文本并退出
+    if (argc > 1) {
+        std::string prompt = argv[1];
+        duorou::core::TextGenerator tg; // 使用默认回退实现（最快路径）
+        duorou::core::GenerationParams params;
+        params.max_tokens = 64;
+        params.temperature = 0.7f;
+        params.top_p = 0.9f;
+        auto result = tg.generate(prompt, params);
+        std::cout << result.text << std::endl;
+        return 0;
+    }
+
     std::cout << "=== Duorou Module Integration Test ===" << std::endl;
     std::cout << "Testing ollama extension and DUOROU_FORCE_LLAMA functionality" << std::endl;
     

@@ -76,9 +76,12 @@ Tensor LayerNorm::forward(Context &ctx, const Tensor &input) {
   Tensor normalized = centered.div(ctx, std_dev);
 
   // Apply weight and bias
-  Tensor result = normalized.mul(ctx, weight_);
-  if (bias_.data()) {
-    result = result.add(ctx, bias_);
+  Tensor result = normalized;
+  if (elementwiseAffine_) {
+    result = result.mul(ctx, weight_);
+    if (bias_.data()) {
+      result = result.add(ctx, bias_);
+    }
   }
 
   return result;

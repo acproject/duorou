@@ -38,6 +38,17 @@ public:
     
     // Weight initialization
     void initializeWeights(Context& ctx, const std::string& method = "xavier_uniform");
+
+    // Set weights from host vectors (allocates and attaches backend)
+    bool setWeights(Context& ctx,
+                    const std::vector<float>& qW,
+                    const std::vector<float>& kW,
+                    const std::vector<float>& vW,
+                    const std::vector<float>& oW,
+                    const std::vector<float>* qB = nullptr,
+                    const std::vector<float>* kB = nullptr,
+                    const std::vector<float>* vB = nullptr,
+                    const std::vector<float>* oB = nullptr);
     
     // Getters
     int64_t embedDim() const { return embedDim_; }
@@ -56,16 +67,21 @@ private:
     float dropout_;
     
     // Weight matrices
-    Tensor queryWeight_;  // [embedDim, embedDim]
-    Tensor keyWeight_;    // [embedDim, kvHeads * headDim]
-    Tensor valueWeight_;  // [embedDim, kvHeads * headDim]
-    Tensor outputWeight_; // [embedDim, embedDim]
+    // Shapes:
+    //  - queryWeight_:  [embedDim, numHeads * headDim]
+    //  - keyWeight_:    [embedDim, kvHeads * headDim]
+    //  - valueWeight_:  [embedDim, kvHeads * headDim]
+    //  - outputWeight_: [numHeads * headDim, embedDim]
+    Tensor queryWeight_;
+    Tensor keyWeight_;
+    Tensor valueWeight_;
+    Tensor outputWeight_;
     
-    // Bias vectors
-    Tensor queryBias_;
-    Tensor keyBias_;
-    Tensor valueBias_;
-    Tensor outputBias_;
+    // Bias vectors (if enabled)
+    Tensor queryBias_;   // [numHeads * headDim]
+    Tensor keyBias_;     // [kvHeads * headDim]
+    Tensor valueBias_;   // [kvHeads * headDim]
+    Tensor outputBias_;  // [embedDim]
     
     // Helper methods
     Tensor scaledDotProductAttention(Context& ctx, const Tensor& q, 

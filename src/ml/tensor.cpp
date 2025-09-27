@@ -267,43 +267,308 @@ Tensor Tensor::randn(const std::vector<int64_t>& shape, DataType dtype) {
 }
 
 // Tensor operations implementation
-Tensor Tensor::add(Context& /*ctx*/, const Tensor& /*other*/) const {
-    // Simplified implementation, should call backend in practice
-    Tensor result(shape_, dtype_);
+Tensor Tensor::add(Context& /*ctx*/, const Tensor& other) const {
+    if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("add: only FLOAT32 supported in current implementation");
+    }
+    // Compute broadcasted result shape (align from the right)
+    const std::vector<int64_t>& aShape = shape_;
+    const std::vector<int64_t>& bShape = other.shape_;
+    int ndA = static_cast<int>(aShape.size());
+    int ndB = static_cast<int>(bShape.size());
+    int ndR = std::max(ndA, ndB);
+    std::vector<int64_t> rShape(ndR, 1);
+    for (int i = 0; i < ndR; ++i) {
+        int aIdx = ndA - 1 - i;
+        int bIdx = ndB - 1 - i;
+        int64_t aDim = (aIdx >= 0 ? aShape[aIdx] : 1);
+        int64_t bDim = (bIdx >= 0 ? bShape[bIdx] : 1);
+        if (aDim != bDim && aDim != 1 && bDim != 1) {
+            throw std::invalid_argument("add: shapes not broadcastable");
+        }
+        rShape[ndR - 1 - i] = std::max(aDim, bDim);
+    }
+
+    Tensor result(rShape, dtype_);
     result.allocate();
+
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    // Align shapes by prepending 1s
+    std::vector<int64_t> aAligned = aShape, bAligned = bShape;
+    if (static_cast<int>(aAligned.size()) < ndR) aAligned.insert(aAligned.begin(), ndR - aAligned.size(), 1);
+    if (static_cast<int>(bAligned.size()) < ndR) bAligned.insert(bAligned.begin(), ndR - bAligned.size(), 1);
+
+    auto aStrides = computeStrides(aAligned);
+    auto bStrides = computeStrides(bAligned);
+    auto rStrides = computeStrides(rShape);
+
+    const float* aData = static_cast<const float*>(data_);
+    const float* bData = static_cast<const float*>(other.data_);
+    float* out = static_cast<float*>(result.data_);
+
+    int64_t total = result.numel();
+    for (int64_t linear = 0; linear < total; ++linear) {
+        // Decompose linear index into multi-index for result
+        int64_t tmp = linear;
+        int64_t aOffset = 0;
+        int64_t bOffset = 0;
+        for (int d = 0; d < ndR; ++d) {
+            int64_t idx = tmp / rStrides[d];
+            tmp = tmp % rStrides[d];
+            int64_t aIdx = (aAligned[d] == 1) ? 0 : idx;
+            int64_t bIdx = (bAligned[d] == 1) ? 0 : idx;
+            aOffset += aIdx * aStrides[d];
+            bOffset += bIdx * bStrides[d];
+        }
+        out[linear] = aData[aOffset] + bData[bOffset];
+    }
+
     return result;
 }
 
-Tensor Tensor::sub(Context& /*ctx*/, const Tensor& /*other*/) const {
-    Tensor result(shape_, dtype_);
+Tensor Tensor::sub(Context& /*ctx*/, const Tensor& other) const {
+    if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("sub: only FLOAT32 supported in current implementation");
+    }
+    // Reuse add's broadcasting logic
+    const std::vector<int64_t>& aShape = shape_;
+    const std::vector<int64_t>& bShape = other.shape_;
+    int ndA = static_cast<int>(aShape.size());
+    int ndB = static_cast<int>(bShape.size());
+    int ndR = std::max(ndA, ndB);
+    std::vector<int64_t> rShape(ndR, 1);
+    for (int i = 0; i < ndR; ++i) {
+        int aIdx = ndA - 1 - i;
+        int bIdx = ndB - 1 - i;
+        int64_t aDim = (aIdx >= 0 ? aShape[aIdx] : 1);
+        int64_t bDim = (bIdx >= 0 ? bShape[bIdx] : 1);
+        if (aDim != bDim && aDim != 1 && bDim != 1) {
+            throw std::invalid_argument("sub: shapes not broadcastable");
+        }
+        rShape[ndR - 1 - i] = std::max(aDim, bDim);
+    }
+
+    Tensor result(rShape, dtype_);
     result.allocate();
+
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    std::vector<int64_t> aAligned = aShape, bAligned = bShape;
+    if (static_cast<int>(aAligned.size()) < ndR) aAligned.insert(aAligned.begin(), ndR - aAligned.size(), 1);
+    if (static_cast<int>(bAligned.size()) < ndR) bAligned.insert(bAligned.begin(), ndR - bAligned.size(), 1);
+
+    auto aStrides = computeStrides(aAligned);
+    auto bStrides = computeStrides(bAligned);
+    auto rStrides = computeStrides(rShape);
+
+    const float* aData = static_cast<const float*>(data_);
+    const float* bData = static_cast<const float*>(other.data_);
+    float* out = static_cast<float*>(result.data_);
+
+    int64_t total = result.numel();
+    for (int64_t linear = 0; linear < total; ++linear) {
+        int64_t tmp = linear;
+        int64_t aOffset = 0;
+        int64_t bOffset = 0;
+        for (int d = 0; d < ndR; ++d) {
+            int64_t idx = tmp / rStrides[d];
+            tmp = tmp % rStrides[d];
+            int64_t aIdx = (aAligned[d] == 1) ? 0 : idx;
+            int64_t bIdx = (bAligned[d] == 1) ? 0 : idx;
+            aOffset += aIdx * aStrides[d];
+            bOffset += bIdx * bStrides[d];
+        }
+        out[linear] = aData[aOffset] - bData[bOffset];
+    }
+
     return result;
 }
 
-Tensor Tensor::mul(Context& /*ctx*/, const Tensor& /*other*/) const {
-    Tensor result(shape_, dtype_);
+Tensor Tensor::mul(Context& /*ctx*/, const Tensor& other) const {
+    if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("mul: only FLOAT32 supported in current implementation");
+    }
+    // Broadcasting logic similar to add
+    const std::vector<int64_t>& aShape = shape_;
+    const std::vector<int64_t>& bShape = other.shape_;
+    int ndA = static_cast<int>(aShape.size());
+    int ndB = static_cast<int>(bShape.size());
+    int ndR = std::max(ndA, ndB);
+    std::vector<int64_t> rShape(ndR, 1);
+    for (int i = 0; i < ndR; ++i) {
+        int aIdx = ndA - 1 - i;
+        int bIdx = ndB - 1 - i;
+        int64_t aDim = (aIdx >= 0 ? aShape[aIdx] : 1);
+        int64_t bDim = (bIdx >= 0 ? bShape[bIdx] : 1);
+        if (aDim != bDim && aDim != 1 && bDim != 1) {
+            throw std::invalid_argument("mul: shapes not broadcastable");
+        }
+        rShape[ndR - 1 - i] = std::max(aDim, bDim);
+    }
+
+    Tensor result(rShape, dtype_);
     result.allocate();
+
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    std::vector<int64_t> aAligned = aShape, bAligned = bShape;
+    if (static_cast<int>(aAligned.size()) < ndR) aAligned.insert(aAligned.begin(), ndR - aAligned.size(), 1);
+    if (static_cast<int>(bAligned.size()) < ndR) bAligned.insert(bAligned.begin(), ndR - bAligned.size(), 1);
+
+    auto aStrides = computeStrides(aAligned);
+    auto bStrides = computeStrides(bAligned);
+    auto rStrides = computeStrides(rShape);
+
+    const float* aData = static_cast<const float*>(data_);
+    const float* bData = static_cast<const float*>(other.data_);
+    float* out = static_cast<float*>(result.data_);
+
+    int64_t total = result.numel();
+    for (int64_t linear = 0; linear < total; ++linear) {
+        int64_t tmp = linear;
+        int64_t aOffset = 0;
+        int64_t bOffset = 0;
+        for (int d = 0; d < ndR; ++d) {
+            int64_t idx = tmp / rStrides[d];
+            tmp = tmp % rStrides[d];
+            int64_t aIdx = (aAligned[d] == 1) ? 0 : idx;
+            int64_t bIdx = (bAligned[d] == 1) ? 0 : idx;
+            aOffset += aIdx * aStrides[d];
+            bOffset += bIdx * bStrides[d];
+        }
+        out[linear] = aData[aOffset] * bData[bOffset];
+    }
+
     return result;
 }
 
-Tensor Tensor::div(Context& /*ctx*/, const Tensor& /*other*/) const {
-    Tensor result(shape_, dtype_);
+Tensor Tensor::div(Context& /*ctx*/, const Tensor& other) const {
+    if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("div: only FLOAT32 supported in current implementation");
+    }
+    // Broadcasting logic similar to add
+    const std::vector<int64_t>& aShape = shape_;
+    const std::vector<int64_t>& bShape = other.shape_;
+    int ndA = static_cast<int>(aShape.size());
+    int ndB = static_cast<int>(bShape.size());
+    int ndR = std::max(ndA, ndB);
+    std::vector<int64_t> rShape(ndR, 1);
+    for (int i = 0; i < ndR; ++i) {
+        int aIdx = ndA - 1 - i;
+        int bIdx = ndB - 1 - i;
+        int64_t aDim = (aIdx >= 0 ? aShape[aIdx] : 1);
+        int64_t bDim = (bIdx >= 0 ? bShape[bIdx] : 1);
+        if (aDim != bDim && aDim != 1 && bDim != 1) {
+            throw std::invalid_argument("div: shapes not broadcastable");
+        }
+        rShape[ndR - 1 - i] = std::max(aDim, bDim);
+    }
+
+    Tensor result(rShape, dtype_);
     result.allocate();
+
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    std::vector<int64_t> aAligned = aShape, bAligned = bShape;
+    if (static_cast<int>(aAligned.size()) < ndR) aAligned.insert(aAligned.begin(), ndR - aAligned.size(), 1);
+    if (static_cast<int>(bAligned.size()) < ndR) bAligned.insert(bAligned.begin(), ndR - bAligned.size(), 1);
+
+    auto aStrides = computeStrides(aAligned);
+    auto bStrides = computeStrides(bAligned);
+    auto rStrides = computeStrides(rShape);
+
+    const float* aData = static_cast<const float*>(data_);
+    const float* bData = static_cast<const float*>(other.data_);
+    float* out = static_cast<float*>(result.data_);
+
+    int64_t total = result.numel();
+    for (int64_t linear = 0; linear < total; ++linear) {
+        int64_t tmp = linear;
+        int64_t aOffset = 0;
+        int64_t bOffset = 0;
+        for (int d = 0; d < ndR; ++d) {
+            int64_t idx = tmp / rStrides[d];
+            tmp = tmp % rStrides[d];
+            int64_t aIdx = (aAligned[d] == 1) ? 0 : idx;
+            int64_t bIdx = (bAligned[d] == 1) ? 0 : idx;
+            aOffset += aIdx * aStrides[d];
+            bOffset += bIdx * bStrides[d];
+        }
+        out[linear] = aData[aOffset] / bData[bOffset];
+    }
+
     return result;
 }
 
 Tensor Tensor::matmul(Context& /*ctx*/, const Tensor& other) const {
-    // Simplified matrix multiplication implementation
+    if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("matmul: only FLOAT32 supported in current implementation");
+    }
     if (shape_.size() != 2 || other.shape_.size() != 2) {
         throw std::invalid_argument("matmul requires 2D tensors");
     }
     if (shape_[1] != other.shape_[0]) {
         throw std::invalid_argument("matmul dimension mismatch");
     }
-    
-    std::vector<int64_t> resultShape = {shape_[0], other.shape_[1]};
-    Tensor result(resultShape, dtype_);
+
+    const int64_t M = shape_[0];
+    const int64_t K = shape_[1];
+    const int64_t N = other.shape_[1];
+
+    // Ensure inputs are allocated
+    if (!data_ || !other.data_) {
+        throw std::runtime_error("matmul: input tensors must have allocated data");
+    }
+
+    Tensor result({M, N}, dtype_);
+    // Keep allocation on the same backend as lhs when available
+    result.setBackend(backend_);
     result.allocate();
+
+    const float* A = static_cast<const float*>(data_);
+    const float* B = static_cast<const float*>(other.data_);
+    float* C = static_cast<float*>(result.data_);
+
+    // Naive row-major GEMM: C[M,N] = A[M,K] x B[K,N]
+    // Initialize output to 0
+    std::fill(C, C + (M * N), 0.0f);
+    for (int64_t i = 0; i < M; ++i) {
+        const float* Ai = A + i * K;
+        float* Ci = C + i * N;
+        for (int64_t k = 0; k < K; ++k) {
+            const float a = Ai[k];
+            const float* Bk = B + k * N;
+            for (int64_t j = 0; j < N; ++j) {
+                Ci[j] += a * Bk[j];
+            }
+        }
+    }
+
     return result;
 }
 
@@ -346,51 +611,223 @@ Tensor Tensor::view(const std::vector<int64_t>& newShape) const {
 }
 
 Tensor Tensor::transpose(int dim0, int dim1) const {
-    std::vector<int64_t> newShape = shape_;
-    if (dim0 < 0) dim0 += static_cast<int>(shape_.size());
-    if (dim1 < 0) dim1 += static_cast<int>(shape_.size());
-    
-    if (dim0 >= 0 && dim0 < static_cast<int>(shape_.size()) && 
-        dim1 >= 0 && dim1 < static_cast<int>(shape_.size())) {
-        std::swap(newShape[dim0], newShape[dim1]);
+    // Normalize dimensions
+    int nd = static_cast<int>(shape_.size());
+    if (nd == 0) {
+        return Tensor({}, dtype_);
     }
-    
+    if (dim0 < 0) dim0 += nd;
+    if (dim1 < 0) dim1 += nd;
+    if (dim0 < 0 || dim0 >= nd || dim1 < 0 || dim1 >= nd) {
+        throw std::out_of_range("transpose: dimension out of range");
+    }
+    if (!data_) {
+        throw std::runtime_error("transpose: input tensor has no data");
+    }
+
+    // New shape after swapping dim0 and dim1
+    std::vector<int64_t> newShape = shape_;
+    std::swap(newShape[dim0], newShape[dim1]);
+
     Tensor result(newShape, dtype_);
+    result.setBackend(backend_);
     result.allocate();
+
+    // Compute strides for original and result (row-major)
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    const std::vector<int64_t> srcStrides = computeStrides(shape_);
+    const std::vector<int64_t> dstStrides = computeStrides(newShape);
+
+    // Copy data with index mapping
+    const int64_t total = result.numel();
+    const float* src = static_cast<const float*>(data_);
+    float* dst = static_cast<float*>(result.data_);
+
+    for (int64_t linear = 0; linear < total; ++linear) {
+        // Decode destination indices
+        int64_t tmp = linear;
+        std::vector<int64_t> rIdx(nd, 0);
+        for (int d = 0; d < nd; ++d) {
+            rIdx[d] = tmp / dstStrides[d];
+            tmp %= dstStrides[d];
+        }
+        // Map to source indices (swap dim0 and dim1 back)
+        std::vector<int64_t> sIdx = rIdx;
+        std::swap(sIdx[dim0], sIdx[dim1]);
+        // Compute source offset
+        int64_t sOff = 0;
+        for (int d = 0; d < nd; ++d) {
+            sOff += sIdx[d] * srcStrides[d];
+        }
+        dst[linear] = src[sOff];
+    }
+
     return result;
 }
 
 Tensor Tensor::permute(const std::vector<int>& dims) const {
-    std::vector<int64_t> newShape;
-    for (int dim : dims) {
-        if (dim >= 0 && dim < static_cast<int>(shape_.size())) {
-            newShape.push_back(shape_[dim]);
-        }
+    int nd = static_cast<int>(shape_.size());
+    if (dims.empty()) {
+        throw std::invalid_argument("permute: dims must not be empty");
     }
-    
+    if (static_cast<int>(dims.size()) != nd) {
+        throw std::invalid_argument("permute: dims size must equal tensor ndim");
+    }
+    // Validate dims are a permutation of [0..nd-1]
+    std::vector<int> seen(nd, 0);
+    for (int d : dims) {
+        int dd = d < 0 ? d + nd : d;
+        if (dd < 0 || dd >= nd || seen[dd]) {
+            throw std::invalid_argument("permute: invalid dims permutation");
+        }
+        seen[dd] = 1;
+    }
+    if (!data_) {
+        throw std::runtime_error("permute: input tensor has no data");
+    }
+
+    // Compute new shape
+    std::vector<int64_t> newShape(nd);
+    for (int i = 0; i < nd; ++i) {
+        int srcDim = dims[i] < 0 ? dims[i] + nd : dims[i];
+        newShape[i] = shape_[srcDim];
+    }
+
     Tensor result(newShape, dtype_);
+    result.setBackend(backend_);
     result.allocate();
+
+    // Strides
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    const std::vector<int64_t> srcStrides = computeStrides(shape_);
+    const std::vector<int64_t> dstStrides = computeStrides(newShape);
+
+    const int64_t total = result.numel();
+    const float* src = static_cast<const float*>(data_);
+    float* dst = static_cast<float*>(result.data_);
+
+    for (int64_t linear = 0; linear < total; ++linear) {
+        // Decode destination indices
+        int64_t tmp = linear;
+        std::vector<int64_t> rIdx(nd, 0);
+        for (int d = 0; d < nd; ++d) {
+            rIdx[d] = tmp / dstStrides[d];
+            tmp %= dstStrides[d];
+        }
+        // Map to source indices: oldDim = dims[i], oldIdx[oldDim] = rIdx[i]
+        std::vector<int64_t> sIdx(nd, 0);
+        for (int i = 0; i < nd; ++i) {
+            int oldDim = dims[i] < 0 ? dims[i] + nd : dims[i];
+            sIdx[oldDim] = rIdx[i];
+        }
+        int64_t sOff = 0;
+        for (int d = 0; d < nd; ++d) {
+            sOff += sIdx[d] * srcStrides[d];
+        }
+        dst[linear] = src[sOff];
+    }
+
     return result;
 }
 
 // Reduction operations implementation
 Tensor Tensor::sum(Context& /*ctx*/, int dim, bool keepdim) const {
-    std::vector<int64_t> newShape = shape_;
-    if (dim >= 0 && dim < static_cast<int>(shape_.size())) {
-        if (keepdim) {
-            newShape[dim] = 1;
-        } else {
-            newShape.erase(newShape.begin() + dim);
-        }
+    if (dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("sum: only FLOAT32 supported in current implementation");
     }
-    
-    Tensor result(newShape, dtype_);
+    int nd = static_cast<int>(shape_.size());
+    if (nd == 0) {
+        Tensor result({1}, dtype_);
+        result.allocate();
+        float* out = static_cast<float*>(result.data_);
+        out[0] = 0.0f;
+        return result;
+    }
+    if (dim < 0) dim += nd;
+    if (dim < 0 || dim >= nd) {
+        throw std::invalid_argument("sum: dim out of range");
+    }
+
+    // Build result shape
+    std::vector<int64_t> rShape = shape_;
+    if (keepdim) {
+        rShape[dim] = 1;
+    } else {
+        rShape.erase(rShape.begin() + dim);
+    }
+    Tensor result(rShape, dtype_);
     result.allocate();
+
+    auto computeStrides = [](const std::vector<int64_t>& shape) {
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        return strides;
+    };
+
+    auto inStrides = computeStrides(shape_);
+    auto rStrides = computeStrides(rShape);
+
+    const float* in = static_cast<const float*>(data_);
+    float* out = static_cast<float*>(result.data_);
+    // Zero initialize output
+    std::fill(out, out + result.numel(), 0.0f);
+
+    // Iterate over all input elements and accumulate into reduced output
+    int64_t inTotal = numel();
+    for (int64_t linear = 0; linear < inTotal; ++linear) {
+        int64_t tmp = linear;
+        int64_t outOffset = 0;
+        for (int d = 0, rd = 0; d < nd; ++d) {
+            int64_t idx = tmp / inStrides[d];
+            tmp = tmp % inStrides[d];
+            if (d == dim) {
+                continue; // reduced dimension
+            }
+            int64_t rIdx = keepdim ? (d < dim ? rd : rd + 1) : rd; // rd maps to result dims
+            // Compute offset contribution for output
+            outOffset += idx * rStrides[rIdx];
+            rd++;
+        }
+        out[outOffset] += in[linear];
+    }
+
     return result;
 }
 
 Tensor Tensor::mean(Context& ctx, int dim, bool keepdim) const {
-    return sum(ctx, dim, keepdim);
+    // mean = sum / size_along_dim
+    Tensor s = sum(ctx, dim, keepdim);
+    int nd = static_cast<int>(shape_.size());
+    if (dim < 0) dim += nd;
+    int64_t count = shape_[dim];
+    if (s.dtype_ != DataType::FLOAT32) {
+        throw std::runtime_error("mean: only FLOAT32 supported in current implementation");
+    }
+    Tensor result(s.shape_, s.dtype_);
+    result.allocate();
+    const float* src = static_cast<const float*>(s.data_);
+    float* dst = static_cast<float*>(result.data_);
+    float inv = 1.0f / static_cast<float>(count);
+    for (int64_t i = 0; i < s.numel(); ++i) {
+        dst[i] = src[i] * inv;
+    }
+    return result;
 }
 
 Tensor Tensor::max(Context& ctx, int dim, bool keepdim) const {

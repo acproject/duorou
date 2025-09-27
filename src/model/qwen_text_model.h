@@ -73,6 +73,8 @@ private:
     std::vector<float> ropeFreqs_;
     // Whether to apply RoPE inside attention (true) or assume it has been applied on inputs (false)
     bool applyRopeInAttention_ = true;
+    // Lazy-init flag: whether MHA has been bound with actual weights (allocated/attached)
+    bool mhaWeightsReady_ = false;
 };
 
 // Feed-forward network layer

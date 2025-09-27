@@ -152,7 +152,7 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
   mha_ = std::make_unique<duorou::ml::nn::MultiHeadAttention>(
       static_cast<int64_t>(options_.hiddenSize),
       static_cast<int64_t>(options_.numHeads),
-      static_cast<int64_t>(options_.numKVHeads),
+      static_cast<int64_t>(options_.numHeads), // temporarily align kvHeads with numHeads
       /*bias=*/true,
       /*dropout=*/0.0f);
 }
@@ -160,198 +160,57 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
 std::vector<float> SelfAttention::forward(
     duorou::ml::Context &ctx, const std::vector<float> &input,
     const std::vector<float> &attentionMask, duorou::kvcache::Cache *cache) {
-  (void)ctx;
   (void)attentionMask;
-  // Real forward: Q/K/V projections -> RoPE on Q/K -> scaled dot-product
-  // attention -> output projection
-  const size_t hiddenSize = options_.hiddenSize;
-  if (hiddenSize == 0 || input.empty() || (input.size() % hiddenSize) != 0) {
+  const size_t hidden = options_.hiddenSize;
+  if (hidden == 0 || input.empty() || input.size() % hidden != 0) {
+    // Fallback: return input unchanged if shape is inconsistent
     return input;
   }
-  const int numHeads = static_cast<int>(options_.numHeads);
-  const int numKVHeads = static_cast<int>(
-      options_.numKVHeads > 0 ? options_.numKVHeads : options_.numHeads);
-  const int headDim =
-      static_cast<int>(hiddenSize / static_cast<size_t>(numHeads));
-  const size_t seqLen = input.size() / hiddenSize;
+  const int64_t seqLen = static_cast<int64_t>(input.size() / hidden);
 
-  // Helper lambda: matmul [seq, hidden] x [hidden, hidden] -> [seq, hidden]
-  auto matmul_seq_hidden =
-      [&](const std::vector<float> &A,
-          const std::vector<float> &W) -> std::vector<float> {
-    std::vector<float> out(seqLen * hiddenSize, 0.0f);
-    for (size_t t = 0; t < seqLen; ++t) {
-      const float *a = &A[t * hiddenSize];
-      float *o = &out[t * hiddenSize];
-      for (int outc = 0; outc < static_cast<int>(hiddenSize); ++outc) {
-        double acc = 0.0;
-        // Assume W is [hidden, hidden] in row-major as (in_dim, out_dim) ->
-        // index in*hidden + out
-        for (int in = 0; in < static_cast<int>(hiddenSize); ++in) {
-          acc += static_cast<double>(a[in]) *
-                 static_cast<double>(
-                     W[static_cast<size_t>(in) * hiddenSize + outc]);
-        }
-        o[outc] = static_cast<float>(acc);
-      }
+  // Build an ml::Tensor view of [S, E]
+  duorou::ml::Tensor q({seqLen, static_cast<int64_t>(hidden)}, duorou::ml::DataType::FLOAT32);
+  if (auto *backend = ctx.getBackend()) {
+    q.setBackend(backend);
+  }
+  q.copyFromHost(input.data(), input.size() * sizeof(float));
+
+  // Lazy attach/allocate MHA weights to avoid matmul with unallocated data
+  if (!mhaWeightsReady_) {
+    // If we have host-side weights loaded, attach them; otherwise, allocate zeros
+    const int64_t E = static_cast<int64_t>(options_.hiddenSize);
+    const int64_t H = static_cast<int64_t>(options_.numHeads);
+    const int64_t D = E / H;
+    // Prepare expected shapes and sizes
+    const size_t qSz = static_cast<size_t>(E * H * D); // queryWeight_ shape in MHA is [E, H*D]
+    const size_t kSz = static_cast<size_t>(E * H * D);
+    const size_t vSz = static_cast<size_t>(E * H * D);
+    const size_t oSz = static_cast<size_t>(H * D * E); // outputWeight_ [H*D, E]
+
+    auto ensure_size = [&](std::vector<float>& w, size_t sz) {
+      if (w.size() != sz) w.assign(sz, 0.0f);
+    };
+    ensure_size(queryWeights_, qSz);
+    ensure_size(keyWeights_, kSz);
+    ensure_size(valueWeights_, vSz);
+    ensure_size(outputWeights_, oSz);
+
+    // Bind to MHA
+    bool ok = mha_->setWeights(ctx, queryWeights_, keyWeights_, valueWeights_, outputWeights_, /*qB*/nullptr, /*kB*/nullptr, /*vB*/nullptr, /*oB*/nullptr);
+    if (!ok) {
+      // Fallback: allocate via initializeWeights to avoid null data
+      mha_->initializeWeights(ctx, "xavier_uniform");
     }
-    return out;
-  };
-
-  // 1) Linear projections
-  std::vector<float> qHidden = matmul_seq_hidden(input, queryWeights_);
-  std::vector<float> kHidden = matmul_seq_hidden(input, keyWeights_);
-  std::vector<float> vHidden = matmul_seq_hidden(input, valueWeights_);
-
-  // 2) Reshape to [seq, heads, headDim]
-  const size_t qkvElems =
-      seqLen * static_cast<size_t>(numHeads) * static_cast<size_t>(headDim);
-  std::vector<float> Q(qkvElems), K(qkvElems), V(qkvElems);
-  for (size_t t = 0; t < seqLen; ++t) {
-    for (int h = 0; h < numHeads; ++h) {
-      for (int d = 0; d < headDim; ++d) {
-        size_t hidIdx = static_cast<size_t>(h) * headDim + d;
-        size_t baseHidden = t * hiddenSize;
-        size_t baseHead =
-            (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
-            static_cast<size_t>(headDim);
-        Q[baseHead + d] = qHidden[baseHidden + hidIdx];
-        K[baseHead + d] = kHidden[baseHidden + hidIdx];
-        V[baseHead + d] = vHidden[baseHidden + hidIdx];
-      }
-    }
+    mhaWeightsReady_ = true;
   }
 
-  // 3) Apply RoPE to Q and K on first ropeDim dims per head
-  const int ropeDim = static_cast<int>(
-      std::min(static_cast<size_t>(headDim), options_.ropeDim));
-  const int ropePairs = ropeDim / 2;
-  for (size_t t = 0; t < seqLen; ++t) {
-    // position with scaling
-    float pos = static_cast<float>(t) /
-                (options_.ropeScale == 0.0f ? 1.0f : options_.ropeScale);
-    for (int h = 0; h < numHeads; ++h) {
-      size_t base =
-          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
-          static_cast<size_t>(headDim);
-      for (int p = 0; p < ropePairs; ++p) {
-        float freq = (p < static_cast<int>(ropeFreqs_.size()))
-                         ? ropeFreqs_[static_cast<size_t>(p)]
-                         : std::pow(options_.ropeBase,
-                                    -2.0f * static_cast<float>(p) /
-                                        static_cast<float>(ropeDim * 2));
-        float angle = pos * freq;
-        float c = std::cos(angle);
-        float s = std::sin(angle);
-        int i0 = p * 2;
-        int i1 = p * 2 + 1;
-        // Q rotate
-        float q0 = Q[base + i0];
-        float q1 = Q[base + i1];
-        Q[base + i0] = q0 * c - q1 * s;
-        Q[base + i1] = q1 * c + q0 * s;
-        // K rotate
-        float k0 = K[base + i0];
-        float k1 = K[base + i1];
-        K[base + i0] = k0 * c - k1 * s;
-        K[base + i1] = k1 * c + k0 * s;
-      }
-    }
-  }
+  // Self-attention uses query as key/value when not provided
+  duorou::ml::Tensor out = mha_->forward(ctx, q, {}, {}, cache);
 
-  // 4) Scaled dot-product attention (with GQA mapping Q heads -> KV heads)
-  std::vector<float> context(qkvElems, 0.0f);
-  const float scale = 1.0f / std::sqrt(static_cast<float>(headDim));
-  const int groupSize = std::max(1, numHeads / std::max(1, numKVHeads));
-  std::vector<float> logits(seqLen);
-  std::vector<float> probs(seqLen);
-
-  for (size_t t = 0; t < seqLen; ++t) {
-    for (int h = 0; h < numHeads; ++h) {
-      int kvh = std::min(numKVHeads - 1, h / groupSize);
-      // compute logits over all s <= t (causal)
-      float maxLog = -1e30f;
-      for (size_t s = 0; s < seqLen; ++s) {
-        float dot = 0.0f;
-        size_t qBase =
-            (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
-            static_cast<size_t>(headDim);
-        size_t kBase =
-            (s * static_cast<size_t>(numHeads) + static_cast<size_t>(kvh)) *
-            static_cast<size_t>(headDim);
-        for (int d = 0; d < headDim; ++d) {
-          dot += Q[qBase + d] * K[kBase + d];
-        }
-        float l = dot * scale;
-        // causal mask: disallow attending to future positions
-        if (s > t)
-          l = -1e9f;
-        logits[s] = l;
-        if (l > maxLog)
-          maxLog = l;
-      }
-      // softmax
-      float sumExp = 0.0f;
-      for (size_t s = 0; s < seqLen; ++s) {
-        float e = std::exp(logits[s] - maxLog);
-        probs[s] = e;
-        sumExp += e;
-      }
-      float invSum = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
-      for (size_t s = 0; s < seqLen; ++s)
-        probs[s] *= invSum;
-
-      // context = sum_s probs[s] * V[s, kvh]
-      size_t cBase =
-          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
-          static_cast<size_t>(headDim);
-      for (int d = 0; d < headDim; ++d) {
-        double acc = 0.0;
-        for (size_t s = 0; s < seqLen; ++s) {
-          size_t vBase =
-              (s * static_cast<size_t>(numHeads) + static_cast<size_t>(kvh)) *
-              static_cast<size_t>(headDim);
-          acc +=
-              static_cast<double>(probs[s]) * static_cast<double>(V[vBase + d]);
-        }
-        context[cBase + d] = static_cast<float>(acc);
-      }
-    }
-  }
-
-  // 5) Merge heads back to [seq, hidden]
-  std::vector<float> attnOut(seqLen * hiddenSize);
-  for (size_t t = 0; t < seqLen; ++t) {
-    for (int h = 0; h < numHeads; ++h) {
-      size_t cBase =
-          (t * static_cast<size_t>(numHeads) + static_cast<size_t>(h)) *
-          static_cast<size_t>(headDim);
-      size_t oBase = t * hiddenSize +
-                     static_cast<size_t>(h) * static_cast<size_t>(headDim);
-      std::copy_n(context.begin() + cBase, headDim, attnOut.begin() + oBase);
-    }
-  }
-
-  // 6) Output projection: [seq, hidden] x [hidden, hidden]
-  std::vector<float> out(seqLen * hiddenSize, 0.0f);
-  for (size_t t = 0; t < seqLen; ++t) {
-    const float *a = &attnOut[t * hiddenSize];
-    float *o = &out[t * hiddenSize];
-    for (int outc = 0; outc < static_cast<int>(hiddenSize); ++outc) {
-      double acc = 0.0;
-      for (int in = 0; in < static_cast<int>(hiddenSize); ++in) {
-        acc += static_cast<double>(a[in]) *
-               static_cast<double>(
-                   outputWeights_[static_cast<size_t>(in) * hiddenSize + outc]);
-      }
-      o[outc] = static_cast<float>(acc);
-    }
-  }
-
-  // (Optional) KV cache integration could be placed here to store K/V for
-  // generation; keep noop for now.
-  (void)cache;
-  return out;
+  // Convert back to std::vector<float>
+  std::vector<float> result(input.size(), 0.0f);
+  out.copyToHost(result.data(), result.size() * sizeof(float));
+  return result;
 }
 
 bool SelfAttention::loadWeights(const std::string & /*weightsPath*/) {
@@ -406,11 +265,14 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
     for (size_t t = 0; t < seqLen; ++t) {
       const float *a = &A[t * hidden];
       float *o = &out[t * hidden];
-      for (size_t outc = 0; outc < hidden; ++outc) {
+      for (int outc = 0; outc < static_cast<int>(hidden); ++outc) {
         double acc = 0.0;
-        for (size_t in = 0; in < hidden; ++in) {
+        // Assume W is [hidden, hidden] in row-major as (in_dim, out_dim) ->
+        // index in*hidden + out
+        for (int in = 0; in < static_cast<int>(hidden); ++in) {
           acc += static_cast<double>(a[in]) *
-                 static_cast<double>(W[in * hidden + outc]);
+                 static_cast<double>(
+                     W[static_cast<size_t>(in) * hidden + outc]);
         }
         o[outc] = static_cast<float>(acc);
       }

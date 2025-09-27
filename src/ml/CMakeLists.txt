@@ -93,3 +93,28 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
 # 添加子目录（如果有GPU后端等）
 # add_subdirectory(backend/cuda)
 # add_subdirectory(backend/metal)
+
+# --- GGML-based Qwen2.5VL attention smoke test ---
+add_executable(ggml_qwen2vl_test
+    ggml_qwen2vl_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/text_generator.cpp
+)
+
+# Link against ggml core library
+# The ggml target is provided by third_party/llama.cpp which is already added at top-level
+# Also link Threads if needed by ggml
+find_package(Threads REQUIRED)
+
+# Link duorou_model to use TextGenerator fallback for prompt mode
+target_link_libraries(ggml_qwen2vl_test
+    PRIVATE ggml Threads::Threads duorou_model
+)
+
+target_compile_features(ggml_qwen2vl_test PRIVATE cxx_std_17)
+
+# include src root so we can include core/text_generator.h
+target_include_directories(ggml_qwen2vl_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_SOURCE_DIR}/src
+)

@@ -77,7 +77,8 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
       } else {
         std::cout << "[DEBUG] Ollama inference failed: "
                   << response.error_message << std::endl;
-        result.text = "Sorry, an error occurred during inference: " + response.error_message;
+        result.text = "Sorry, an error occurred during inference: " +
+                      response.error_message;
         result.finished = true;
         result.stop_reason = "error";
         result.prompt_tokens = countTokens(prompt);
@@ -87,7 +88,8 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
     } catch (const std::exception &e) {
       std::cout << "[DEBUG] Exception during Ollama inference: " << e.what()
                 << std::endl;
-      result.text = "Sorry, an exception occurred during inference: " + std::string(e.what());
+      result.text = "Sorry, an exception occurred during inference: " +
+                    std::string(e.what());
       result.finished = true;
       result.stop_reason = "exception";
       result.prompt_tokens = countTokens(prompt);
@@ -100,11 +102,14 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
     // Simple mock response
     if (prompt.find("你好") != std::string::npos ||
         prompt.find("hello") != std::string::npos) {
-      result.text =
-          "Hello! I am Duorou AI assistant, happy to serve you. How can I help you?";
+      result.text = "Hello! I am Duorou AI assistant, happy to serve you. How "
+                    "can I help you?";
     } else {
-      result.text = "Thank you for your question. This is a simulated text generation response. "
-                    "The current version uses a simplified implementation, and will integrate full llama.cpp functionality in the future.";
+      result.text =
+          "Thank you for your question. This is a simulated text generation "
+          "response. "
+          "The current version uses a simplified implementation, and will "
+          "integrate full llama.cpp functionality in the future.";
     }
     result.finished = true;
     result.stop_reason = "completed";
@@ -181,7 +186,8 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
                   << std::endl;
       } else {
         std::string error_msg =
-            "Sorry, an error occurred during streaming inference: " + response.error_message;
+            "Sorry, an error occurred during streaming inference: " +
+            response.error_message;
         callback(0, error_msg, true);
 
         result.text = error_msg;
@@ -193,7 +199,8 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
       }
     } catch (const std::exception &e) {
       std::string error_msg =
-          "Sorry, an exception occurred during streaming inference: " + std::string(e.what());
+          "Sorry, an exception occurred during streaming inference: " +
+          std::string(e.what());
       callback(0, error_msg, true);
 
       result.text = error_msg;
@@ -211,11 +218,14 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
     std::string response_text;
     if (prompt.find("你好") != std::string::npos ||
         prompt.find("hello") != std::string::npos) {
-      response_text =
-          "Hello! I am Duorou AI assistant, happy to serve you. How can I help you?";
+      response_text = "Hello! I am Duorou AI assistant, happy to serve you. "
+                      "How can I help you?";
     } else {
-      response_text = "Thank you for your question. This is a simulated streaming text generation response. "
-                      "The current version uses a simplified implementation, and will integrate full llama.cpp functionality in the future.";
+      response_text =
+          "Thank you for your question. This is a simulated streaming text "
+          "generation response. "
+          "The current version uses a simplified implementation, and will "
+          "integrate full llama.cpp functionality in the future.";
     }
 
     // Send response in chunks
@@ -273,7 +283,8 @@ void TextGenerator::applyTopK(float *logits, int k) {
   if (k <= 0 || !logits)
     return;
 
-  // Simple implementation: set all values except the top k largest to negative infinity
+  // Simple implementation: set all values except the top k largest to negative
+  // infinity
   std::vector<std::pair<float, int>> logit_pairs;
   for (int i = 0; i < vocab_size_; ++i) {
     logit_pairs.emplace_back(logits[i], i);
@@ -359,18 +370,25 @@ void TextGenerator::initializeRNG(int64_t seed) {
   }
 }
 
-std::string TextGenerator::normalizeModelId(const std::string &model_name) const {
+std::string
+TextGenerator::normalizeModelId(const std::string &model_name) const {
   // Trim whitespace to be consistent with OllamaModelManager
   auto trim = [](const std::string &s) {
-    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
-    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base();
-    if (begin >= end) return std::string();
+    auto begin = std::find_if(
+        s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+                 return !std::isspace(ch);
+               }).base();
+    if (begin >= end)
+      return std::string();
     return std::string(begin, end);
   };
   std::string model_id = trim(model_name);
-  // Allow the same character set as OllamaModelManager: alnum, '_', '-', '.', ':', '/'
+  // Allow the same character set as OllamaModelManager: alnum, '_', '-', '.',
+  // ':', '/'
   for (char &c : model_id) {
-    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' &&
+        c != '.' && c != ':' && c != '/') {
       c = '_';
     }
   }

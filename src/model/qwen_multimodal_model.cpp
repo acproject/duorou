@@ -115,28 +115,51 @@ bool QwenMultimodalModel::loadModel(const std::string& modelPath) {
 }
 
 std::vector<int32_t> QwenMultimodalModel::encode(const std::string& text, bool addSpecial) {
+    std::cout << "[DEBUG] QwenMultimodalModel::encode called with text: '" << text 
+              << "' (length: " << text.length() << " bytes, addSpecial: " << addSpecial << ")" << std::endl;
+    
     // If external vocabulary exists, prioritize using tokenizer created based on external vocabulary
     if (external_vocabulary_) {
-        std::cout << "[DEBUG] Using external vocabulary for encoding" << std::endl;
+        std::cout << "[DEBUG] Using external vocabulary for encoding (vocab size: " 
+                  << external_vocabulary_->size() << ")" << std::endl;
+        
         if (tokenizer_) {
-            return tokenizer_->encode(text, addSpecial);
+            std::cout << "[DEBUG] Tokenizer is available, using proper tokenization" << std::endl;
+            std::vector<int32_t> result = tokenizer_->encode(text, addSpecial);
+            std::cout << "[DEBUG] Tokenizer encoded " << result.size() << " tokens: ";
+            for (size_t i = 0; i < std::min(result.size(), size_t(10)); ++i) {
+                std::cout << result[i] << " ";
+            }
+            if (result.size() > 10) std::cout << "...";
+            std::cout << std::endl;
+            return result;
+        } else {
+            std::cout << "[WARN] Tokenizer is NULL! Falling back to text model encoding" << std::endl;
+            
+            // Fallback to text model instead of byte-level encoding
+            // Byte-level encoding is incorrect for UTF-8 text like Chinese characters
+            if (!textModel_) {
+                std::cerr << "[ERROR] Both tokenizer and text model are unavailable" << std::endl;
+                return {};
+            }
+            
+            std::vector<int32_t> result = textModel_->encode(text, addSpecial);
+            std::cout << "[DEBUG] Text model fallback encoded " << result.size() << " tokens" << std::endl;
+            return result;
         }
-        // Fallback: simple byte-level encoding
-        std::vector<int32_t> tokens;
-        tokens.reserve(text.size());
-        for (unsigned char c : text) {
-            tokens.push_back(static_cast<int32_t>(c));
-        }
-        return tokens;
     }
+    
+    std::cout << "[DEBUG] No external vocabulary, falling back to text model" << std::endl;
     
     // Fallback to text model
     if (!textModel_) {
-        std::cerr << "Text model not initialized" << std::endl;
+        std::cerr << "[ERROR] Text model not initialized" << std::endl;
         return {};
     }
     
-    return textModel_->encode(text, addSpecial);
+    std::vector<int32_t> result = textModel_->encode(text, addSpecial);
+    std::cout << "[DEBUG] Text model encoded " << result.size() << " tokens" << std::endl;
+    return result;
 }
 
 std::string QwenMultimodalModel::decode(const std::vector<int32_t>& ids) {

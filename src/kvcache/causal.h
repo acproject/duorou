@@ -63,6 +63,7 @@ public:
     // Sequence management
     void addSequence(int seq, int32_t capacity);
     void removeSequence(int seq);
+    void clearSequences();
     bool hasSequence(int seq) const;
     int32_t getSequenceLength(int seq) const;
     

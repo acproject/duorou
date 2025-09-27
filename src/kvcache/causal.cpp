@@ -22,16 +22,35 @@ void CausalCache::setLayer(int layer) {
 }
 
 std::tuple<Tensor, Tensor> CausalCache::get(Context& ctx, int seq, int32_t startPos, int32_t endPos) {
-    // Create empty key-value tensors as placeholders
-    std::vector<int> shape = {1, 1, 1};
+    // Determine previous length for the sequence
+    int32_t prevLen = 0;
+    auto it = sequences_.find(seq);
+    if (it != sequences_.end()) {
+        prevLen = it->second.length;
+        if (options_.enableSlidingWindow && options_.slidingWindow > 0) {
+            // Apply sliding window constraint
+            if (prevLen > options_.slidingWindow) {
+                prevLen = options_.slidingWindow;
+            }
+        }
+    }
+    // Build 4D shape: [B=1, S=prevLen, H=numHeads, D=headDim]
+    std::vector<int> shape = {1, prevLen, config_.numHeads, config_.headDim};
     Tensor key(shape, DType::FLOAT32, ctx.backend());
     Tensor value(shape, DType::FLOAT32, ctx.backend());
     return std::make_tuple(key, value);
 }
 
 void CausalCache::put(Context& ctx, const Tensor& key, const Tensor& value) {
-    // Implementation for storing key-value pairs
-    // This is a simplified implementation
+    // Update sequence length for seq 0 by default (single-seq execution)
+    int seq = 0;
+    auto& info = sequences_[seq];
+    info.active = true;
+    info.capacity = config_.maxSeqLen;
+    // shape: [B, newSk, H, D]
+    const auto& s = key.shape();
+    int newSk = (s.size() >= 2) ? s[1] : 0;
+    info.length = std::min(info.length + newSk, info.capacity);
 }
 
 void CausalCache::startForward(Context& ctx, const Batch& batch, bool reserve) {
@@ -39,6 +58,12 @@ void CausalCache::startForward(Context& ctx, const Batch& batch, bool reserve) {
     for (int seq : batch.seqs) {
         if (sequences_.find(seq) == sequences_.end()) {
             addSequence(seq, config_.maxSeqLen);
+        }
+        sequences_[seq].active = true;
+        sequences_[seq].capacity = config_.maxSeqLen;
+        // If reserve is set, optionally pre-set length
+        if (reserve && seq < static_cast<int>(batch.seqLens.size())) {
+            sequences_[seq].length = batch.seqLens[seq];
         }
     }
 }
@@ -84,7 +109,6 @@ std::tuple<Tensor, Tensor, Tensor> CausalCache::buildOutputTensors(Context& ctx,
 // Implementation of CausalCache-specific methods
 void CausalCache::setSlidingWindow(int window) {
     options_.slidingWindow = window;
-    options_.enableSlidingWindow = (window > 0);
 }
 
 int CausalCache::getSlidingWindow() const {
@@ -99,53 +123,21 @@ bool CausalCache::isSlidingWindowEnabled() const {
     return options_.enableSlidingWindow;
 }
 
-void CausalCache::addSequence(int seq, int32_t capacity) {
+// Sequence management
+void CausalCache::addSequence(int seqId, int32_t capacity) {
     SequenceInfo info;
-    info.capacity = capacity;
     info.length = 0;
+    info.capacity = capacity;
     info.active = true;
-    sequences_[seq] = info;
+    sequences_[seqId] = info;
 }
 
-void CausalCache::removeSequence(int seq) {
-    sequences_.erase(seq);
+void CausalCache::removeSequence(int seqId) {
+    sequences_.erase(seqId);
 }
 
-bool CausalCache::hasSequence(int seq) const {
-    return sequences_.find(seq) != sequences_.end();
-}
-
-int32_t CausalCache::getSequenceLength(int seq) const {
-    auto it = sequences_.find(seq);
-    return (it != sequences_.end()) ? it->second.length : 0;
-}
-
-// Implementation of private methods
-void CausalCache::validateSequence(int seq) const {
-    if (sequences_.find(seq) == sequences_.end()) {
-        throw CacheError("Sequence " + std::to_string(seq) + " not found");
-    }
-}
-
-void CausalCache::updateSequenceLength(int seq, int32_t newLength) {
-    auto it = sequences_.find(seq);
-    if (it != sequences_.end()) {
-        it->second.length = newLength;
-    }
-}
-
-bool CausalCache::isWithinSlidingWindow(int seq, int32_t pos) const {
-    if (!options_.enableSlidingWindow || options_.slidingWindow <= 0) {
-        return true;
-    }
-    
-    auto it = sequences_.find(seq);
-    if (it == sequences_.end()) {
-        return false;
-    }
-    
-    int32_t windowStart = std::max(0, it->second.length - options_.slidingWindow);
-    return pos >= windowStart;
+void CausalCache::clearSequences() {
+    sequences_.clear();
 }
 
 } // namespace kvcache
