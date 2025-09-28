@@ -2,6 +2,7 @@
 #include "tokenizer_factory.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <cmath>
 #include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
@@ -568,10 +569,19 @@ bool QwenMultimodalModel::loadConfig(const std::string& configPath) {
         return false;
     }
 
-    try {
-        nlohmann::json j;
-        in >> j;
+    // SAFETY: Avoid exceptions from nlohmann::json (vendor may map JSON_THROW to std::abort).
+    // Parse with allow_exceptions = false to prevent SIGABRT on malformed JSON.
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string content = ss.str();
 
+    nlohmann::json j = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false, /*ignore_comments=*/false);
+    if (j.is_discarded()) {
+        std::cerr << "[ERROR] Failed to parse Qwen multimodal config (malformed JSON): " << configPath << std::endl;
+        return false;
+    }
+
+    try {
         // Model paths
         config_.textModelPath = j.value("text_model_path", config_.textModelPath);
         config_.visionModelPath = j.value("vision_model_path", config_.visionModelPath);
@@ -619,16 +629,29 @@ bool QwenMultimodalModel::loadConfig(const std::string& configPath) {
             config_.imageProcessorConfig.doNormalize = jp.value("do_normalize", config_.imageProcessorConfig.doNormalize);
             config_.imageProcessorConfig.doConvertRgb = jp.value("do_convert_rgb", config_.imageProcessorConfig.doConvertRgb);
 
+            // Arrays: mean/std - avoid throwing conversions
             if (jp.contains("mean") && jp["mean"].is_array()) {
                 config_.imageProcessorConfig.mean.clear();
                 for (const auto& v : jp["mean"]) {
-                    config_.imageProcessorConfig.mean.push_back(v.get<float>());
+                    if (v.is_number_float()) {
+                        config_.imageProcessorConfig.mean.push_back(static_cast<float>(v.get<double>()));
+                    } else if (v.is_number_integer()) {
+                        config_.imageProcessorConfig.mean.push_back(static_cast<float>(v.get<int64_t>()));
+                    } else {
+                        std::cerr << "[WARN] image_processor.mean contains non-numeric value; skipping" << std::endl;
+                    }
                 }
             }
             if (jp.contains("std") && jp["std"].is_array()) {
                 config_.imageProcessorConfig.std.clear();
                 for (const auto& v : jp["std"]) {
-                    config_.imageProcessorConfig.std.push_back(v.get<float>());
+                    if (v.is_number_float()) {
+                        config_.imageProcessorConfig.std.push_back(static_cast<float>(v.get<double>()));
+                    } else if (v.is_number_integer()) {
+                        config_.imageProcessorConfig.std.push_back(static_cast<float>(v.get<int64_t>()));
+                    } else {
+                        std::cerr << "[WARN] image_processor.std contains non-numeric value; skipping" << std::endl;
+                    }
                 }
             }
         }

@@ -113,8 +113,8 @@ int main(int argc, char ** argv) {
             const char* gguf_path = argv[1];
             std::string prompt = argv[2];
 
-            // 优先启用 llama.cpp(ggml) 后端进行真实推理
-            setenv("DUOROU_FORCE_LLAMA", "1", 1);
+            // 让推理引擎自行选择后端（不要强制 llama.cpp），避免在不支持的架构上触发断言
+            // （如 Qwen/Qwen2 系列通常走内部 forward 模式）
 
             try {
                 using namespace duorou::extensions::ollama;

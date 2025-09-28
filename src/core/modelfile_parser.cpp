@@ -53,7 +53,10 @@ bool ModelfileParser::parseFromManifest(const ModelManifest &manifest,
 bool ModelfileParser::parseFromJson(const std::string &json_str,
                                     ModelfileConfig &config) {
   try {
-    nlohmann::json json_data = nlohmann::json::parse(json_str);
+    nlohmann::json json_data = nlohmann::json::parse(json_str, nullptr, /*allow_exceptions=*/false);
+    if (json_data.is_discarded()) {
+      return false;
+    }
 
     // Parse base model
     if (json_data.contains("base_model")) {
@@ -203,7 +206,7 @@ bool ModelfileParser::parseParametersLayer(const std::string &layer_digest,
 
   // Parse parameters (may be JSON format or key-value pair format)
   try {
-    nlohmann::json params = nlohmann::json::parse(content);
+    nlohmann::json params = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
     if (params.is_object()) {
       for (auto &[key, value] : params.items()) {
         config.parameters[key] = value.get<std::string>();
@@ -244,7 +247,7 @@ bool ModelfileParser::parseAdapterLayer(const std::string &layer_digest,
   // Parse adapter information (may be JSON format or Modelfile instruction
   // format)
   try {
-    nlohmann::json adapter_json = nlohmann::json::parse(content);
+    nlohmann::json adapter_json = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
     if (adapter_json.is_object()) {
       LoRAAdapter adapter;
       if (adapter_json.contains("name")) {

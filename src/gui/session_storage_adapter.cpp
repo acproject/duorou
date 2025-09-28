@@ -284,7 +284,10 @@ std::vector<std::string> SessionStorageAdapter::getAllSessionIds() {
         json_data = json_data.substr(0, json_data.length() - 2);
       }
 
-      json session_list_json = json::parse(json_data);
+      json session_list_json = json::parse(json_data, nullptr, /*allow_exceptions=*/false);
+      if (session_list_json.is_discarded()) {
+        return {};
+      }
       return session_list_json.get<std::vector<std::string>>();
     }
 
@@ -385,7 +388,7 @@ SessionStorageAdapter::serializeSession(const ChatSession &session) {
 std::unique_ptr<ChatSession>
 SessionStorageAdapter::deserializeSession(const std::string &json_data) {
   try {
-    json session_json = json::parse(json_data);
+    json session_json = json::parse(json_data, nullptr, /*allow_exceptions=*/false);
 
     // Extract basic information from JSON
     std::string id = session_json["id"].get<std::string>();

@@ -258,32 +258,35 @@ public:
         }
         
         try {
-            json manifest_json = json::parse(response.data);
-            core::ModelManifest manifest;
-            
-            manifest.schema_version = manifest_json.value("schemaVersion", 2);
-            manifest.media_type = manifest_json.value("mediaType", "");
-            
-            if (manifest_json.contains("config")) {
-                auto config = manifest_json["config"];
-                manifest.config.media_type = config.value("mediaType", "");
-                manifest.config.digest = config.value("digest", "");
-                manifest.config.size = config.value("size", 0);
+            json manifest_json = json::parse(response.data, nullptr, /*allow_exceptions=*/false);
+            if (manifest_json.is_discarded()) {
+                throw std::runtime_error("Failed to parse manifest JSON: discarded");
             }
-            
-            if (manifest_json.contains("layers")) {
-                for (const auto& layer_json : manifest_json["layers"]) {
-                    core::ModelLayer layer;
-                    layer.media_type = layer_json.value("mediaType", "");
-                    layer.digest = layer_json.value("digest", "");
-                    layer.size = layer_json.value("size", 0);
-                    manifest.layers.push_back(layer);
-                }
-            }
-            
-            return manifest;
-        } catch (const json::exception& e) {
-            throw std::runtime_error("Failed to parse manifest JSON: " + std::string(e.what()));
+             core::ModelManifest manifest;
+             
+             manifest.schema_version = manifest_json.value("schemaVersion", 2);
+             manifest.media_type = manifest_json.value("mediaType", "");
+             
+             if (manifest_json.contains("config")) {
+                 auto config = manifest_json["config"];
+                 manifest.config.media_type = config.value("mediaType", "");
+                 manifest.config.digest = config.value("digest", "");
+                 manifest.config.size = config.value("size", 0);
+             }
+             
+             if (manifest_json.contains("layers")) {
+                 for (const auto& layer_json : manifest_json["layers"]) {
+                     core::ModelLayer layer;
+                     layer.media_type = layer_json.value("mediaType", "");
+                     layer.digest = layer_json.value("digest", "");
+                     layer.size = layer_json.value("size", 0);
+                     manifest.layers.push_back(layer);
+                 }
+             }
+             
+             return manifest;
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("Failed to parse manifest JSON: ") + e.what());
         }
     }
     
