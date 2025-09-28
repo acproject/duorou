@@ -1135,6 +1135,37 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
                                                float temperature, float top_p) {
   try {
     std::cout << "[DEBUG] [InternalForward] Starting Qwen model tensor forward with KV cache" << std::endl;
+    // Diagnostics: model configuration and components
+    std::cout << "[DEBUG] [InternalForward] Model config - vocab_size: " << vocab_size_
+              << ", n_layers: " << n_layers_ << ", n_heads: " << n_heads_
+              << ", n_kv_heads: " << n_kv_heads_ << ", n_embd: " << n_embd_
+              << ", n_ctx: " << n_ctx_ << ", rope_dim: " << rope_dim_
+              << ", rope_freq_base: " << rope_freq_base_ << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Weight map tensors: " << weight_map_.size() << std::endl;
+    // Log key tensor shapes to aid diagnosis
+    {
+      auto logTensorShape = [&](const char* name) {
+        auto it = weight_map_.find(name);
+        if (it != weight_map_.end() && it->second) {
+          const auto &sh = it->second->shape();
+          std::cout << "[DEBUG] [InternalForward] tensor '" << name << "' shape: [";
+          for (size_t i = 0; i < sh.size(); ++i) {
+            std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
+          }
+          std::cout << "], dtype=" << duorou::ml::dataTypeToString(it->second->dtype()) << std::endl;
+        } else {
+          std::cout << "[DEBUG] [InternalForward] tensor '" << name << "' not found" << std::endl;
+        }
+      };
+      logTensorShape("token_embd.weight");
+      logTensorShape("output.weight");
+      logTensorShape("output_norm.weight");
+    }
+    if (kv_cache_) {
+      std::cout << "[DEBUG] [InternalForward] KV cache type: Causal; cache initialized" << std::endl;
+    } else {
+      std::cout << "[DEBUG] [InternalForward] KV cache not present" << std::endl;
+    }
 
     // Check if Qwen model and ML context are available
     if (!qwen_model_ || !ml_context_) {
@@ -1142,22 +1173,9 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
-    // First encode text to token IDs
-    std::vector<int32_t> input_ids;
-
-    // If llama_model_ exists, use llama.cpp tokenization
-    if (llama_model_) {
-      std::vector<llama_token> llama_tokens = tokenize(prompt);
-      input_ids.reserve(llama_tokens.size());
-      for (llama_token token : llama_tokens) {
-        input_ids.push_back(static_cast<int32_t>(token));
-      }
-      std::cout << "[DEBUG] [InternalForward] Using llama.cpp tokenization" << std::endl;
-    } else {
-      // Fall back to Qwen model tokenizer
-      input_ids = qwen_model_->encode(prompt, true);
-      std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization" << std::endl;
-    }
+    // First encode text to token IDs using Qwen tokenizer (llama.cpp tokenizer disabled)
+    std::vector<int32_t> input_ids = qwen_model_->encode(prompt, true);
+    std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization (llama.cpp tokenizer disabled)" << std::endl;
 
     if (input_ids.empty()) {
       std::cout << "[WARN] [InternalForward] Failed to encode prompt, using fallback" << std::endl;
@@ -1396,20 +1414,9 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       gen_ids.assign(sequence_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), sequence_ids.end());
     }
 
-    if (llama_model_) {
-      // llama.cpp detokenization
-      std::vector<llama_token> llama_tokens;
-      llama_tokens.reserve(gen_ids.size());
-      for (int32_t token_id : gen_ids) {
-        llama_tokens.push_back(static_cast<llama_token>(token_id));
-      }
-      result = gen_ids.empty() ? std::string() : detokenize(llama_tokens);
-      std::cout << "[DEBUG] [InternalForward] Using llama.cpp detokenization (excluded prompt tokens)" << std::endl;
-    } else {
-      // Qwen decoder
-      result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
-      std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization (excluded prompt tokens)" << std::endl;
-    }
+    // Unified: always use Qwen decoder for internal forward output
+    result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
+    std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization (excluded prompt tokens)" << std::endl;
 
     if (result.empty()) {
       std::cout << "[WARN] [InternalForward] Failed to decode output tokens, using fallback" << std::endl;
@@ -1482,6 +1489,8 @@ duorou::ml::DataType duorou::extensions::ollama::MLInferenceEngine::convertGGMLD
     return duorou::ml::DataType::FLOAT32;
   case GGMLTensorType::F16:
     return duorou::ml::DataType::FLOAT16;
+  case GGMLTensorType::BF16:
+    return duorou::ml::DataType::BF16;
   default:
     // For quantized types, store as INT8 by default (block-quantized layout)
     return duorou::ml::DataType::INT8;
@@ -1579,6 +1588,15 @@ bool duorou::extensions::ollama::MLInferenceEngine::checkInternalForwardSupport(
 }
 
 bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(const std::string &reason) {
+  // Allow disabling automatic fallback via environment variable
+  const char* disable_env = std::getenv("DUOROU_DISABLE_LLAMA_FALLBACK");
+  bool disable_fallback = disable_env && std::string(disable_env) != "0" && std::string(disable_env).size() > 0;
+  if (disable_fallback) {
+    std::cerr << "[INFO] Auto fallback to llama.cpp disabled by DUOROU_DISABLE_LLAMA_FALLBACK. Reason: " << reason << std::endl;
+    use_llama_backend_ = false;
+    return false;
+  }
+
   // Check if llama.cpp supports the current architecture before attempting fallback
   std::string arch = gguf_parser_ ? gguf_parser_->getArchitecture().name : std::string();
   std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);

@@ -86,6 +86,93 @@ Tensor::Tensor(const std::vector<int>& shape, DType dtype, Backend* backend)
     }
 }
 
+// Added copy/move semantics to avoid double-free and dangling pointers
+Tensor::Tensor(const Tensor& other)
+    : shape_(other.shape_), dtype_(other.dtype_), data_(nullptr), size_(other.size_), backend_(other.backend_) {
+    if (size_ > 0) {
+        if (backend_) {
+            data_ = backend_->allocate(size_);
+        } else {
+            data_ = std::malloc(size_);
+        }
+        if (!data_) {
+            throw OutOfMemoryError("Tensor copy constructor: allocation failed");
+        }
+        if (other.data_) {
+            std::memcpy(data_, other.data_, size_);
+        } else {
+            std::memset(data_, 0, size_);
+        }
+    }
+}
+
+Tensor::Tensor(Tensor&& other) noexcept
+    : shape_(std::move(other.shape_)), dtype_(other.dtype_), data_(other.data_), size_(other.size_), backend_(other.backend_) {
+    other.data_ = nullptr;
+    other.size_ = 0;
+    other.backend_ = nullptr;
+}
+
+Tensor& Tensor::operator=(const Tensor& other) {
+    if (this != &other) {
+        // First deallocate current data
+        if (data_) {
+            if (backend_) {
+                backend_->deallocate(data_);
+            } else {
+                std::free(data_);
+            }
+            data_ = nullptr;
+        }
+        // Copy metadata
+        shape_ = other.shape_;
+        dtype_ = other.dtype_;
+        size_ = other.size_;
+        backend_ = other.backend_;
+        // Allocate and copy data
+        if (size_ > 0) {
+            if (backend_) {
+                data_ = backend_->allocate(size_);
+            } else {
+                data_ = std::malloc(size_);
+            }
+            if (!data_) {
+                throw OutOfMemoryError("Tensor copy assignment: allocation failed");
+            }
+            if (other.data_) {
+                std::memcpy(data_, other.data_, size_);
+            } else {
+                std::memset(data_, 0, size_);
+            }
+        }
+    }
+    return *this;
+}
+
+Tensor& Tensor::operator=(Tensor&& other) noexcept {
+    if (this != &other) {
+        // Deallocate current data
+        if (data_) {
+            if (backend_) {
+                backend_->deallocate(data_);
+            } else {
+                std::free(data_);
+            }
+        }
+        // Move metadata and pointer
+        shape_ = std::move(other.shape_);
+        dtype_ = other.dtype_;
+        data_ = other.data_;
+        size_ = other.size_;
+        backend_ = other.backend_;
+        // Null out other's pointer
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.backend_ = nullptr;
+    }
+    return *this;
+}
+
 Tensor::~Tensor() {
     if (data_) {
         if (backend_) {

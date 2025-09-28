@@ -1038,6 +1038,7 @@ duorou::ml::Tensor QwenMultimodalModel::loadTensorFromGGUF(const std::string& te
         switch (t) {
             case GGMLTensorType::F32: return duorou::ml::DataType::FLOAT32;
             case GGMLTensorType::F16: return duorou::ml::DataType::FLOAT16;
+            case GGMLTensorType::BF16: return duorou::ml::DataType::BF16;
             default: return duorou::ml::DataType::INT8; // store raw bytes for quantized types
         }
     };

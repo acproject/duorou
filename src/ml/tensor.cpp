@@ -880,6 +880,7 @@ size_t Tensor::getDataTypeSize(DataType dtype) const {
     switch (dtype) {
         case DataType::FLOAT32: return sizeof(float);
         case DataType::FLOAT16: return sizeof(uint16_t);
+        case DataType::BF16: return sizeof(uint16_t);
         case DataType::INT32: return sizeof(int32_t);
         case DataType::INT16: return sizeof(int16_t);
         case DataType::INT8: return sizeof(int8_t);
@@ -894,6 +895,7 @@ std::string dataTypeToString(DataType dtype) {
     switch (dtype) {
         case DataType::FLOAT32: return "float32";
         case DataType::FLOAT16: return "float16";
+        case DataType::BF16: return "bf16";
         case DataType::INT32: return "int32";
         case DataType::INT16: return "int16";
         case DataType::INT8: return "int8";
@@ -906,6 +908,7 @@ std::string dataTypeToString(DataType dtype) {
 DataType stringToDataType(const std::string& dtypeStr) {
     if (dtypeStr == "float32") return DataType::FLOAT32;
     if (dtypeStr == "float16") return DataType::FLOAT16;
+    if (dtypeStr == "bf16") return DataType::BF16;
     if (dtypeStr == "int32") return DataType::INT32;
     if (dtypeStr == "int16") return DataType::INT16;
     if (dtypeStr == "int8") return DataType::INT8;

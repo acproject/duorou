@@ -859,7 +859,8 @@ GGUFParser::calculateTensorSize(const GGUFTensorInfo &tensor_info) const {
 
   // 对于量化类型，限制计算出的大小以避免内存问题
   if (tensor_info.type != GGMLTensorType::F32 &&
-      tensor_info.type != GGMLTensorType::F16) {
+      tensor_info.type != GGMLTensorType::F16 &&
+      tensor_info.type != GGMLTensorType::BF16) {
     // 量化tensor的实际大小通常比计算值小得多
     // 这里使用一个保守的估计来避免过度分配
     uint64_t max_size = 100 * 1024 * 1024; // 100MB限制
@@ -898,6 +899,8 @@ uint32_t GGUFParser::getGGMLTypeSize(GGMLTensorType type) {
   case GGMLTensorType::F32:
     return 4;
   case GGMLTensorType::F16:
+    return 2;
+  case GGMLTensorType::BF16:
     return 2;
   case GGMLTensorType::Q4_0:
   case GGMLTensorType::Q4_1:

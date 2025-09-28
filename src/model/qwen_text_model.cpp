@@ -1001,6 +1001,17 @@ readGGUFTensorToFloat(duorou::extensions::ollama::GGUFParser &parser,
     ggml_fp16_to_fp32_row(src, out.data(), static_cast<int64_t>(nelems));
     break;
   }
+  case GGMLTensorType::BF16: {
+    // Convert BF16 to FP32 manually to avoid dependency on optional ggml helpers
+    const uint16_t *src = reinterpret_cast<const uint16_t *>(buf.data());
+    for (size_t i = 0; i < nelems; ++i) {
+      uint32_t tmp = static_cast<uint32_t>(src[i]) << 16;
+      float f;
+      std::memcpy(&f, &tmp, sizeof(float));
+      out[i] = f;
+    }
+    break;
+  }
   default:
     // Unsupported quantized type for direct float extraction in this minimal
     // path
@@ -1126,15 +1137,21 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
   }
   
   size_t seq_len = hidden.size() / hidden_size;
-  size_t vocab = getVocabSize();
+  size_t vocab_tokenizer = getVocabSize();
+  size_t vocab_weights = (hidden_size == 0 ? 0 : outputWeights_.size() / hidden_size);
+  if (hidden_size != 0 && (outputWeights_.size() % hidden_size) != 0) {
+    logger.warning("[computeLogitsFromHidden] Output weights length is not a multiple of hidden size! hidden*?=" + 
+                   std::to_string(hidden_size) + ", weights.size=" + std::to_string(outputWeights_.size()));
+  }
   logger.debug("[computeLogitsFromHidden] Sequence length: " + std::to_string(seq_len) + 
-               ", Vocab size: " + std::to_string(vocab));
+               ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
+               ", Vocab size (weights): " + std::to_string(vocab_weights));
   
-  std::vector<float> logits(vocab, 0.0f);
+  // Always return logits sized to tokenizer vocab; extra entries (beyond weights vocab) are zero
+  std::vector<float> logits(vocab_tokenizer, 0.0f);
   
-  if (outputWeights_.size() != hidden_size * vocab) {
-    logger.warning("[computeLogitsFromHidden] Output weights size mismatch! Expected: " + 
-                   std::to_string(hidden_size * vocab) + ", Got: " + std::to_string(outputWeights_.size()));
+  if (vocab_weights == 0) {
+    logger.warning("[computeLogitsFromHidden] No output weights loaded; returning zero logits");
     return logits;
   }
   
@@ -1152,8 +1169,8 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
   logger.debug("[computeLogitsFromHidden] Output weights: " + 
                formatVectorStats(weights_stats, "output_weights"));
   
-  // outputWeights_ flattened with vocab major: [vocab][hidden]
-  for (size_t v = 0; v < vocab; ++v) {
+  // outputWeights_ flattened with vocab major: [vocab_weights][hidden]
+  for (size_t v = 0; v < vocab_weights && v < vocab_tokenizer; ++v) {
     float sum = 0.0f;
     size_t woff = v * hidden_size;
     for (size_t i = 0; i < hidden_size; ++i) {
@@ -1162,16 +1179,18 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
     logits[v] = sum;
   }
   
+  // Sanitize logits: replace NaN/Inf with 0 to avoid downstream instability
+  for (size_t i = 0; i < logits.size(); ++i) {
+    if (!std::isfinite(logits[i])) {
+      logits[i] = 0.0f;
+    }
+  }
+  
   // Log some sample logits computation details for first few vocab entries
-  if (vocab > 0) {
+  if (vocab_tokenizer > 0) {
     std::ostringstream sample_stream;
     sample_stream << "[computeLogitsFromHidden] Sample logits computation: ";
-    for (size_t v = 0; v < std::min(vocab, size_t(3)); ++v) {
-      float sum = 0.0f;
-      size_t woff = v * hidden_size;
-      for (size_t i = 0; i < std::min(hidden_size, size_t(3)); ++i) {
-        sum += hptr[i] * outputWeights_[woff + i];
-      }
+    for (size_t v = 0; v < std::min(vocab_tokenizer, size_t(3)); ++v) {
       sample_stream << "vocab[" << v << "]=" << std::fixed << std::setprecision(4) << logits[v] << " ";
     }
     logger.debug(sample_stream.str());

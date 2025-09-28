@@ -68,6 +68,11 @@ private:
 public:
     Tensor(const std::vector<int>& shape, DType dtype);
     Tensor(const std::vector<int>& shape, DType dtype, Backend* backend);
+    // Copy / Move semantics
+    Tensor(const Tensor& other);
+    Tensor(Tensor&& other) noexcept;
+    Tensor& operator=(const Tensor& other);
+    Tensor& operator=(Tensor&& other) noexcept;
     ~Tensor();
     
     const std::vector<int>& shape() const { return shape_; }

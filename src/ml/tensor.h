@@ -28,6 +28,7 @@ class Context;
 enum class DataType {
     FLOAT32,
     FLOAT16,
+    BF16,
     INT32,
     INT16,
     INT8,

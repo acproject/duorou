@@ -60,7 +60,9 @@ enum class GGMLTensorType : uint32_t {
   Q4_K = 12,
   Q5_K = 13,
   Q6_K = 14,
-  Q8_K = 15
+  Q8_K = 15,
+  // Align with upstream GGML: BF16 code is 30
+  BF16 = 30
 };
 
 // GGUF key-value pair structure
@@ -258,8 +260,7 @@ private:
   static uint32_t getTypeSize(GGUFType type);
   static uint32_t getGGMLTypeSize(GGMLTensorType type);
   void log(const std::string &level, const std::string &message) const;
-  
-  // Memory mapping related
+
   bool initMmap(const std::string& file_path);
   void cleanupMmap();
   bool readHeaderMmap();
@@ -285,7 +286,7 @@ private:
   bool verbose_;                                           // Verbose output mode
   bool file_parsed_;                                       // Whether file has been parsed
   
-  // Memory mapping state
+  // mmap fields
   bool use_mmap_;
   int fd_;
   void* mapped_data_;
@@ -304,7 +305,6 @@ private:
 } // namespace extensions
 } // namespace duorou
 
-// ===== Inline implementations for new tensor data access APIs =====
 namespace duorou {
 namespace extensions {
 namespace ollama {
