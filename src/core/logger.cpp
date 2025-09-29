@@ -26,30 +26,16 @@ bool Logger::initialize() {
     if (initialized_) {
         return true;
     }
-    
-    std::cout << "Logger::initialize: Starting initialization" << std::endl;
-    
     try {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            std::cout << "Logger::initialize: Acquired mutex lock" << std::endl;
-            
-            // Enable console output by default, file output will be set after configuration loading
-            std::cout << "Logger::initialize: Setting default output options" << std::endl;
+            // Enable console output by default; file output controlled externally
             console_output_ = true;
-            // file_output_ keeps default value false, waiting for configuration manager to set
-            
             initialized_ = true;
-            std::cout << "Logger::initialize: Set initialized flag to true" << std::endl;
-        } // mutex lock is released here
-        
-        // Log initialization info - called after lock is released
-        std::cout << "Logger::initialize: Calling info method" << std::endl;
+        }
+        // Log initialization info (using logger itself)
         info("Logger initialized successfully (console only)");
-        
-        std::cout << "Logger::initialize: Completed successfully" << std::endl;
         return true;
-        
     } catch (const std::exception& e) {
         std::cerr << "Failed to initialize Logger: " << e.what() << std::endl;
         return false;
@@ -62,47 +48,30 @@ void Logger::setLogLevel(LogLevel level) {
         std::lock_guard<std::mutex> lock(mutex_);
         current_level_ = level;
         level_str = getLevelString(level);
-    } // mutex lock is released here
-    
-    // Call info after lock is released to avoid deadlock
+    }
     info("Log level set to: " + level_str);
 }
 
 bool Logger::setLogFile(const std::string& file_path) {
-    std::cout << "setLogFile: Starting with path: " << file_path << std::endl;
     std::lock_guard<std::mutex> lock(mutex_);
-    
     try {
-        std::cout << "setLogFile: Acquired mutex lock" << std::endl;
-        
         // Close existing file
         if (log_file_ && log_file_->is_open()) {
-            std::cout << "setLogFile: Closing existing log file" << std::endl;
             log_file_->close();
         }
-        
         // Ensure directory exists
-        std::cout << "setLogFile: Creating directory path" << std::endl;
         std::filesystem::path path(file_path);
-        std::cout << "setLogFile: Parent path: " << path.parent_path() << std::endl;
         std::filesystem::create_directories(path.parent_path());
-        std::cout << "setLogFile: Directory created successfully" << std::endl;
-        
-        // Create new file stream
-        std::cout << "setLogFile: Opening log file" << std::endl;
+        // Open new log file
         log_file_ = std::make_unique<std::ofstream>(file_path, std::ios::app);
-        if (!log_file_->is_open()) {
+        if (!log_file_ || !log_file_->is_open()) {
             std::cerr << "Failed to open log file: " << file_path << std::endl;
             file_output_ = false;
             return false;
         }
-        
-        std::cout << "setLogFile: Log file opened successfully" << std::endl;
         log_file_path_ = file_path;
         file_output_ = true;
-        
         return true;
-        
     } catch (const std::exception& e) {
         std::cerr << "Error setting log file: " << e.what() << std::endl;
         file_output_ = false;
@@ -155,55 +124,34 @@ void Logger::flush() {
 }
 
 void Logger::writeLog(LogLevel level, const std::string& message) {
-    std::cout << "writeLog: Starting with message: " << message << std::endl;
-    
-    // Check log level
+    // Honor current level
     if (level < current_level_) {
-        std::cout << "writeLog: Level check failed, returning" << std::endl;
         return;
     }
-    
-    std::cout << "writeLog: Attempting to acquire mutex" << std::endl;
     std::lock_guard<std::mutex> lock(mutex_);
-    std::cout << "writeLog: Mutex acquired" << std::endl;
     
-    // Generate log entry
-    std::cout << "writeLog: Getting timestamp" << std::endl;
+    // Build log line
     std::string timestamp = getCurrentTimestamp();
-    std::cout << "writeLog: Getting level string" << std::endl;
     std::string level_str = getLevelString(level);
-    
-    std::cout << "writeLog: Building log entry" << std::endl;
     std::ostringstream log_entry;
     log_entry << "[" << timestamp << "] [" << level_str << "] " << message;
-    
     std::string log_line = log_entry.str();
-    std::cout << "writeLog: Log line built: " << log_line << std::endl;
     
-    // Output to console
+    // Console output
     if (console_output_) {
-        std::cout << "writeLog: Outputting to console" << std::endl;
         if (level >= LogLevel::LOAD_ERROR) {
             std::cerr << log_line << std::endl;
         } else {
             std::cout << log_line << std::endl;
         }
-        std::cout << "writeLog: Console output completed" << std::endl;
     }
-    
-    // Output to file
+    // File output
     if (file_output_ && log_file_ && log_file_->is_open()) {
-        std::cout << "writeLog: Outputting to file" << std::endl;
         *log_file_ << log_line << std::endl;
-        
-        // For errors and fatal errors, flush immediately
         if (level >= LogLevel::LOAD_ERROR) {
             log_file_->flush();
         }
-        std::cout << "writeLog: File output completed" << std::endl;
     }
-    
-    std::cout << "writeLog: Method completed" << std::endl;
 }
 
 std::string Logger::getCurrentTimestamp() const {

@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 // 前向声明 llama.cpp 结构体和类型
 struct llama_model;
@@ -85,7 +85,8 @@ private:
 
   // 模型权重和配置
   std::vector<duorou::ml::Tensor *> model_weights_;
-  std::unordered_map<std::string, duorou::ml::Tensor*> weight_map_; // 权重名称到张量的映射
+  std::unordered_map<std::string, duorou::ml::Tensor *>
+      weight_map_; // 权重名称到张量的映射
   uint32_t vocab_size_;
   uint32_t n_layers_;
   uint32_t n_heads_;
@@ -96,8 +97,8 @@ private:
   // RoPE参数
   std::vector<float> rope_freqs_;
   bool rope_initialized_;
-  uint32_t rope_dim_;      // rope.dimension_count（若缺失则使用 head_dim）
-  float rope_freq_base_;   // rope.freq_base（默认 10000.0）
+  uint32_t rope_dim_;    // rope.dimension_count（若缺失则使用 head_dim）
+  float rope_freq_base_; // rope.freq_base（默认 10000.0）
 
   // llama.cpp 相关成员
   llama_model *llama_model_;
@@ -133,18 +134,22 @@ private:
   bool initializeSampler();
   std::string generateWithLlama(const std::string &prompt, uint32_t max_tokens,
                                 float temperature, float top_p);
+
+  std::string generateWithGGLM(const std::string &prompt, uint32_t max_tokens,
+                               float temperature, float top_p);
   // 内部 Forward 模式的文本生成
   std::string generateWithInternalForward(const std::string &prompt,
                                           uint32_t max_tokens,
                                           float temperature, float top_p);
   void cleanupResources();
-  
+
   // 权重加载映射辅助方法
   bool mapTensorWeights();
   bool checkInternalForwardSupport();
-  bool tryAutoFallback(const std::string& reason);
+  bool tryAutoFallback(const std::string &reason);
   duorou::ml::DataType convertGGMLDataType(GGMLTensorType ggmlType);
-  bool loadTensorData(const std::string& tensorName, duorou::ml::Tensor* tensor);
+  bool loadTensorData(const std::string &tensorName,
+                      duorou::ml::Tensor *tensor);
 };
 
 } // namespace ollama

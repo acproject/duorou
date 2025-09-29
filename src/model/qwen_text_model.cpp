@@ -806,7 +806,7 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   static bool logger_initialized = false;
   if (!logger_initialized) {
     logger.initialize();
-    logger.setLogLevel(duorou::core::LogLevel::DEBUG);
+    logger.setLogLevel(duorou::core::LogLevel::INFO);
     logger_initialized = true;
   }
 
@@ -1121,7 +1121,7 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
   static bool logger_initialized = false;
   if (!logger_initialized) {
     logger.initialize();
-    logger.setLogLevel(duorou::core::LogLevel::DEBUG);
+    logger.setLogLevel(duorou::core::LogLevel::INFO);
     logger_initialized = true;
   }
 

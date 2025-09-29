@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include "../backend/backend.h"
+#include "core/logger.h"
 
 namespace duorou {
 namespace ml {
@@ -36,6 +37,7 @@ MultiHeadAttention::MultiHeadAttention(int64_t embedDim, int64_t numHeads,
 Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query, 
                                   const Tensor& key, const Tensor& value,
                                   kvcache::Cache* cache, const Tensor& mask) {
+    static duorou::core::Logger logger;
     // Validate dtype
     if (query.dtype() != DataType::FLOAT32) {
         throw std::runtime_error("MultiHeadAttention::forward: only FLOAT32 supported");
@@ -78,9 +80,11 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
     Tensor q4 = qProj.reshape({B, Sq, numHeads_, headDim_});
     Tensor k4 = kProj.reshape({B, Sk, numHeads_, headDim_});
     Tensor v4 = vProj.reshape({B, Sk, numHeads_, headDim_});
+    logger.debug("[MHA] Shapes after projection: q4=[" + std::to_string(B) + "," + std::to_string(Sq) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] k4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] v4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "]");
 
     // Prepare KV Cache integration: fetch previous K/V and concatenate
     int64_t prevLen = 0;
+    // static duorou::core::Logger logger; // removed duplicate
     if (cache) {
         // Local adapter bridging ml::Backend to kvcache::Backend
         struct MLKVBackendAdapter : public duorou::kvcache::Backend {
@@ -115,13 +119,15 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
             for (int dim : kPrevKV.shape()) prevShape64.push_back(static_cast<int64_t>(dim));
             if (prevShape64.size() == 4) {
                 prevLen = prevShape64[1];
-                // Convert kvcache::Tensor to ml::Tensor and copy data
+                // Convert kvcache::Tensor to ml::Tensor and copy data using backend-aware adapter
                 Tensor kPrevML(prevShape64, DataType::FLOAT32);
-                kPrevML.allocate();
-                std::memcpy(kPrevML.data(), kPrevKV.data(), kPrevKV.bytesSize());
                 Tensor vPrevML(prevShape64, DataType::FLOAT32);
+                if (auto* b = ctx.getBackend()) { kPrevML.setBackend(b); vPrevML.setBackend(b); }
+                kPrevML.allocate();
                 vPrevML.allocate();
-                std::memcpy(vPrevML.data(), vPrevKV.data(), vPrevKV.bytesSize());
+                size_t kvPrevBytes = static_cast<size_t>(kPrevKV.bytesSize());
+                adapter.copy(kPrevML.data(), kPrevKV.data(), kvPrevBytes);
+                adapter.copy(vPrevML.data(), vPrevKV.data(), kvPrevBytes);
 
                 // Apply RoPE to current K with offset equal to previous length
                 k4 = applyRotaryPositionEmbedding(ctx, k4, Sk, /*offset=*/prevLen);
@@ -129,24 +135,43 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
                 // Concatenate along sequence dimension: [B, prevLen + Sk, H, D]
                 int64_t totalSk = prevLen + Sk;
                 Tensor kFull({B, totalSk, numHeads_, headDim_}, DataType::FLOAT32);
-                kFull.allocate();
                 Tensor vFull({B, totalSk, numHeads_, headDim_}, DataType::FLOAT32);
+                if (auto* b = ctx.getBackend()) { kFull.setBackend(b); vFull.setBackend(b); }
+                kFull.allocate();
                 vFull.allocate();
 
                 size_t prevBytes = static_cast<size_t>(B * prevLen * numHeads_ * headDim_) * sizeof(float);
                 size_t newBytes  = static_cast<size_t>(B * Sk * numHeads_ * headDim_) * sizeof(float);
+                size_t kPrevMLBytes = static_cast<size_t>(kPrevML.nbytes());
+                size_t vPrevMLBytes = static_cast<size_t>(vPrevML.nbytes());
+                size_t k4Bytes = static_cast<size_t>(k4.nbytes());
+                size_t v4Bytes = static_cast<size_t>(v4.nbytes());
 
-                // Copy previous part
-                std::memcpy(kFull.data(), kPrevML.data(), prevBytes);
-                std::memcpy(vFull.data(), vPrevML.data(), prevBytes);
-                // Copy new part right after previous
-                std::memcpy(static_cast<char*>(kFull.data()) + prevBytes, k4.data(), newBytes);
-                std::memcpy(static_cast<char*>(vFull.data()) + prevBytes, v4.data(), newBytes);
+                // Sanity checks to avoid out-of-bounds copies
+                if (prevBytes > kPrevMLBytes || prevBytes > vPrevMLBytes) {
+                    logger.debug("[MHA] KV concat prevBytes exceeds previous ML tensor bytes; skipping concat to prevent OOB");
+                } else if (newBytes > k4Bytes || newBytes > v4Bytes) {
+                    logger.debug("[MHA] KV concat newBytes exceeds current K/V tensor bytes; skipping concat to prevent OOB");
+                } else {
+                    // Copy previous part
+                    adapter.copy(kFull.data(), kPrevML.data(), prevBytes);
+                    adapter.copy(vFull.data(), vPrevML.data(), prevBytes);
+                    // Copy new part right after previous
+                    void* kDst = static_cast<void*>(static_cast<char*>(kFull.data()) + prevBytes);
+                    void* vDst = static_cast<void*>(static_cast<char*>(vFull.data()) + prevBytes);
+                    adapter.copy(kDst, k4.data(), newBytes);
+                    adapter.copy(vDst, v4.data(), newBytes);
 
-                // Update k4/v4 and Sk to total length
-                k4 = kFull;
-                v4 = vFull;
-                Sk = totalSk;
+                    // Update k4/v4 and Sk to total length
+                    k4 = kFull;
+                    v4 = vFull;
+                    Sk = totalSk;
+                    logger.debug("[MHA] KV concat done: B=" + std::to_string(B) + 
+                                  ", prevLen=" + std::to_string(prevLen) +
+                                  ", newSk=" + std::to_string((kIs3D ? keyRef.shape()[1] : keyRef.shape()[0])) +
+                                  ", totalSk=" + std::to_string(Sk) +
+                                  ", bytes(prev,new)=" + std::to_string(prevBytes) + "," + std::to_string(newBytes));
+                }
             } else {
                 // No valid previous shape, apply default RoPE for K
                 k4 = applyRotaryPositionEmbedding(ctx, k4, Sk, /*offset=*/0);
@@ -162,6 +187,8 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
 
     // Apply RoPE to Q with offset equal to number of previous tokens
     q4 = applyRotaryPositionEmbedding(ctx, q4, Sq, /*offset=*/prevLen);
+    logger.debug("[MHA] RoPE applied: prevLen=" + std::to_string(prevLen) + 
+                 ", q4(seqLen)=" + std::to_string(Sq) + ", k4(seqLen)=" + std::to_string(Sk));
 
     // If cache exists, store K, V using backend adapter bridging
     if (cache && k4.data() && v4.data()) {
@@ -195,18 +222,29 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
 
         // Copy data from ml::Tensor to kvcache::Tensor (ONLY new segment)
         size_t newBytes = static_cast<size_t>(B * newSk * numHeads_ * headDim_) * sizeof(float);
-        // The new segment corresponds to the last newSk tokens in k4/v4
-        size_t prevBytes = static_cast<size_t>(B * prevLen * numHeads_ * headDim_) * sizeof(float);
-        const void* kNewSrc = static_cast<const char*>(k4.data()) + prevBytes;
-        const void* vNewSrc = static_cast<const char*>(v4.data()) + prevBytes;
-        adapter.copy(kKV.data(), kNewSrc, newBytes);
-        adapter.copy(vKV.data(), vNewSrc, newBytes);
+        // The new segment is exactly the current k4/v4 contents (length = newSk), do NOT offset by prevLen
+        const void* kNewSrc = static_cast<const void*>(k4.data());
+        const void* vNewSrc = static_cast<const void*>(v4.data());
+        if (kNewSrc == nullptr || vNewSrc == nullptr) {
+            logger.debug("[MHA] KV put skipped: null kNewSrc/vNewSrc");
+        } else if (newBytes > static_cast<size_t>(k4.nbytes()) || newBytes > static_cast<size_t>(v4.nbytes())) {
+            logger.debug("[MHA] KV put skipped: newBytes exceeds k4/v4 bytes; newBytes=" + std::to_string(newBytes) +
+                         ", k4Bytes=" + std::to_string(static_cast<size_t>(k4.nbytes())) +
+                         ", v4Bytes=" + std::to_string(static_cast<size_t>(v4.nbytes())));
+        } else {
+            adapter.copy(kKV.data(), kNewSrc, newBytes);
+            adapter.copy(vKV.data(), vNewSrc, newBytes);
+            logger.debug("[MHA] KV put new segment: B=" + std::to_string(B) +
+                         ", newSk=" + std::to_string(newSk) +
+                         ", bytes=" + std::to_string(newBytes));
+        }
 
         // Store into cache
         cache->put(kctx, kKV, vKV);
     }
 
     // Execute attention computation in 4D
+    logger.debug("[MHA] Calling scaledDotProductAttention with q4=[" + std::to_string(B) + "," + std::to_string(Sq) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] k4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] v4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "]");
     Tensor attnOut4 = scaledDotProductAttention(ctx, q4, k4, v4, mask); // [B,Sq,H,D]
 
     // Merge heads: [B,Sq,H,D] -> [B*Sq, H*D]
@@ -437,11 +475,20 @@ Tensor MultiHeadAttention::scaledDotProductAttention(Context& ctx, const Tensor&
                 for (float sc : scores) maxScore = std::max(maxScore, sc);
                 float sumExp = 0.0f;
                 for (float sc : scores) sumExp += std::exp(sc - maxScore);
+                if (!std::isfinite(sumExp) || sumExp == 0.0f) {
+                    // Log anomaly but continue to avoid crash; output will be zeros
+                    // Note: no logger here; keep minimal overhead
+                }
                 // 3) weighted sum of V
                 for (int64_t d = 0; d < D; ++d) {
                     float acc = 0.0f;
                     for (int64_t t = 0; t < Sk; ++t) {
-                        float w = std::exp(scores[static_cast<size_t>(t)] - maxScore) / sumExp;
+                        float w = std::exp(scores[static_cast<size_t>(t)] - maxScore);
+                        if (sumExp > 0.0f && std::isfinite(w)) {
+                            w /= sumExp;
+                        } else {
+                            w = 0.0f;
+                        }
                         acc += w * vPtr[idxV(b, t, h, d)];
                     }
                     outPtr[idxO(b, s, h, d)] = acc;

@@ -2,17 +2,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
-#include <cstdlib>
-#include <cstring>
-#include <numeric>
 #include <unordered_set>
+#include <vector>
 
 // Include the actual llama.cpp header files
 #ifdef _WIN32
@@ -24,14 +24,16 @@
 #endif
 #endif
 #include "../../../third_party/llama.cpp/include/llama.h"
+#include "ggml-cpu.h"
+#include "ggml.h"
 
 // Include project headers after third-party headers
-#include "inference_engine.h"
+#include "../../kvcache/causal.h"
+#include "../../ml/backend/backend.h"
 #include "../../ml/context.h"
 #include "../../ml/nn/attention.h"
 #include "../../ml/tensor.h"
-#include "../../ml/backend/backend.h"
-#include "../../kvcache/causal.h"
+#include "inference_engine.h"
 #include "ollama_model_manager.h"
 
 namespace duorou {
@@ -42,7 +44,8 @@ static bool isSupportedByLlamaCpp(const std::string &arch_raw) {
   std::string arch = arch_raw;
   std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
 
-  // Explicitly exclude known non-llama.cpp (multimodal/incompatible) architectures to avoid misrouting to llama.cpp
+  // Explicitly exclude known non-llama.cpp (multimodal/incompatible)
+  // architectures to avoid misrouting to llama.cpp
   if (arch.find("qwen") != std::string::npos ||
       arch.find("qwen2") != std::string::npos ||
       arch.find("qwen25") != std::string::npos ||
@@ -69,8 +72,9 @@ MLInferenceEngine::MLInferenceEngine(const std::string &model_id)
     : model_id_(model_id), initialized_(false), ml_context_(nullptr),
       attention_(nullptr), gguf_parser_(nullptr), kv_cache_(nullptr),
       vocab_size_(0), n_layers_(0), n_heads_(0), n_embd_(0), n_ctx_(0),
-       rope_freqs_(), rope_initialized_(false), llama_model_(nullptr), llama_context_(nullptr),
-      llama_sampler_(nullptr), use_llama_backend_(false) {
+      rope_freqs_(), rope_initialized_(false), llama_model_(nullptr),
+      llama_context_(nullptr), llama_sampler_(nullptr),
+      use_llama_backend_(false) {
   std::cout << "[DEBUG] MLInferenceEngine constructor called with model_id: "
             << model_id << std::endl;
 }
@@ -114,13 +118,14 @@ bool MLInferenceEngine::initialize() {
     if (!backendMgr.getCurrentBackend()) {
       backendMgr.initializeBackends();
       // Prefer GGML if available; fallback to existing current backend
-      bool switched = backendMgr.setCurrentBackend(duorou::ml::DeviceType::GGML);
+      bool switched =
+          backendMgr.setCurrentBackend(duorou::ml::DeviceType::GGML);
       std::cout << "[DEBUG] Backend initialized, selected="
                 << duorou::ml::deviceTypeToString(
                        switched ? duorou::ml::DeviceType::GGML
-                                : backendMgr.getCurrentBackend()
-                                      ? backendMgr.getCurrentBackend()->getType()
-                                      : duorou::ml::DeviceType::CPU)
+                       : backendMgr.getCurrentBackend()
+                           ? backendMgr.getCurrentBackend()->getType()
+                           : duorou::ml::DeviceType::CPU)
                 << std::endl;
     }
 
@@ -128,17 +133,19 @@ bool MLInferenceEngine::initialize() {
     ml_context_ = new duorou::ml::Context(backendMgr.getCurrentBackend());
 
     // Create attention mechanism (simplified configuration)
-    attention_ = new duorou::ml::nn::MultiHeadAttention(512,  // embed_dim
-                                                8,    // num_heads
-                                                -1,   // kv_heads (default)
-                                                true, // bias
-                                                0.1f  // dropout
-    );
+    attention_ =
+        new duorou::ml::nn::MultiHeadAttention(512,  // embed_dim
+                                               8,    // num_heads
+                                               -1,   // kv_heads (default)
+                                               true, // bias
+                                               0.1f  // dropout
+        );
 
     // Try to get model path from OllamaModelManager
     OllamaModelManager &manager = GlobalModelManager::getInstance();
 
-    // Use model_id_ directly, as OllamaModelManager::getModelInfo will perform normalization
+    // Use model_id_ directly, as OllamaModelManager::getModelInfo will perform
+    // normalization
     auto model_info = manager.getModelInfo(model_id_);
     if (!model_info || model_info->file_path.empty()) {
       std::cerr << "[ERROR] MLInferenceEngine: Model not found or file path "
@@ -160,22 +167,29 @@ bool MLInferenceEngine::initialize() {
     }
     const auto &arch = gguf_parser_->getArchitecture().name;
     // Allow forcing llama.cpp via environment variable DUOROU_FORCE_LLAMA
-    const char* force_llama_env = std::getenv("DUOROU_FORCE_LLAMA");
-    bool force_llama = force_llama_env && std::string(force_llama_env) != "0" && std::string(force_llama_env).size() > 0;
+    const char *force_llama_env = std::getenv("DUOROU_FORCE_LLAMA");
+    bool force_llama = force_llama_env && std::string(force_llama_env) != "0" &&
+                       std::string(force_llama_env).size() > 0;
     bool llama_supported = isSupportedByLlamaCpp(arch);
     if (force_llama && !llama_supported) {
-      std::cerr << "[WARN] DUOROU_FORCE_LLAMA requested but architecture '" << arch << "' is unsupported by llama.cpp; using internal forward instead" << std::endl;
+      std::cerr
+          << "[WARN] DUOROU_FORCE_LLAMA requested but architecture '" << arch
+          << "' is unsupported by llama.cpp; using internal forward instead"
+          << std::endl;
     }
 
     use_llama_backend_ = force_llama && llama_supported;
     std::cout << "[DEBUG] Detected architecture: '" << arch
               << "', use_llama_backend_="
               << (use_llama_backend_ ? "true" : "false")
-              << ((force_llama && llama_supported) ? " (forced by DUOROU_FORCE_LLAMA)" : "")
+              << ((force_llama && llama_supported)
+                      ? " (forced by DUOROU_FORCE_LLAMA)"
+                      : "")
               << std::endl;
 
     if (use_llama_backend_) {
-      // Only initialize llama.cpp backend and load model when llama.cpp is selected
+      // Only initialize llama.cpp backend and load model when llama.cpp is
+      // selected
       llama_backend_init();
       // Load llama.cpp model
       if (!loadLlamaModel(model_path_)) {
@@ -183,7 +197,8 @@ bool MLInferenceEngine::initialize() {
             << "[ERROR] MLInferenceEngine: Failed to load llama.cpp model from "
             << model_path_ << std::endl;
         // Gracefully fall back to internal forward initialization
-        std::cout << "[INFO] Falling back to internal forward initialization" << std::endl;
+        std::cout << "[INFO] Falling back to internal forward initialization"
+                  << std::endl;
         use_llama_backend_ = false;
 
         // Non-llama architecture: use internal Forward flow with Qwen model
@@ -196,10 +211,12 @@ bool MLInferenceEngine::initialize() {
 
         // First initialize model components (including text model)
         if (!qwen_model_->initialize("")) {
-          std::cerr << "[WARN] Failed to initialize Qwen model components, using "
-                       "fallback initialization"
-                    << std::endl;
-          // Even if initialization fails, continue initializing other components for basic inference capability
+          std::cerr
+              << "[WARN] Failed to initialize Qwen model components, using "
+                 "fallback initialization"
+              << std::endl;
+          // Even if initialization fails, continue initializing other
+          // components for basic inference capability
         }
 
         // Try to load model from GGUF file
@@ -207,26 +224,32 @@ bool MLInferenceEngine::initialize() {
           std::cerr << "[WARN] Failed to load Qwen model from GGUF, using "
                        "fallback initialization"
                     << std::endl;
-          // Even if loading fails, continue initializing other components for basic inference capability
+          // Even if loading fails, continue initializing other components for
+          // basic inference capability
         }
 
-        // Check internal forward support based on GGUF architecture and parsed config
+        // Check internal forward support based on GGUF architecture and parsed
+        // config
         if (!checkInternalForwardSupport()) {
-          std::cerr << "[ERROR] Internal forward not supported; aborting initialization" << std::endl;
+          std::cerr << "[ERROR] Internal forward not supported; aborting "
+                       "initialization"
+                    << std::endl;
           initialized_ = false;
           return false;
         }
 
         // Parse model configuration
         if (!parseModelConfig()) {
-          std::cerr << "[ERROR] Failed to parse model configuration from GGUF" << std::endl;
+          std::cerr << "[ERROR] Failed to parse model configuration from GGUF"
+                    << std::endl;
           initialized_ = false;
           return false;
         }
 
         // Load model weights
         if (!loadModelWeights()) {
-          std::cerr << "[ERROR] Failed to load model weights from GGUF" << std::endl;
+          std::cerr << "[ERROR] Failed to load model weights from GGUF"
+                    << std::endl;
           initialized_ = false;
           return false;
         }
@@ -240,15 +263,16 @@ bool MLInferenceEngine::initialize() {
 
         // Precompute RoPE frequencies
         if (!precomputeRoPEFreqs()) {
-          std::cerr << "[ERROR] Failed to precompute RoPE frequencies" << std::endl;
+          std::cerr << "[ERROR] Failed to precompute RoPE frequencies"
+                    << std::endl;
           initialized_ = false;
           return false;
         }
 
         initialized_ = true;
-        std::cout
-            << "[DEBUG] MLInferenceEngine initialized successfully with internal forward (fallback from llama.cpp)"
-            << std::endl;
+        std::cout << "[DEBUG] MLInferenceEngine initialized successfully with "
+                     "internal forward (fallback from llama.cpp)"
+                  << std::endl;
         return true;
       }
 
@@ -271,7 +295,8 @@ bool MLInferenceEngine::initialize() {
         std::cerr << "[WARN] Failed to initialize Qwen model components, using "
                      "fallback initialization"
                   << std::endl;
-        // Even if initialization fails, continue initializing other components for basic inference capability
+        // Even if initialization fails, continue initializing other components
+        // for basic inference capability
       }
 
       // Try to load model from GGUF file
@@ -279,26 +304,32 @@ bool MLInferenceEngine::initialize() {
         std::cerr << "[WARN] Failed to load Qwen model from GGUF, using "
                      "fallback initialization"
                   << std::endl;
-        // Even if loading fails, continue initializing other components for basic inference capability
+        // Even if loading fails, continue initializing other components for
+        // basic inference capability
       }
 
-      // Check internal forward support based on GGUF architecture and parsed config
+      // Check internal forward support based on GGUF architecture and parsed
+      // config
       if (!checkInternalForwardSupport()) {
-        std::cerr << "[ERROR] Internal forward not supported; aborting initialization" << std::endl;
+        std::cerr
+            << "[ERROR] Internal forward not supported; aborting initialization"
+            << std::endl;
         initialized_ = false;
         return false;
       }
 
       // Parse model configuration
       if (!parseModelConfig()) {
-        std::cerr << "[ERROR] Failed to parse model configuration from GGUF" << std::endl;
+        std::cerr << "[ERROR] Failed to parse model configuration from GGUF"
+                  << std::endl;
         initialized_ = false;
         return false;
       }
 
       // Load model weights
       if (!loadModelWeights()) {
-        std::cerr << "[ERROR] Failed to load model weights from GGUF" << std::endl;
+        std::cerr << "[ERROR] Failed to load model weights from GGUF"
+                  << std::endl;
         initialized_ = false;
         return false;
       }
@@ -312,19 +343,21 @@ bool MLInferenceEngine::initialize() {
 
       // Precompute RoPE frequencies
       if (!precomputeRoPEFreqs()) {
-        std::cerr << "[ERROR] Failed to precompute RoPE frequencies" << std::endl;
+        std::cerr << "[ERROR] Failed to precompute RoPE frequencies"
+                  << std::endl;
         initialized_ = false;
         return false;
       }
 
       initialized_ = true;
-      std::cout
-          << "[DEBUG] MLInferenceEngine initialized successfully with internal forward"
-          << std::endl;
+      std::cout << "[DEBUG] MLInferenceEngine initialized successfully with "
+                   "internal forward"
+                << std::endl;
       return true;
     }
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception during initialize: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Exception during initialize: " << e.what()
+              << std::endl;
     initialized_ = false;
     return false;
   }
@@ -353,7 +386,7 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
   try {
     if (use_llama_backend_) {
       // Use llama.cpp for inference
-      return generateWithLlama(prompt, max_tokens, temperature, top_p);
+      return generateWithGGLM(prompt, max_tokens, temperature, top_p);
     } else {
       // Use internal Forward mode for inference
       return generateWithInternalForward(prompt, max_tokens, temperature,
@@ -375,7 +408,8 @@ bool MLInferenceEngine::isReady() const {
            llama_model_ != nullptr && llama_context_ != nullptr &&
            llama_sampler_ != nullptr;
   } else {
-    // Internal Forward mode: requires at least ML context, attention, and completed RoPE precomputation
+    // Internal Forward mode: requires at least ML context, attention, and
+    // completed RoPE precomputation
     return ml_context_ != nullptr && attention_ != nullptr && rope_initialized_;
   }
 }
@@ -454,10 +488,11 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
           arch_for_check = tmp->getArchitecture().name;
         }
       }
-    } catch (...) {}
+    } catch (...) {
+    }
     if (!arch_for_check.empty() && !isSupportedByLlamaCpp(arch_for_check)) {
-      std::cerr << "[WARN] llama.cpp does not support architecture '" << arch_for_check
-                << "'; skipping llama.cpp load" << std::endl;
+      std::cerr << "[WARN] llama.cpp does not support architecture '"
+                << arch_for_check << "'; skipping llama.cpp load" << std::endl;
       return false;
     }
 
@@ -617,8 +652,9 @@ bool MLInferenceEngine::initializeSampler() {
 }
 
 std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
-  std::cout << "[DEBUG] Tokenizing text: '" << text << "' (length: " << text.length() << ")" << std::endl;
-  
+  std::cout << "[DEBUG] Tokenizing text: '" << text
+            << "' (length: " << text.length() << ")" << std::endl;
+
   // Prefer using custom TextProcessor
   try {
     if (tokenizer_) {
@@ -649,14 +685,18 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
         std::cout << "[DEBUG] Tokenized via llama.cpp into " << n_tokens
                   << " tokens" << std::endl;
         for (int i = 0; i < std::min(5, n_tokens); i++) {
-          std::cout << "[DEBUG] Token[" << i << "] = " << tokens[i] << std::endl;
+          std::cout << "[DEBUG] Token[" << i << "] = " << tokens[i]
+                    << std::endl;
         }
         return tokens;
       } else {
-        std::cout << "[DEBUG] llama.cpp tokenization failed, n_tokens = " << n_tokens << std::endl;
+        std::cout << "[DEBUG] llama.cpp tokenization failed, n_tokens = "
+                  << n_tokens << std::endl;
       }
     } else {
-      std::cout << "[DEBUG] llama_model_ is null, cannot use llama.cpp tokenizer" << std::endl;
+      std::cout
+          << "[DEBUG] llama_model_ is null, cannot use llama.cpp tokenizer"
+          << std::endl;
     }
   } catch (const std::exception &e) {
     std::cerr << "Error during tokenization: " << e.what() << std::endl;
@@ -670,13 +710,15 @@ std::vector<llama_token> MLInferenceEngine::tokenize(const std::string &text) {
     std::string word;
     int word_count = 0;
     while (iss >> word) {
-      std::cout << "[DEBUG] Fallback processing word[" << word_count << "]: '" << word << "'" << std::endl;
+      std::cout << "[DEBUG] Fallback processing word[" << word_count << "]: '"
+                << word << "'" << std::endl;
       llama_token id = 0;
       for (char c : word) {
         id = id * 31 + static_cast<llama_token>(c);
       }
       id = std::abs(id) % 50000 + 1;
-      std::cout << "[DEBUG] Fallback word '" << word << "' -> token ID " << id << std::endl;
+      std::cout << "[DEBUG] Fallback word '" << word << "' -> token ID " << id
+                << std::endl;
       tokens.push_back(id);
       word_count++;
     }
@@ -754,7 +796,8 @@ std::string MLInferenceEngine::generateIntelligentResponse(
                    lower_prompt.begin(), ::tolower);
 
     // Limit response length based on max_tokens
-    if (response.length() > max_tokens * 4) { // Rough estimate: 4 characters = 1 token
+    if (response.length() >
+        max_tokens * 4) { // Rough estimate: 4 characters = 1 token
       response = response.substr(0, max_tokens * 4) + "...";
     }
 
@@ -776,17 +819,23 @@ bool MLInferenceEngine::parseModelConfig() {
     const auto &arch = gguf_parser_->getArchitecture();
 
     // 直接映射基础参数
-    n_layers_   = arch.block_count ? arch.block_count : n_layers_;
-    n_heads_    = arch.attention_head_count ? arch.attention_head_count : n_heads_;
-    n_kv_heads_ = arch.attention_head_count_kv ? arch.attention_head_count_kv : (n_kv_heads_ ? n_kv_heads_ : n_heads_);
-    n_embd_     = arch.embedding_length ? arch.embedding_length : n_embd_;
-    n_ctx_      = arch.context_length ? arch.context_length : n_ctx_;
+    n_layers_ = arch.block_count ? arch.block_count : n_layers_;
+    n_heads_ = arch.attention_head_count ? arch.attention_head_count : n_heads_;
+    n_kv_heads_ = arch.attention_head_count_kv
+                      ? arch.attention_head_count_kv
+                      : (n_kv_heads_ ? n_kv_heads_ : n_heads_);
+    n_embd_ = arch.embedding_length ? arch.embedding_length : n_embd_;
+    n_ctx_ = arch.context_length ? arch.context_length : n_ctx_;
 
     // RoPE 参数
-    rope_dim_       = arch.rope_dimension_count ? arch.rope_dimension_count : (n_heads_ ? (n_embd_ / n_heads_) : 0);
-    rope_freq_base_ = arch.rope_freq_base > 0.0f ? arch.rope_freq_base : 10000.0f;
+    rope_dim_ = arch.rope_dimension_count
+                    ? arch.rope_dimension_count
+                    : (n_heads_ ? (n_embd_ / n_heads_) : 0);
+    rope_freq_base_ =
+        arch.rope_freq_base > 0.0f ? arch.rope_freq_base : 10000.0f;
 
-    // 2) 词表大小优先从 {arch}.vocab_size 读取，退化到 tokenizer.ggml.tokens 长度
+    // 2) 词表大小优先从 {arch}.vocab_size 读取，退化到 tokenizer.ggml.tokens
+    // 长度
     uint32_t vocab_from_meta = 0;
     if (!arch.name.empty()) {
       std::string key_vs = arch.name + ".vocab_size";
@@ -800,7 +849,8 @@ bool MLInferenceEngine::parseModelConfig() {
       vocab_size_ = vocab_from_meta;
     } else {
       // 回退：使用 tokenizer.ggml.tokens 的数量
-      if (const auto *kvTokens = gguf_parser_->getMetadata("tokenizer.ggml.tokens")) {
+      if (const auto *kvTokens =
+              gguf_parser_->getMetadata("tokenizer.ggml.tokens")) {
         const auto tokens = kvTokens->asStringArray();
         if (!tokens.empty()) {
           vocab_size_ = static_cast<uint32_t>(tokens.size());
@@ -809,20 +859,29 @@ bool MLInferenceEngine::parseModelConfig() {
     }
 
     // 保底默认值（避免为 0 导致后续崩溃）
-    if (vocab_size_ == 0) vocab_size_ = 32000;
-    if (n_layers_   == 0) n_layers_   = 32;
-    if (n_heads_    == 0) n_heads_    = 32;
-    if (n_kv_heads_ == 0) n_kv_heads_ = n_heads_;
-    if (n_embd_     == 0) n_embd_     = 4096;
-    if (n_ctx_      == 0) n_ctx_      = 2048;
-    if (rope_dim_   == 0) rope_dim_   = (n_heads_ ? (n_embd_ / n_heads_) : 0);
+    if (vocab_size_ == 0)
+      vocab_size_ = 32000;
+    if (n_layers_ == 0)
+      n_layers_ = 32;
+    if (n_heads_ == 0)
+      n_heads_ = 32;
+    if (n_kv_heads_ == 0)
+      n_kv_heads_ = n_heads_;
+    if (n_embd_ == 0)
+      n_embd_ = 4096;
+    if (n_ctx_ == 0)
+      n_ctx_ = 2048;
+    if (rope_dim_ == 0)
+      rope_dim_ = (n_heads_ ? (n_embd_ / n_heads_) : 0);
 
     // 调试输出（含 RoPE mrope sections）
-    std::cout << "[DEBUG] Parsed GGUF architecture: '" << arch.name << "'" << std::endl;
+    std::cout << "[DEBUG] Parsed GGUF architecture: '" << arch.name << "'"
+              << std::endl;
     if (!arch.rope_dimension_sections.empty()) {
       std::cout << "[DEBUG] RoPE mrope sections: ";
       for (size_t i = 0; i < arch.rope_dimension_sections.size(); ++i) {
-        std::cout << arch.rope_dimension_sections[i] << (i + 1 < arch.rope_dimension_sections.size() ? "," : "");
+        std::cout << arch.rope_dimension_sections[i]
+                  << (i + 1 < arch.rope_dimension_sections.size() ? "," : "");
       }
       std::cout << std::endl;
     }
@@ -834,14 +893,17 @@ bool MLInferenceEngine::parseModelConfig() {
               << ", rope_freq_base: " << rope_freq_base_ << std::endl;
 
     // 基本合法性检查
-    if (n_layers_ == 0 || n_heads_ == 0 || n_embd_ == 0 || n_ctx_ == 0 || vocab_size_ == 0) {
-      std::cerr << "[ERROR] Invalid model configuration parsed from GGUF" << std::endl;
+    if (n_layers_ == 0 || n_heads_ == 0 || n_embd_ == 0 || n_ctx_ == 0 ||
+        vocab_size_ == 0) {
+      std::cerr << "[ERROR] Invalid model configuration parsed from GGUF"
+                << std::endl;
       return false;
     }
 
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to parse model config: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Failed to parse model config: " << e.what()
+              << std::endl;
     return false;
   }
 }
@@ -850,7 +912,8 @@ bool MLInferenceEngine::loadModelWeights() {
   try {
     std::cout << "[DEBUG] Loading model weights from GGUF" << std::endl;
 
-    // Clean up previous weights (will be handled by cleanupResources uniqueness too)
+    // Clean up previous weights (will be handled by cleanupResources uniqueness
+    // too)
     for (auto *weight : model_weights_) {
       delete weight;
     }
@@ -863,7 +926,8 @@ bool MLInferenceEngine::loadModelWeights() {
 
     // Map all tensors from GGUF into weight_map_
     if (!mapTensorWeights()) {
-      std::cerr << "[ERROR] Failed to map tensor weights from GGUF" << std::endl;
+      std::cerr << "[ERROR] Failed to map tensor weights from GGUF"
+                << std::endl;
       return false;
     }
 
@@ -873,63 +937,77 @@ bool MLInferenceEngine::loadModelWeights() {
       model_weights_.push_back(kv.second);
     }
 
-    std::cout << "[DEBUG] Loaded " << model_weights_.size() << " tensors via GGUF mapping" << std::endl;
-    
+    std::cout << "[DEBUG] Loaded " << model_weights_.size()
+              << " tensors via GGUF mapping" << std::endl;
+
     // Validate weight ranges to detect potential loading issues
     std::cout << "[DEBUG] Validating weight ranges..." << std::endl;
     size_t checked_tensors = 0;
     size_t problematic_tensors = 0;
-    
+
     for (const auto &kv : weight_map_) {
       const std::string &name = kv.first;
       duorou::ml::Tensor *tensor = kv.second;
-      
-      if (!tensor || tensor->numel() == 0) continue;
-      
+
+      if (!tensor || tensor->numel() == 0)
+        continue;
+
       // Sample a few values to check for obvious issues
-       size_t sample_size = std::min(static_cast<size_t>(100), static_cast<size_t>(tensor->numel()));
-       std::vector<float> sample_data(sample_size);
-       tensor->copyToHost(sample_data.data(), sample_data.size() * sizeof(float));
-      
+      size_t sample_size = std::min(static_cast<size_t>(100),
+                                    static_cast<size_t>(tensor->numel()));
+      std::vector<float> sample_data(sample_size);
+      tensor->copyToHost(sample_data.data(),
+                         sample_data.size() * sizeof(float));
+
       auto minmax = std::minmax_element(sample_data.begin(), sample_data.end());
       float min_val = *minmax.first;
       float max_val = *minmax.second;
-      
+
       bool has_nan = false, has_inf = false, all_zeros = true;
       for (float val : sample_data) {
-        if (std::isnan(val)) has_nan = true;
-        if (std::isinf(val)) has_inf = true;
-        if (val != 0.0f) all_zeros = false;
+        if (std::isnan(val))
+          has_nan = true;
+        if (std::isinf(val))
+          has_inf = true;
+        if (val != 0.0f)
+          all_zeros = false;
       }
-      
-      if (has_nan || has_inf || all_zeros || max_val > 1000.0f || min_val < -1000.0f) {
+
+      if (has_nan || has_inf || all_zeros || max_val > 1000.0f ||
+          min_val < -1000.0f) {
         std::cerr << "[WARN] Tensor '" << name << "' has suspicious values: "
                   << "range=[" << min_val << ", " << max_val << "], "
-                  << "NaN=" << has_nan << ", Inf=" << has_inf << ", AllZeros=" << all_zeros << std::endl;
+                  << "NaN=" << has_nan << ", Inf=" << has_inf
+                  << ", AllZeros=" << all_zeros << std::endl;
         problematic_tensors++;
       }
-      
+
       checked_tensors++;
-      if (checked_tensors >= 10) break; // Limit checking to avoid excessive output
+      if (checked_tensors >= 10)
+        break; // Limit checking to avoid excessive output
     }
-    
+
     if (problematic_tensors > 0) {
-      std::cerr << "[WARN] Found " << problematic_tensors << " tensors with suspicious values out of " 
-                << checked_tensors << " checked" << std::endl;
+      std::cerr << "[WARN] Found " << problematic_tensors
+                << " tensors with suspicious values out of " << checked_tensors
+                << " checked" << std::endl;
     } else {
-      std::cout << "[DEBUG] Weight validation passed for " << checked_tensors << " tensors" << std::endl;
+      std::cout << "[DEBUG] Weight validation passed for " << checked_tensors
+                << " tensors" << std::endl;
     }
-    
+
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to load model weights: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Failed to load model weights: " << e.what()
+              << std::endl;
     return false;
   }
 }
 
 bool MLInferenceEngine::initializeKVCache() {
   try {
-    std::cout << "[DEBUG] Initializing KV cache with context length: " << n_ctx_ << std::endl;
+    std::cout << "[DEBUG] Initializing KV cache with context length: " << n_ctx_
+              << std::endl;
 
     // Configure KV cache
     cache_config_.maxSeqLen = n_ctx_;
@@ -940,34 +1018,45 @@ bool MLInferenceEngine::initializeKVCache() {
     cache_config_.headDim = n_heads_ ? (n_embd_ / n_heads_) : 0;
     cache_config_.dtype = kvcache::DType::FLOAT32;
 
-    // Adapter bridging ml::Backend to kvcache::Backend for backend-aware KV cache allocations
+    // Adapter bridging ml::Backend to kvcache::Backend for backend-aware KV
+    // cache allocations
     struct MLKVBackendAdapter : public duorou::kvcache::Backend {
-      explicit MLKVBackendAdapter(duorou::ml::Backend* backend) : mlBackend(backend) {}
-      void* allocate(size_t bytes) override {
-        if (mlBackend) return mlBackend->allocate(bytes);
+      explicit MLKVBackendAdapter(duorou::ml::Backend *backend)
+          : mlBackend(backend) {}
+      void *allocate(size_t bytes) override {
+        if (mlBackend)
+          return mlBackend->allocate(bytes);
         return std::malloc(bytes);
       }
-      void deallocate(void* ptr) override {
-        if (!ptr) return;
-        if (mlBackend) mlBackend->deallocate(ptr);
-        else std::free(ptr);
+      void deallocate(void *ptr) override {
+        if (!ptr)
+          return;
+        if (mlBackend)
+          mlBackend->deallocate(ptr);
+        else
+          std::free(ptr);
       }
-      void copy(void* dst, const void* src, size_t bytes) override {
-        if (!dst || !src || bytes == 0) return;
-        if (mlBackend) mlBackend->copyDeviceToDevice(dst, src, bytes);
-        else std::memcpy(dst, src, bytes);
+      void copy(void *dst, const void *src, size_t bytes) override {
+        if (!dst || !src || bytes == 0)
+          return;
+        if (mlBackend)
+          mlBackend->copyDeviceToDevice(dst, src, bytes);
+        else
+          std::memcpy(dst, src, bytes);
       }
-      duorou::ml::Backend* mlBackend;
+      duorou::ml::Backend *mlBackend;
     };
 
-    MLKVBackendAdapter kvAdapter(ml_context_ ? ml_context_->getBackend() : nullptr);
+    MLKVBackendAdapter kvAdapter(ml_context_ ? ml_context_->getBackend()
+                                             : nullptr);
     kvcache::Context kvCtx(&kvAdapter);
 
     // Instantiate causal KV cache and initialize with backend-aware context
     kv_cache_ = std::make_unique<kvcache::CausalCache>();
     kv_cache_->init(kvCtx, cache_config_);
 
-    std::cout << "[DEBUG] KV cache instantiated and initialized (type=Causal, maxSeqLen: "
+    std::cout << "[DEBUG] KV cache instantiated and initialized (type=Causal, "
+                 "maxSeqLen: "
               << cache_config_.maxSeqLen
               << ", numLayers: " << cache_config_.numLayers
               << ", numHeads: " << cache_config_.numHeads
@@ -975,7 +1064,8 @@ bool MLInferenceEngine::initializeKVCache() {
     return true;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to initialize KV cache: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Failed to initialize KV cache: " << e.what()
+              << std::endl;
     return false;
   }
 }
@@ -985,7 +1075,8 @@ bool MLInferenceEngine::precomputeRoPEFreqs() {
     std::cout << "[DEBUG] Precomputing RoPE frequencies" << std::endl;
 
     if (n_heads_ == 0) {
-      std::cerr << "[ERROR] n_heads_ is zero, cannot compute head_dim" << std::endl;
+      std::cerr << "[ERROR] n_heads_ is zero, cannot compute head_dim"
+                << std::endl;
       return false;
     }
 
@@ -997,9 +1088,11 @@ bool MLInferenceEngine::precomputeRoPEFreqs() {
     rope_freqs_.clear();
     rope_freqs_.reserve(rope_dim / 2);
 
-    // Calculate RoPE frequencies（与 GGUF 的 rope.dimension_count & rope.freq_base 对齐）
+    // Calculate RoPE frequencies（与 GGUF 的 rope.dimension_count &
+    // rope.freq_base 对齐）
     for (uint32_t i = 0; i < rope_dim / 2; ++i) {
-      float freq = 1.0f / std::pow(theta, (2.0f * i) / static_cast<float>(rope_dim));
+      float freq =
+          1.0f / std::pow(theta, (2.0f * i) / static_cast<float>(rope_dim));
       rope_freqs_.push_back(freq);
     }
 
@@ -1011,7 +1104,8 @@ bool MLInferenceEngine::precomputeRoPEFreqs() {
     return true;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Failed to precompute RoPE frequencies: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Failed to precompute RoPE frequencies: " << e.what()
+              << std::endl;
     return false;
   }
 }
@@ -1128,57 +1222,267 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
   }
 }
 
+std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
+                                                uint32_t max_tokens,
+                                                float temperature,
+                                                float top_p) {
+  try {
+    if (!initialized_) {
+      return "Error: Inference engine not initialized";
+    }
+    if (!qwen_model_ || !ml_context_) {
+      return "Error: Qwen model or ML context not initialized";
+    }
+
+    // Encode with Qwen tokenizer
+    std::vector<int32_t> input_ids = qwen_model_->encode(prompt, true);
+    if (input_ids.empty()) {
+      return "Error: Failed to encode prompt";
+    }
+
+    // Get EOS from GGUF or vocabulary
+    int32_t eos_id = -1;
+    if (gguf_parser_) {
+      if (const auto *kvEOS =
+              gguf_parser_->getMetadata("tokenizer.ggml.eos_token_id")) {
+        eos_id = kvEOS->asInt32();
+      }
+    }
+    if (eos_id < 0) {
+      const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
+      eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
+    }
+    if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
+      input_ids.pop_back();
+    }
+
+    std::vector<int32_t> sequence_ids = input_ids;
+    std::vector<int32_t> generated_ids;
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+
+    size_t generated = 0;
+    while (generated < max_tokens) {
+      // Build input tensor: full sequence for first step, last token afterwards
+      duorou::ml::Tensor input_tensor;
+      if (generated == 0) {
+        input_tensor =
+            duorou::ml::Tensor({static_cast<int64_t>(sequence_ids.size())},
+                               duorou::ml::DataType::INT32);
+        if (ml_context_->getBackend())
+          input_tensor.setBackend(ml_context_->getBackend());
+        input_tensor.allocate(input_tensor.backend());
+        input_tensor.copyFromHost(sequence_ids.data(),
+                                  sequence_ids.size() * sizeof(int32_t));
+      } else {
+        int32_t last_id = sequence_ids.back();
+        input_tensor = duorou::ml::Tensor({1}, duorou::ml::DataType::INT32);
+        if (ml_context_->getBackend())
+          input_tensor.setBackend(ml_context_->getBackend());
+        input_tensor.allocate(input_tensor.backend());
+        input_tensor.copyFromHost(&last_id, sizeof(int32_t));
+      }
+
+      // Use multimodal forward for consistency (no images here)
+      duorou::ml::Tensor logits_tensor =
+          qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+      if (logits_tensor.numel() <= 0) {
+        break;
+      }
+
+      // Copy logits to host
+      std::vector<float> logits(static_cast<size_t>(logits_tensor.numel()));
+      logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
+
+      // Temperature scaling
+      if (temperature > 0.0f) {
+        for (auto &x : logits)
+          x /= temperature;
+      }
+
+      // Argmax shortcut when temperature is effectively 0
+      int32_t next_token = -1;
+      if (temperature <= 0.0f) {
+        next_token = static_cast<int32_t>(
+            std::max_element(logits.begin(), logits.end()) - logits.begin());
+      } else {
+        // ggml softmax
+        const size_t vocab = logits.size();
+        ggml_init_params ip = {
+            (size_t)(vocab * sizeof(float) * 4 + 1 * 1024 * 1024), nullptr,
+            false};
+        ggml_context *ctx = ggml_init(ip);
+        if (!ctx) {
+          return "Error: ggml_init failed";
+        }
+        ggml_tensor *t_logits =
+            ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (int64_t)vocab);
+        std::memcpy(t_logits->data, logits.data(), vocab * sizeof(float));
+        ggml_tensor *t_probs = ggml_soft_max(ctx, t_logits);
+        ggml_cgraph *gf = ggml_new_graph(ctx);
+        ggml_build_forward_expand(gf, t_probs);
+        ggml_graph_compute_with_ctx(ctx, gf, 1);
+        std::vector<float> probs(vocab);
+        std::memcpy(probs.data(), t_probs->data, vocab * sizeof(float));
+
+        // top-p sampling
+        if (top_p >= 1.0f) {
+          std::discrete_distribution<int> dist(probs.begin(), probs.end());
+          next_token = dist(rng);
+        } else {
+          std::vector<int> idx(vocab);
+          std::iota(idx.begin(), idx.end(), 0);
+          std::sort(idx.begin(), idx.end(),
+                    [&](int a, int b) { return probs[a] > probs[b]; });
+          float acc = 0.0f;
+          size_t cut = 0;
+          for (; cut < idx.size(); ++cut) {
+            acc += probs[idx[cut]];
+            if (acc >= top_p)
+              break;
+          }
+          if (cut >= idx.size())
+            cut = idx.size() - 1;
+          std::vector<float> kept_probs(cut + 1);
+          for (size_t i = 0; i <= cut; ++i)
+            kept_probs[i] = probs[idx[i]];
+          for (auto &p : kept_probs)
+            p /= (acc > 0.0f ? acc : 1.0f);
+          std::discrete_distribution<int> dist(kept_probs.begin(),
+                                               kept_probs.end());
+          int pick = dist(rng);
+          next_token = idx[pick];
+        }
+        ggml_free(ctx);
+      }
+
+      if (next_token < 0)
+        break;
+      if (eos_id >= 0 && next_token == eos_id)
+        break;
+
+      sequence_ids.push_back(next_token);
+      generated_ids.push_back(next_token);
+      generated += 1;
+    }
+
+    // Decode only generated part to text using Qwen detokenizer
+    std::string out = generated_ids.empty()
+                          ? std::string()
+                          : qwen_model_->decode(generated_ids);
+    return out.empty() ? std::string("(empty)") : out;
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Exception in generateWithGGLM: " << e.what()
+              << std::endl;
+    return "Error: " + std::string(e.what());
+  }
+}
+
 // Internal Forward mode: Use Qwen model for actual inference
 std::string
 MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
                                                uint32_t max_tokens,
                                                float temperature, float top_p) {
   try {
-    std::cout << "[DEBUG] [InternalForward] Starting Qwen model tensor forward with KV cache" << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Starting Qwen model tensor forward "
+                 "with KV cache"
+              << std::endl;
     // Diagnostics: model configuration and components
-    std::cout << "[DEBUG] [InternalForward] Model config - vocab_size: " << vocab_size_
-              << ", n_layers: " << n_layers_ << ", n_heads: " << n_heads_
-              << ", n_kv_heads: " << n_kv_heads_ << ", n_embd: " << n_embd_
-              << ", n_ctx: " << n_ctx_ << ", rope_dim: " << rope_dim_
+    std::cout << "[DEBUG] [InternalForward] Model config - vocab_size: "
+              << vocab_size_ << ", n_layers: " << n_layers_
+              << ", n_heads: " << n_heads_ << ", n_kv_heads: " << n_kv_heads_
+              << ", n_embd: " << n_embd_ << ", n_ctx: " << n_ctx_
+              << ", rope_dim: " << rope_dim_
               << ", rope_freq_base: " << rope_freq_base_ << std::endl;
-    std::cout << "[DEBUG] [InternalForward] Weight map tensors: " << weight_map_.size() << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Weight map tensors: "
+              << weight_map_.size() << std::endl;
     // Log key tensor shapes to aid diagnosis
     {
-      auto logTensorShape = [&](const char* name) {
+      auto logTensorShape = [&](const char *name) {
         auto it = weight_map_.find(name);
         if (it != weight_map_.end() && it->second) {
           const auto &sh = it->second->shape();
-          std::cout << "[DEBUG] [InternalForward] tensor '" << name << "' shape: [";
+          std::cout << "[DEBUG] [InternalForward] tensor '" << name
+                    << "' shape: [";
           for (size_t i = 0; i < sh.size(); ++i) {
             std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
           }
-          std::cout << "], dtype=" << duorou::ml::dataTypeToString(it->second->dtype()) << std::endl;
+          std::cout << "], dtype="
+                    << duorou::ml::dataTypeToString(it->second->dtype())
+                    << std::endl;
         } else {
-          std::cout << "[DEBUG] [InternalForward] tensor '" << name << "' not found" << std::endl;
+          std::cout << "[DEBUG] [InternalForward] tensor '" << name
+                    << "' not found" << std::endl;
         }
       };
       logTensorShape("token_embd.weight");
       logTensorShape("output.weight");
       logTensorShape("output_norm.weight");
+      // Scan a few critical weights for dtype and basic stats
+      auto scanTensor = [&](const char *name) {
+        auto it = weight_map_.find(name);
+        if (it != weight_map_.end() && it->second) {
+          const auto &t = it->second;
+          std::cout << "[DEBUG] [InternalForward] scan '" << name
+                    << "' dtype=" << duorou::ml::dataTypeToString(t->dtype())
+                    << ", numel=" << t->numel() << std::endl;
+          size_t n = static_cast<size_t>(std::min<int64_t>(t->numel(), 1024));
+          if (n > 0) {
+            std::vector<float> buf(n);
+            // Best-effort read as float
+            t->copyToHost(buf.data(), n * sizeof(float));
+            bool has_nan = false, has_inf = false;
+            bool all_zero = true;
+            float mn = buf[0], mx = buf[0];
+            for (size_t i = 0; i < n; ++i) {
+              float v = buf[i];
+              if (std::isnan(v))
+                has_nan = true;
+              if (std::isinf(v))
+                has_inf = true;
+              if (v != 0.0f)
+                all_zero = false;
+              mn = std::min(mn, v);
+              mx = std::max(mx, v);
+            }
+            std::cout << "[DEBUG] [InternalForward] '" << name
+                      << "' sample stats min=" << mn << ", max=" << mx
+                      << ", NaN=" << has_nan << ", Inf=" << has_inf
+                      << ", all_zero=" << all_zero << std::endl;
+          }
+        }
+      };
+      scanTensor("token_embd.weight");
+      scanTensor("output.weight");
+      scanTensor("output_norm.weight");
     }
     if (kv_cache_) {
-      std::cout << "[DEBUG] [InternalForward] KV cache type: Causal; cache initialized" << std::endl;
+      std::cout << "[DEBUG] [InternalForward] KV cache type: Causal; cache "
+                   "initialized"
+                << std::endl;
     } else {
-      std::cout << "[DEBUG] [InternalForward] KV cache not present" << std::endl;
+      std::cout << "[DEBUG] [InternalForward] KV cache not present"
+                << std::endl;
     }
 
     // Check if Qwen model and ML context are available
     if (!qwen_model_ || !ml_context_) {
-      std::cerr << "[ERROR] Qwen model or ML context not initialized" << std::endl;
+      std::cerr << "[ERROR] Qwen model or ML context not initialized"
+                << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
-    // First encode text to token IDs using Qwen tokenizer (llama.cpp tokenizer disabled)
+    // First encode text to token IDs using Qwen tokenizer (llama.cpp tokenizer
+    // disabled)
     std::vector<int32_t> input_ids = qwen_model_->encode(prompt, true);
-    std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization (llama.cpp tokenizer disabled)" << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization (llama.cpp "
+                 "tokenizer disabled)"
+              << std::endl;
 
     if (input_ids.empty()) {
-      std::cout << "[WARN] [InternalForward] Failed to encode prompt, using fallback" << std::endl;
+      std::cout
+          << "[WARN] [InternalForward] Failed to encode prompt, using fallback"
+          << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
@@ -1188,27 +1492,33 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     // Remove trailing EOS from input to allow generation to proceed,
     // and remember prompt length so we can strip it from the final output
     size_t prompt_len = input_ids.size();
-    
+
     // Get EOS token ID from GGUF metadata (Qwen2.5VL uses 151645)
     int32_t eos_id = -1;
     if (gguf_parser_) {
-      if (const auto* kvEOS = gguf_parser_->getMetadata("tokenizer.ggml.eos_token_id")) {
+      if (const auto *kvEOS =
+              gguf_parser_->getMetadata("tokenizer.ggml.eos_token_id")) {
         eos_id = kvEOS->asInt32();
-        std::cout << "[DEBUG] [InternalForward] Using EOS token ID from GGUF: " << eos_id << std::endl;
+        std::cout << "[DEBUG] [InternalForward] Using EOS token ID from GGUF: "
+                  << eos_id << std::endl;
       }
     }
-    
+
     // Fallback to vocabulary if GGUF parsing fails
     if (eos_id < 0) {
-      const duorou::model::Vocabulary* v = qwen_model_->getVocabulary();
+      const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
       eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
-      std::cout << "[DEBUG] [InternalForward] Using EOS token ID from vocabulary: " << eos_id << std::endl;
+      std::cout
+          << "[DEBUG] [InternalForward] Using EOS token ID from vocabulary: "
+          << eos_id << std::endl;
     }
-    
+
     if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
       input_ids.pop_back();
       prompt_len = input_ids.size();
-      std::cout << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens" << std::endl;
+      std::cout
+          << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens"
+          << std::endl;
     }
 
     // Prepare generation loop
@@ -1216,24 +1526,30 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
 
     // Ensure KV cache is initialized
     if (!kv_cache_) {
-      std::cout << "[WARN] [InternalForward] KV cache not initialized; proceeding without cache" << std::endl;
+      std::cout << "[WARN] [InternalForward] KV cache not initialized; "
+                   "proceeding without cache"
+                << std::endl;
     } else {
-      std::cout << "[DEBUG] [InternalForward] KV cache available; will be passed into forward()" << std::endl;
+      std::cout << "[DEBUG] [InternalForward] KV cache available; will be "
+                   "passed into forward()"
+                << std::endl;
     }
 
     // Random engine for sampling
     static thread_local std::mt19937 rng(std::random_device{}());
 
-    auto apply_temperature = [&](std::vector<float>& logits, float temp){
-      if (temp <= 0.0f) return; // handled by argmax path later
+    auto apply_temperature = [&](std::vector<float> &logits, float temp) {
+      if (temp <= 0.0f)
+        return; // handled by argmax path later
       for (auto &x : logits) {
         x /= temp;
       }
     };
 
-    auto softmax = [&](const std::vector<float>& logits){
+    auto softmax = [&](const std::vector<float> &logits) {
       std::vector<float> probs(logits.size());
-      if (logits.empty()) return probs;
+      if (logits.empty())
+        return probs;
       float max_logit = *std::max_element(logits.begin(), logits.end());
       double sum = 0.0;
       for (size_t i = 0; i < logits.size(); ++i) {
@@ -1242,13 +1558,15 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
         sum += e;
       }
       if (sum > 0.0) {
-        for (auto &p : probs) p = static_cast<float>(p / sum);
+        for (auto &p : probs)
+          p = static_cast<float>(p / sum);
       }
       return probs;
     };
 
-    auto sample_top_p = [&](const std::vector<float>& probs, float tp){
-      if (probs.empty()) return int32_t(-1);
+    auto sample_top_p = [&](const std::vector<float> &probs, float tp) {
+      if (probs.empty())
+        return int32_t(-1);
       if (tp >= 1.0f) {
         // Full distribution sampling
         std::discrete_distribution<int> dist(probs.begin(), probs.end());
@@ -1257,7 +1575,8 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       // Sort indices by prob desc
       std::vector<int> idx(probs.size());
       std::iota(idx.begin(), idx.end(), 0);
-      std::sort(idx.begin(), idx.end(), [&](int a, int b){ return probs[a] > probs[b]; });
+      std::sort(idx.begin(), idx.end(),
+                [&](int a, int b) { return probs[a] > probs[b]; });
       // Accumulate until reaching top_p
       std::vector<int> kept;
       std::vector<float> kept_probs;
@@ -1266,14 +1585,17 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
         kept.push_back(id);
         kept_probs.push_back(probs[id]);
         acc += probs[id];
-        if (acc >= tp) break;
+        if (acc >= tp)
+          break;
       }
       // Normalize kept_probs
       if (acc > 0.0f) {
-        for (auto &p : kept_probs) p = p / acc;
+        for (auto &p : kept_probs)
+          p = p / acc;
       }
       // Sample among kept
-      std::discrete_distribution<int> dist(kept_probs.begin(), kept_probs.end());
+      std::discrete_distribution<int> dist(kept_probs.begin(),
+                                           kept_probs.end());
       int pick = dist(rng);
       return static_cast<int32_t>(kept[pick]);
     };
@@ -1283,19 +1605,34 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     while (generated < max_tokens) {
       duorou::ml::Tensor logits_tensor;
 
-      // Unified inference: always use multimodal model's forward method for consistency
+      // Unified inference: always use multimodal model's forward method for
+      // consistency
       duorou::ml::Tensor input_tensor;
-      
+
       if (generated == 0) {
         // Prime KV cache with full prompt on first pass
-        input_tensor = duorou::ml::Tensor({static_cast<int64_t>(sequence_ids.size())}, duorou::ml::DataType::INT32);
+        input_tensor =
+            duorou::ml::Tensor({static_cast<int64_t>(sequence_ids.size())},
+                               duorou::ml::DataType::INT32);
         if (ml_context_->getBackend()) {
           input_tensor.setBackend(ml_context_->getBackend());
         }
         if (!sequence_ids.empty()) {
-          input_tensor.copyFromHost(sequence_ids.data(), sequence_ids.size() * sizeof(int32_t));
+          input_tensor.copyFromHost(sequence_ids.data(),
+                                    sequence_ids.size() * sizeof(int32_t));
         }
-        std::cout << "[DEBUG] [InternalForward] First pass: processing " << sequence_ids.size() << " tokens" << std::endl;
+        std::cout << "[DEBUG] [InternalForward] First pass: processing "
+                  << sequence_ids.size() << " tokens" << std::endl;
+        {
+          const auto &sh = input_tensor.shape();
+          std::cout << "[DEBUG] [InternalForward] input_tensor shape: [";
+          for (size_t i = 0; i < sh.size(); ++i) {
+            std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
+          }
+          std::cout << "], dtype="
+                    << duorou::ml::dataTypeToString(input_tensor.dtype())
+                    << std::endl;
+        }
       } else {
         // Step-by-step decode using only the last generated token
         int32_t last_id = sequence_ids.back();
@@ -1304,13 +1641,29 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
           input_tensor.setBackend(ml_context_->getBackend());
         }
         input_tensor.copyFromHost(&last_id, sizeof(int32_t));
-        std::cout << "[DEBUG] [InternalForward] Step " << generated << ": processing token " << last_id << std::endl;
+        std::cout << "[DEBUG] [InternalForward] Step " << generated
+                  << ": processing token " << last_id << std::endl;
+        {
+          const auto &sh = input_tensor.shape();
+          std::cout << "[DEBUG] [InternalForward] input_tensor shape: [";
+          for (size_t i = 0; i < sh.size(); ++i) {
+            std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
+          }
+          std::cout << "], dtype="
+                    << duorou::ml::dataTypeToString(input_tensor.dtype())
+                    << std::endl;
+        }
       }
-      
+
       // Always use multimodal model's forward method for consistency
-      logits_tensor = qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
-      
-      std::cout << "[DEBUG] [InternalForward] Forward pass completed, logits shape: [" << logits_tensor.numel() << "]" << std::endl;
+      logits_tensor =
+          qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+
+      std::cout
+          << "[DEBUG] [InternalForward] Forward pass completed, logits numel="
+          << logits_tensor.numel()
+          << ", dtype=" << duorou::ml::dataTypeToString(logits_tensor.dtype())
+          << std::endl;
 
       // Convert logits to host vector
       std::vector<float> logits;
@@ -1319,70 +1672,88 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
         logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
       }
       if (logits.empty()) {
-        std::cout << "[WARN] [InternalForward] Empty logits from forward(); breaking" << std::endl;
+        std::cout
+            << "[WARN] [InternalForward] Empty logits from forward(); breaking"
+            << std::endl;
         break;
       }
 
-      // Validate logits size equals vocabulary size; otherwise assert and fallback to llama.cpp
+      // Validate logits size equals vocabulary size; otherwise assert and
+      // fallback to llama.cpp
       {
         size_t vocab_size = qwen_model_->getVocabSize();
         if (vocab_size == 0 || logits.size() != vocab_size) {
-          std::cerr << "[ERROR] [InternalForward] Logits size mismatch: got " << logits.size()
-                    << ", expected vocab size " << vocab_size << "; falling back to llama.cpp" << std::endl;
+          std::cerr << "[ERROR] [InternalForward] Logits size mismatch: got "
+                    << logits.size() << ", expected vocab size " << vocab_size
+                    << "; falling back to llama.cpp" << std::endl;
           // Attempt auto fallback and delegate to llama backend
           if (tryAutoFallback("Logits size mismatch in internal forward")) {
-            return generateWithLlama(prompt, max_tokens, temperature, top_p);
+            // Prefer intelligent response to reduce llama.cpp dependency
+            return generateIntelligentResponse(prompt, max_tokens, temperature);
           } else {
-            // If fallback fails, return intelligent response
             return generateIntelligentResponse(prompt, max_tokens, temperature);
           }
         }
-        
+
         // Debug: Check logits validity and range
         auto minmax = std::minmax_element(logits.begin(), logits.end());
         float min_logit = *minmax.first;
         float max_logit = *minmax.second;
-        
-        std::cout << "[DEBUG] [InternalForward] Logits range: [" << min_logit << ", " << max_logit << "]" << std::endl;
-        
+
+        std::cout << "[DEBUG] [InternalForward] Logits range: [" << min_logit
+                  << ", " << max_logit << "]" << std::endl;
+
         // Check for invalid values
         bool has_nan = false, has_inf = false;
         for (float logit : logits) {
-          if (std::isnan(logit)) has_nan = true;
-          if (std::isinf(logit)) has_inf = true;
+          if (std::isnan(logit))
+            has_nan = true;
+          if (std::isinf(logit))
+            has_inf = true;
         }
-        
+
         if (has_nan || has_inf) {
-          std::cerr << "[ERROR] [InternalForward] Invalid logits detected - NaN: " << has_nan 
-                    << ", Inf: " << has_inf << "; falling back to llama.cpp" << std::endl;
+          std::cerr
+              << "[ERROR] [InternalForward] Invalid logits detected - NaN: "
+              << has_nan << ", Inf: " << has_inf
+              << "; falling back to llama.cpp" << std::endl;
           if (tryAutoFallback("Invalid logits (NaN/Inf) in internal forward")) {
-            return generateWithLlama(prompt, max_tokens, temperature, top_p);
+            return generateIntelligentResponse(prompt, max_tokens, temperature);
           } else {
             return generateIntelligentResponse(prompt, max_tokens, temperature);
           }
         }
-        
-        // Check if logits are all zeros (indicating potential weight loading issues)
-        bool all_zeros = std::all_of(logits.begin(), logits.end(), [](float x) { return x == 0.0f; });
+
+        // Check if logits are all zeros (indicating potential weight loading
+        // issues)
+        bool all_zeros = std::all_of(logits.begin(), logits.end(),
+                                     [](float x) { return x == 0.0f; });
         if (all_zeros) {
-          std::cerr << "[ERROR] [InternalForward] All logits are zero - potential weight loading issue; falling back to llama.cpp" << std::endl;
+          std::cerr
+              << "[ERROR] [InternalForward] All logits are zero - potential "
+                 "weight loading issue; falling back to llama.cpp"
+              << std::endl;
           if (tryAutoFallback("All-zero logits in internal forward")) {
-            return generateWithLlama(prompt, max_tokens, temperature, top_p);
+            return generateIntelligentResponse(prompt, max_tokens, temperature);
           } else {
             return generateIntelligentResponse(prompt, max_tokens, temperature);
           }
         }
-        
-        // Check for extremely large values that might indicate numerical instability
+
+        // Check for extremely large values that might indicate numerical
+        // instability
         if (max_logit > 1000.0f || min_logit < -1000.0f) {
-          std::cerr << "[WARN] [InternalForward] Extreme logit values detected - may indicate numerical instability" << std::endl;
+          std::cerr << "[WARN] [InternalForward] Extreme logit values detected "
+                       "- may indicate numerical instability"
+                    << std::endl;
         }
       }
 
       int32_t next_token = -1;
       if (temperature <= 0.0f) {
         // Greedy: pick argmax
-        next_token = static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
+        next_token = static_cast<int32_t>(std::distance(
+            logits.begin(), std::max_element(logits.begin(), logits.end())));
       } else {
         // Temperature scaling then top-p sampling
         apply_temperature(logits, temperature);
@@ -1391,7 +1762,9 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
       }
 
       if (next_token < 0) {
-        std::cout << "[WARN] [InternalForward] Sampling returned invalid token; stopping" << std::endl;
+        std::cout << "[WARN] [InternalForward] Sampling returned invalid "
+                     "token; stopping"
+                  << std::endl;
         break;
       }
 
@@ -1400,7 +1773,9 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
 
       // Stop at EOS if available
       if (eos_id >= 0 && next_token == eos_id) {
-        std::cout << "[DEBUG] [InternalForward] Reached EOS token; stopping generation" << std::endl;
+        std::cout << "[DEBUG] [InternalForward] Reached EOS token; stopping "
+                     "generation"
+                  << std::endl;
         break;
       }
     }
@@ -1411,15 +1786,21 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     // Only decode newly generated tokens (exclude the prompt)
     std::vector<int32_t> gen_ids;
     if (sequence_ids.size() > prompt_len) {
-      gen_ids.assign(sequence_ids.begin() + static_cast<std::ptrdiff_t>(prompt_len), sequence_ids.end());
+      gen_ids.assign(sequence_ids.begin() +
+                         static_cast<std::ptrdiff_t>(prompt_len),
+                     sequence_ids.end());
     }
 
     // Unified: always use Qwen decoder for internal forward output
     result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
-    std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization (excluded prompt tokens)" << std::endl;
+    std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization "
+                 "(excluded prompt tokens)"
+              << std::endl;
 
     if (result.empty()) {
-      std::cout << "[WARN] [InternalForward] Failed to decode output tokens, using fallback" << std::endl;
+      std::cout << "[WARN] [InternalForward] Failed to decode output tokens, "
+                   "using fallback"
+                << std::endl;
       return generateIntelligentResponse(prompt, max_tokens, temperature);
     }
 
@@ -1428,7 +1809,8 @@ MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
     return result;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in generateWithInternalForward: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Exception in generateWithInternalForward: "
+              << e.what() << std::endl;
     return "Error: " + std::string(e.what());
   }
 }
@@ -1445,12 +1827,14 @@ void MLInferenceEngine::cleanupResources() {
 
   // Delete unique tensors referenced by model_weights_ and weight_map_
   {
-    std::unordered_set<duorou::ml::Tensor*> unique;
+    std::unordered_set<duorou::ml::Tensor *> unique;
     for (auto *w : model_weights_) {
-      if (w) unique.insert(w);
+      if (w)
+        unique.insert(w);
     }
     for (auto &kv : weight_map_) {
-      if (kv.second) unique.insert(kv.second);
+      if (kv.second)
+        unique.insert(kv.second);
     }
     for (auto *t : unique) {
       delete t;
@@ -1483,7 +1867,9 @@ void MLInferenceEngine::cleanupResources() {
 } // namespace extensions
 } // namespace duorou
 
-duorou::ml::DataType duorou::extensions::ollama::MLInferenceEngine::convertGGMLDataType(GGMLTensorType ggmlType) {
+duorou::ml::DataType
+duorou::extensions::ollama::MLInferenceEngine::convertGGMLDataType(
+    GGMLTensorType ggmlType) {
   switch (ggmlType) {
   case GGMLTensorType::F32:
     return duorou::ml::DataType::FLOAT32;
@@ -1497,14 +1883,16 @@ duorou::ml::DataType duorou::extensions::ollama::MLInferenceEngine::convertGGMLD
   }
 }
 
-bool duorou::extensions::ollama::MLInferenceEngine::loadTensorData(const std::string &tensorName, duorou::ml::Tensor *tensor) {
+bool duorou::extensions::ollama::MLInferenceEngine::loadTensorData(
+    const std::string &tensorName, duorou::ml::Tensor *tensor) {
   if (!gguf_parser_) {
     std::cerr << "[ERROR] GGUF parser not initialized" << std::endl;
     return false;
   }
   const auto *info = gguf_parser_->getTensorInfo(tensorName);
   if (!info) {
-    std::cerr << "[WARN] Tensor info not found in GGUF: " << tensorName << std::endl;
+    std::cerr << "[WARN] Tensor info not found in GGUF: " << tensorName
+              << std::endl;
     return false;
   }
 
@@ -1527,7 +1915,8 @@ bool duorou::extensions::ollama::MLInferenceEngine::loadTensorData(const std::st
 
   // Read tensor data into tensor->data()
   if (!gguf_parser_->readTensorData(*info, tensor->data(), bytes)) {
-    std::cerr << "[ERROR] Failed to read tensor data: " << tensorName << std::endl;
+    std::cerr << "[ERROR] Failed to read tensor data: " << tensorName
+              << std::endl;
     return false;
   }
   return true;
@@ -1562,7 +1951,8 @@ bool duorou::extensions::ollama::MLInferenceEngine::mapTensorWeights() {
     t->allocate(t->backend());
 
     if (!loadTensorData(info.name, t)) {
-      std::cerr << "[WARN] Skipping tensor due to read failure: " << info.name << std::endl;
+      std::cerr << "[WARN] Skipping tensor due to read failure: " << info.name
+                << std::endl;
       delete t;
       continue;
     }
@@ -1570,15 +1960,19 @@ bool duorou::extensions::ollama::MLInferenceEngine::mapTensorWeights() {
     weight_map_[info.name] = t;
     mapped++;
   }
-  std::cout << "[DEBUG] mapTensorWeights: mapped " << mapped << " tensors" << std::endl;
+  std::cout << "[DEBUG] mapTensorWeights: mapped " << mapped << " tensors"
+            << std::endl;
   return mapped > 0;
 }
 
-bool duorou::extensions::ollama::MLInferenceEngine::checkInternalForwardSupport() {
-  if (!gguf_parser_) return false;
+bool duorou::extensions::ollama::MLInferenceEngine::
+    checkInternalForwardSupport() {
+  if (!gguf_parser_)
+    return false;
   std::string arch = gguf_parser_->getArchitecture().name;
   std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
-  // Prefer internal forward for Qwen-family architectures, esp. multimodal variants (vl)
+  // Prefer internal forward for Qwen-family architectures, esp. multimodal
+  // variants (vl)
   bool is_qwen = arch.find("qwen") != std::string::npos;
   if (!is_qwen) {
     return false;
@@ -1587,34 +1981,45 @@ bool duorou::extensions::ollama::MLInferenceEngine::checkInternalForwardSupport(
   return true;
 }
 
-bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(const std::string &reason) {
+bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(
+    const std::string &reason) {
   // Allow disabling automatic fallback via environment variable
-  const char* disable_env = std::getenv("DUOROU_DISABLE_LLAMA_FALLBACK");
-  bool disable_fallback = disable_env && std::string(disable_env) != "0" && std::string(disable_env).size() > 0;
+  const char *disable_env = std::getenv("DUOROU_DISABLE_LLAMA_FALLBACK");
+  bool disable_fallback = disable_env && std::string(disable_env) != "0" &&
+                          std::string(disable_env).size() > 0;
   if (disable_fallback) {
-    std::cerr << "[INFO] Auto fallback to llama.cpp disabled by DUOROU_DISABLE_LLAMA_FALLBACK. Reason: " << reason << std::endl;
+    std::cerr << "[INFO] Auto fallback to llama.cpp disabled by "
+                 "DUOROU_DISABLE_LLAMA_FALLBACK. Reason: "
+              << reason << std::endl;
     use_llama_backend_ = false;
     return false;
   }
 
-  // Check if llama.cpp supports the current architecture before attempting fallback
-  std::string arch = gguf_parser_ ? gguf_parser_->getArchitecture().name : std::string();
+  // Check if llama.cpp supports the current architecture before attempting
+  // fallback
+  std::string arch =
+      gguf_parser_ ? gguf_parser_->getArchitecture().name : std::string();
   std::transform(arch.begin(), arch.end(), arch.begin(), ::tolower);
   bool llama_supported = isSupportedByLlamaCpp(arch);
   if (!llama_supported) {
     std::cerr << "[WARN] Auto fallback skipped: architecture '" << arch
-              << "' is unsupported by llama.cpp; staying on internal forward" << std::endl;
+              << "' is unsupported by llama.cpp; staying on internal forward"
+              << std::endl;
     use_llama_backend_ = false;
-    // Do not attempt llama.cpp; let caller handle initialization failure gracefully
+    // Do not attempt llama.cpp; let caller handle initialization failure
+    // gracefully
     return false;
   }
 
-  std::cerr << "[INFO] Attempting auto fallback to llama.cpp due to: " << reason << std::endl;
+  std::cerr << "[INFO] Attempting auto fallback to llama.cpp due to: " << reason
+            << std::endl;
   use_llama_backend_ = true;
   try {
     llama_backend_init();
     if (!loadLlamaModel(model_path_)) {
-      std::cerr << "[ERROR] Auto fallback failed: could not load llama.cpp model" << std::endl;
+      std::cerr
+          << "[ERROR] Auto fallback failed: could not load llama.cpp model"
+          << std::endl;
       use_llama_backend_ = false;
       return false;
     }
@@ -1622,7 +2027,8 @@ bool duorou::extensions::ollama::MLInferenceEngine::tryAutoFallback(const std::s
     std::cout << "[DEBUG] Auto fallback to llama.cpp succeeded" << std::endl;
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception during auto fallback: " << e.what() << std::endl;
+    std::cerr << "[ERROR] Exception during auto fallback: " << e.what()
+              << std::endl;
     use_llama_backend_ = false;
     return false;
   }
