@@ -1,7 +1,7 @@
 #include "qwen_text_model.h"
+#include "../core/logger.h"
 #include "../extensions/ollama/gguf_parser.h"
 #include "../ml/backend/backend.h"
-#include "../core/logger.h"
 #include "ggml.h"
 #include "tokenizer_factory.h"
 
@@ -11,11 +11,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <random>
 #include <sstream>
-#include <iomanip>
 
 // KV Cache backend adapter bridging ML backend to KV cache backend
 namespace {
@@ -57,22 +57,22 @@ struct VectorStats {
   size_t inf_count;
 };
 
-VectorStats computeVectorStats(const std::vector<float>& vec) {
+VectorStats computeVectorStats(const std::vector<float> &vec) {
   VectorStats stats = {};
   stats.size = vec.size();
-  
+
   if (vec.empty()) {
     return stats;
   }
-  
+
   stats.min_val = std::numeric_limits<float>::max();
   stats.max_val = std::numeric_limits<float>::lowest();
   stats.nan_count = 0;
   stats.inf_count = 0;
-  
+
   double sum = 0.0;
   size_t valid_count = 0;
-  
+
   for (float val : vec) {
     if (std::isnan(val)) {
       stats.nan_count++;
@@ -82,16 +82,16 @@ VectorStats computeVectorStats(const std::vector<float>& vec) {
       stats.inf_count++;
       continue;
     }
-    
+
     stats.min_val = std::min(stats.min_val, val);
     stats.max_val = std::max(stats.max_val, val);
     sum += val;
     valid_count++;
   }
-  
+
   if (valid_count > 0) {
     stats.mean = static_cast<float>(sum / valid_count);
-    
+
     // Compute standard deviation
     double variance_sum = 0.0;
     for (float val : vec) {
@@ -107,24 +107,23 @@ VectorStats computeVectorStats(const std::vector<float>& vec) {
     stats.mean = 0.0f;
     stats.std_dev = 0.0f;
   }
-  
+
   return stats;
 }
 
-std::string formatVectorStats(const VectorStats& stats, const std::string& name) {
+std::string formatVectorStats(const VectorStats &stats,
+                              const std::string &name) {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(6);
   oss << "[DEBUG] " << name << " stats: "
-      << "size=" << stats.size
-      << ", min=" << stats.min_val
-      << ", max=" << stats.max_val
-      << ", mean=" << stats.mean
+      << "size=" << stats.size << ", min=" << stats.min_val
+      << ", max=" << stats.max_val << ", mean=" << stats.mean
       << ", std=" << stats.std_dev;
-  
+
   if (stats.nan_count > 0 || stats.inf_count > 0) {
     oss << ", NaN=" << stats.nan_count << ", Inf=" << stats.inf_count;
   }
-  
+
   return oss.str();
 }
 
@@ -152,7 +151,8 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
   mha_ = std::make_unique<duorou::ml::nn::MultiHeadAttention>(
       static_cast<int64_t>(options_.hiddenSize),
       static_cast<int64_t>(options_.numHeads),
-      static_cast<int64_t>(options_.numHeads), // temporarily align kvHeads with numHeads
+      static_cast<int64_t>(
+          options_.numHeads), // temporarily align kvHeads with numHeads
       /*bias=*/true,
       /*dropout=*/0.0f);
 }
@@ -169,7 +169,8 @@ std::vector<float> SelfAttention::forward(
   const int64_t seqLen = static_cast<int64_t>(input.size() / hidden);
 
   // Build an ml::Tensor view of [S, E]
-  duorou::ml::Tensor q({seqLen, static_cast<int64_t>(hidden)}, duorou::ml::DataType::FLOAT32);
+  duorou::ml::Tensor q({seqLen, static_cast<int64_t>(hidden)},
+                       duorou::ml::DataType::FLOAT32);
   if (auto *backend = ctx.getBackend()) {
     q.setBackend(backend);
   }
@@ -177,18 +178,21 @@ std::vector<float> SelfAttention::forward(
 
   // Lazy attach/allocate MHA weights to avoid matmul with unallocated data
   if (!mhaWeightsReady_) {
-    // If we have host-side weights loaded, attach them; otherwise, allocate zeros
+    // If we have host-side weights loaded, attach them; otherwise, allocate
+    // zeros
     const int64_t E = static_cast<int64_t>(options_.hiddenSize);
     const int64_t H = static_cast<int64_t>(options_.numHeads);
     const int64_t D = E / H;
     // Prepare expected shapes and sizes
-    const size_t qSz = static_cast<size_t>(E * H * D); // queryWeight_ shape in MHA is [E, H*D]
+    const size_t qSz =
+        static_cast<size_t>(E * H * D); // queryWeight_ shape in MHA is [E, H*D]
     const size_t kSz = static_cast<size_t>(E * H * D);
     const size_t vSz = static_cast<size_t>(E * H * D);
     const size_t oSz = static_cast<size_t>(H * D * E); // outputWeight_ [H*D, E]
 
-    auto ensure_size = [&](std::vector<float>& w, size_t sz) {
-      if (w.size() != sz) w.assign(sz, 0.0f);
+    auto ensure_size = [&](std::vector<float> &w, size_t sz) {
+      if (w.size() != sz)
+        w.assign(sz, 0.0f);
     };
     ensure_size(queryWeights_, qSz);
     ensure_size(keyWeights_, kSz);
@@ -196,7 +200,9 @@ std::vector<float> SelfAttention::forward(
     ensure_size(outputWeights_, oSz);
 
     // Bind to MHA
-    bool ok = mha_->setWeights(ctx, queryWeights_, keyWeights_, valueWeights_, outputWeights_, /*qB*/nullptr, /*kB*/nullptr, /*vB*/nullptr, /*oB*/nullptr);
+    bool ok = mha_->setWeights(ctx, queryWeights_, keyWeights_, valueWeights_,
+                               outputWeights_, /*qB*/ nullptr, /*kB*/ nullptr,
+                               /*vB*/ nullptr, /*oB*/ nullptr);
     if (!ok) {
       // Fallback: allocate via initializeWeights to avoid null data
       mha_->initializeWeights(ctx, "xavier_uniform");
@@ -270,9 +276,9 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
         // Assume W is [hidden, hidden] in row-major as (in_dim, out_dim) ->
         // index in*hidden + out
         for (int in = 0; in < static_cast<int>(hidden); ++in) {
-          acc += static_cast<double>(a[in]) *
-                 static_cast<double>(
-                     W[static_cast<size_t>(in) * hidden + outc]);
+          acc +=
+              static_cast<double>(a[in]) *
+              static_cast<double>(W[static_cast<size_t>(in) * hidden + outc]);
         }
         o[outc] = static_cast<float>(acc);
       }
@@ -812,41 +818,48 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
 
   size_t n = static_cast<size_t>(inputIds.numel());
   if (n == 0) {
-    logger.debug("[QwenTextModel::forward] Empty input tensor, returning empty result");
+    logger.debug(
+        "[QwenTextModel::forward] Empty input tensor, returning empty result");
     return duorou::ml::Tensor();
   }
-  
-  logger.debug("[QwenTextModel::forward] Starting forward pass with input size: " + std::to_string(n));
-  
+
+  logger.debug(
+      "[QwenTextModel::forward] Starting forward pass with input size: " +
+      std::to_string(n));
+
   if (inputIds.dtype() != duorou::ml::DataType::INT32) {
     std::cerr << "[WARN] QwenTextModel::forward expected INT32 inputIds; "
                  "proceeding with reinterpretation"
               << std::endl;
     logger.warning("Input tensor dtype mismatch, expected INT32");
   }
-  
+
   std::vector<int32_t> ids(n, 0);
   inputIds.copyToHost(ids.data(), n * sizeof(int32_t));
-  
+
   // Log input token IDs
   std::ostringstream token_stream;
   token_stream << "[QwenTextModel::forward] Input token IDs: [";
   for (size_t i = 0; i < std::min(n, size_t(10)); ++i) {
-    if (i > 0) token_stream << ", ";
+    if (i > 0)
+      token_stream << ", ";
     token_stream << ids[i];
   }
-  if (n > 10) token_stream << ", ...";
+  if (n > 10)
+    token_stream << ", ...";
   token_stream << "]";
   logger.debug(token_stream.str());
 
   // Embedding + positional encoding
   auto hiddenStates = embedTokens(ids);
-  logger.debug("[QwenTextModel::forward] After embedTokens: " + 
-               formatVectorStats(computeVectorStats(hiddenStates), "embeddings"));
-  
+  logger.debug(
+      "[QwenTextModel::forward] After embedTokens: " +
+      formatVectorStats(computeVectorStats(hiddenStates), "embeddings"));
+
   hiddenStates = applyPositionalEncoding(hiddenStates, ids.size());
-  logger.debug("[QwenTextModel::forward] After positional encoding: " + 
-               formatVectorStats(computeVectorStats(hiddenStates), "pos_encoded"));
+  logger.debug(
+      "[QwenTextModel::forward] After positional encoding: " +
+      formatVectorStats(computeVectorStats(hiddenStates), "pos_encoded"));
 
   // If KV Cache is provided, start forward with batch metadata
   if (cache) {
@@ -869,24 +882,28 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
 
   // Transformer layers with potential KV Cache usage
   std::vector<float> attentionMask; // placeholder
-  logger.debug("[QwenTextModel::forward] Processing " + std::to_string(layers_.size()) + " transformer layers");
-  
+  logger.debug("[QwenTextModel::forward] Processing " +
+               std::to_string(layers_.size()) + " transformer layers");
+
   for (size_t li = 0; li < layers_.size(); ++li) {
     if (cache)
       cache->setLayer(static_cast<int>(li));
-    
+
     auto prev_hidden = hiddenStates;
-    hiddenStates = layers_[li]->forward(ctx, hiddenStates, attentionMask, cache);
-    
+    hiddenStates =
+        layers_[li]->forward(ctx, hiddenStates, attentionMask, cache);
+
     // Log every 4th layer or if there are issues
     if (li % 4 == 0 || li == layers_.size() - 1) {
       auto stats = computeVectorStats(hiddenStates);
-      logger.debug("[QwenTextModel::forward] After layer " + std::to_string(li) + ": " + 
+      logger.debug("[QwenTextModel::forward] After layer " +
+                   std::to_string(li) + ": " +
                    formatVectorStats(stats, "layer_" + std::to_string(li)));
-      
+
       // Check for potential issues
       if (stats.nan_count > 0 || stats.inf_count > 0) {
-        logger.warning("Layer " + std::to_string(li) + " produced NaN or Inf values!");
+        logger.warning("Layer " + std::to_string(li) +
+                       " produced NaN or Inf values!");
       }
     }
   }
@@ -894,51 +911,57 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   // Output normalization
   auto pre_norm_hidden = hiddenStates;
   hiddenStates = layerNorm(hiddenStates, outputNormWeights_, options_.eps);
-  logger.debug("[QwenTextModel::forward] After output normalization: " + 
-               formatVectorStats(computeVectorStats(hiddenStates), "normalized"));
+  logger.debug(
+      "[QwenTextModel::forward] After output normalization: " +
+      formatVectorStats(computeVectorStats(hiddenStates), "normalized"));
 
   // Compute logits from last token hidden and return as Tensor [vocab_size]
   std::vector<float> logits = computeLogitsFromHidden(hiddenStates);
-  
+
   // Detailed logits analysis
   auto logits_stats = computeVectorStats(logits);
-  logger.debug("[QwenTextModel::forward] Final logits: " + 
+  logger.debug("[QwenTextModel::forward] Final logits: " +
                formatVectorStats(logits_stats, "logits"));
-  
+
   // Check expected vocab size from metadata
   size_t expected_vocab_size = getVocabSize();
   if (logits.size() != expected_vocab_size) {
-    logger.warning("Logits size mismatch! Expected: " + std::to_string(expected_vocab_size) + 
+    logger.warning("Logits size mismatch! Expected: " +
+                   std::to_string(expected_vocab_size) +
                    ", Got: " + std::to_string(logits.size()));
   }
-  
+
   // Log top-k logits for analysis
   if (!logits.empty()) {
     std::vector<std::pair<float, size_t>> indexed_logits;
     for (size_t i = 0; i < logits.size(); ++i) {
       indexed_logits.emplace_back(logits[i], i);
     }
-    std::partial_sort(indexed_logits.begin(), 
-                      indexed_logits.begin() + std::min(size_t(5), indexed_logits.size()),
-                      indexed_logits.end(),
-                      [](const auto& a, const auto& b) { return a.first > b.first; });
-    
+    std::partial_sort(
+        indexed_logits.begin(),
+        indexed_logits.begin() + std::min(size_t(5), indexed_logits.size()),
+        indexed_logits.end(),
+        [](const auto &a, const auto &b) { return a.first > b.first; });
+
     std::ostringstream top_logits_stream;
     top_logits_stream << "[QwenTextModel::forward] Top-5 logits: ";
     for (size_t i = 0; i < std::min(size_t(5), indexed_logits.size()); ++i) {
-      if (i > 0) top_logits_stream << ", ";
-      top_logits_stream << "(" << indexed_logits[i].second << ":" 
-                        << std::fixed << std::setprecision(4) << indexed_logits[i].first << ")";
+      if (i > 0)
+        top_logits_stream << ", ";
+      top_logits_stream << "(" << indexed_logits[i].second << ":" << std::fixed
+                        << std::setprecision(4) << indexed_logits[i].first
+                        << ")";
     }
     logger.debug(top_logits_stream.str());
   }
-  
+
   // Check for reasonable logits range (should typically be in [-50, 50] range)
   if (logits_stats.min_val < -100.0f || logits_stats.max_val > 100.0f) {
-    logger.warning("Logits values seem extreme! Min: " + std::to_string(logits_stats.min_val) + 
+    logger.warning("Logits values seem extreme! Min: " +
+                   std::to_string(logits_stats.min_val) +
                    ", Max: " + std::to_string(logits_stats.max_val));
   }
-  
+
   std::vector<int64_t> shape = {static_cast<int64_t>(logits.size())};
   duorou::ml::Tensor out =
       duorou::ml::Tensor::zeros(shape, duorou::ml::DataType::FLOAT32);
@@ -946,7 +969,7 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   if (outData && !logits.empty()) {
     std::copy(logits.begin(), logits.end(), outData);
   }
-  
+
   logger.debug("[QwenTextModel::forward] Forward pass completed successfully");
   return out;
 }
@@ -1002,7 +1025,8 @@ readGGUFTensorToFloat(duorou::extensions::ollama::GGUFParser &parser,
     break;
   }
   case GGMLTensorType::BF16: {
-    // Convert BF16 to FP32 manually to avoid dependency on optional ggml helpers
+    // Convert BF16 to FP32 manually to avoid dependency on optional ggml
+    // helpers
     const uint16_t *src = reinterpret_cast<const uint16_t *>(buf.data());
     for (size_t i = 0; i < nelems; ++i) {
       uint32_t tmp = static_cast<uint32_t>(src[i]) << 16;
@@ -1054,18 +1078,22 @@ void QwenTextModel::setExternalVocabulary(std::shared_ptr<Vocabulary> vocab) {
   // Bind external vocabulary by constructing a tokenizer with shared vocab
   if (!vocab) {
     tokenizer_.reset();
-    std::cout << "[DEBUG] QwenTextModel external vocabulary cleared" << std::endl;
+    std::cout << "[DEBUG] QwenTextModel external vocabulary cleared"
+              << std::endl;
     return;
   }
 
   TokenizerFactoryOptions opts; // allow future overrides
   auto tk = createTextProcessorForArchitecture("qwen", vocab, opts);
   if (!tk) {
-    std::cerr << "[ERROR] QwenTextModel failed to create tokenizer from external vocabulary" << std::endl;
+    std::cerr << "[ERROR] QwenTextModel failed to create tokenizer from "
+                 "external vocabulary"
+              << std::endl;
     return;
   }
   tokenizer_ = std::move(tk);
-  std::cout << "[DEBUG] QwenTextModel bound external vocabulary via tokenizer (vocab_size="
+  std::cout << "[DEBUG] QwenTextModel bound external vocabulary via tokenizer "
+               "(vocab_size="
             << tokenizer_->getVocabSize() << ")" << std::endl;
 }
 
@@ -1146,49 +1174,57 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
 
   // hidden is [seq_len * hidden_size]
   size_t hidden_size = options_.hiddenSize;
-  logger.debug("[computeLogitsFromHidden] Hidden size: " + std::to_string(hidden_size) + 
-               ", Input hidden vector size: " + std::to_string(hidden.size()));
-  
+  logger.debug(
+      "[computeLogitsFromHidden] Hidden size: " + std::to_string(hidden_size) +
+      ", Input hidden vector size: " + std::to_string(hidden.size()));
+
   if (hidden.size() < hidden_size) {
-    logger.warning("[computeLogitsFromHidden] Hidden vector too small! Expected at least: " + 
-                   std::to_string(hidden_size) + ", Got: " + std::to_string(hidden.size()));
+    logger.warning("[computeLogitsFromHidden] Hidden vector too small! "
+                   "Expected at least: " +
+                   std::to_string(hidden_size) +
+                   ", Got: " + std::to_string(hidden.size()));
     return {};
   }
-  
+
   size_t seq_len = hidden.size() / hidden_size;
   size_t vocab_tokenizer = getVocabSize();
-  size_t vocab_weights = (hidden_size == 0 ? 0 : outputWeights_.size() / hidden_size);
+  size_t vocab_weights =
+      (hidden_size == 0 ? 0 : outputWeights_.size() / hidden_size);
   if (hidden_size != 0 && (outputWeights_.size() % hidden_size) != 0) {
-    logger.warning("[computeLogitsFromHidden] Output weights length is not a multiple of hidden size! hidden*?=" + 
-                   std::to_string(hidden_size) + ", weights.size=" + std::to_string(outputWeights_.size()));
+    logger.warning("[computeLogitsFromHidden] Output weights length is not a "
+                   "multiple of hidden size! hidden*?=" +
+                   std::to_string(hidden_size) +
+                   ", weights.size=" + std::to_string(outputWeights_.size()));
   }
-  logger.debug("[computeLogitsFromHidden] Sequence length: " + std::to_string(seq_len) + 
-               ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
-               ", Vocab size (weights): " + std::to_string(vocab_weights));
-  
-  // Always return logits sized to tokenizer vocab; extra entries (beyond weights vocab) are zero
-  std::vector<float> logits(vocab_tokenizer, 0.0f);
-  
+  logger.debug(
+      "[computeLogitsFromHidden] Sequence length: " + std::to_string(seq_len) +
+      ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
+      ", Vocab size (weights): " + std::to_string(vocab_weights));
+
+  // Return logits sized to the actual weights vocab size to avoid mismatch
+  // This ensures compatibility with inference engine expectations
+  std::vector<float> logits(vocab_weights, 0.0f);
+
   if (vocab_weights == 0) {
-    logger.warning("[computeLogitsFromHidden] No output weights loaded; returning zero logits");
+    logger.error("[computeLogitsFromHidden] No output weights available!");
     return logits;
   }
-  
+
   size_t last_offset = (seq_len > 0 ? (seq_len - 1) * hidden_size : 0);
   const float *hptr = hidden.data() + last_offset;
-  
+
   // Log statistics of the last token hidden state
   std::vector<float> last_hidden(hptr, hptr + hidden_size);
   auto hidden_stats = computeVectorStats(last_hidden);
-  logger.debug("[computeLogitsFromHidden] Last token hidden state: " + 
+  logger.debug("[computeLogitsFromHidden] Last token hidden state: " +
                formatVectorStats(hidden_stats, "last_hidden"));
-  
+
   // Check output weights statistics
   auto weights_stats = computeVectorStats(outputWeights_);
-  logger.debug("[computeLogitsFromHidden] Output weights: " + 
+  logger.debug("[computeLogitsFromHidden] Output weights: " +
                formatVectorStats(weights_stats, "output_weights"));
-  
-  // outputWeights_ flattened with vocab major: [vocab_weights][hidden]
+
+  // Compute logits: logits[v] = hidden dot outputWeights[v]
   for (size_t v = 0; v < vocab_weights && v < vocab_tokenizer; ++v) {
     float sum = 0.0f;
     size_t woff = v * hidden_size;
@@ -1197,24 +1233,27 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
     }
     logits[v] = sum;
   }
-  
+
   // Sanitize logits: replace NaN/Inf with 0 to avoid downstream instability
   for (size_t i = 0; i < logits.size(); ++i) {
     if (!std::isfinite(logits[i])) {
       logits[i] = 0.0f;
     }
   }
-  
+
   // Log some sample logits computation details for first few vocab entries
   if (vocab_tokenizer > 0) {
     std::ostringstream sample_stream;
     sample_stream << "[computeLogitsFromHidden] Sample logits computation: ";
     for (size_t v = 0; v < std::min(vocab_tokenizer, size_t(3)); ++v) {
-      sample_stream << "vocab[" << v << "]=" << std::fixed << std::setprecision(4) << logits[v] << " ";
+      sample_stream << "vocab[" << v << "]=" << std::fixed
+                    << std::setprecision(4) << logits[v] << " ";
     }
     logger.debug(sample_stream.str());
   }
-  
+
+  logger.debug("[computeLogitsFromHidden] Computed logits for " +
+               std::to_string(vocab_weights) + " tokens (weights vocab size)");
   return logits;
 }
 

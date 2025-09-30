@@ -107,10 +107,13 @@ MLInferenceEngine::~MLInferenceEngine() {
   // or allow explicit cleanup via environment flag if needed.
   const char *cleanup_flag = std::getenv("DUOROU_CLEANUP_BACKENDS");
   if (cleanup_flag && std::string(cleanup_flag) == std::string("1")) {
-    std::cout << "[DEBUG] Cleaning up ML backends (DUOROU_CLEANUP_BACKENDS=1)" << std::endl;
+    std::cout << "[DEBUG] Cleaning up ML backends (DUOROU_CLEANUP_BACKENDS=1)"
+              << std::endl;
     duorou::ml::BackendManager::getInstance().cleanup();
   } else {
-    std::cout << "[DEBUG] Skipping ML backend cleanup to avoid dangling Backend* in tensors" << std::endl;
+    std::cout << "[DEBUG] Skipping ML backend cleanup to avoid dangling "
+                 "Backend* in tensors"
+              << std::endl;
   }
 }
 
@@ -396,11 +399,10 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
   try {
     if (use_llama_backend_) {
       // Use ggml for inference
-      return generateWithLlama(prompt, max_tokens, temperature, top_p);
+      return generateWithGGLM(prompt, max_tokens, temperature, top_p);
     } else {
       // Use internal Forward mode for inference
-      return generateWithInternalForward(prompt, max_tokens, temperature,
-                                         top_p);
+      return generateWithGGLM(prompt, max_tokens, temperature, top_p);
     }
 
   } catch (const std::exception &e) {
@@ -1300,15 +1302,23 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
         break;
       }
 
-      // Copy logits to host
+      // Apply temperature scaling directly on tensor
+      if (temperature > 0.0f) {
+        // Create temperature tensor and divide
+        duorou::ml::Tensor temp_tensor({1}, duorou::ml::DataType::FLOAT32);
+        if (ml_context_->getBackend())
+          temp_tensor.setBackend(ml_context_->getBackend());
+        temp_tensor.allocate(temp_tensor.backend());
+        float temp_val = temperature;
+        temp_tensor.copyFromHost(&temp_val, sizeof(float));
+
+        // Temperature scaling: logits = logits / temperature
+        logits_tensor = logits_tensor.div(*ml_context_, temp_tensor);
+      }
+
+      // Copy temperature-scaled logits to host
       std::vector<float> logits(static_cast<size_t>(logits_tensor.numel()));
       logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
-
-      // Temperature scaling
-      if (temperature > 0.0f) {
-        for (auto &x : logits)
-          x /= temperature;
-      }
 
       // Argmax shortcut when temperature is effectively 0
       int32_t next_token = -1;
@@ -1316,26 +1326,23 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
         next_token = static_cast<int32_t>(
             std::max_element(logits.begin(), logits.end()) - logits.begin());
       } else {
-        // ggml softmax
-        const size_t vocab = logits.size();
-        ggml_init_params ip = {
-            (size_t)(vocab * sizeof(float) * 4 + 1 * 1024 * 1024), nullptr,
-            false};
-        ggml_context *ctx = ggml_init(ip);
-        if (!ctx) {
-          return "Error: ggml_init failed";
-        }
-        ggml_tensor *t_logits =
-            ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (int64_t)vocab);
-        std::memcpy(t_logits->data, logits.data(), vocab * sizeof(float));
-        ggml_tensor *t_probs = ggml_soft_max(ctx, t_logits);
-        ggml_cgraph *gf = ggml_new_graph(ctx);
-        ggml_build_forward_expand(gf, t_probs);
-        ggml_graph_compute_with_ctx(ctx, gf, 1);
-        std::vector<float> probs(vocab);
-        std::memcpy(probs.data(), t_probs->data, vocab * sizeof(float));
+        // Use ML library's softmax instead of raw ggml
+        duorou::ml::Tensor logits_tensor({static_cast<int64_t>(logits.size())},
+                                         duorou::ml::DataType::FLOAT32);
+        if (ml_context_->getBackend())
+          logits_tensor.setBackend(ml_context_->getBackend());
+        logits_tensor.allocate(logits_tensor.backend());
+        logits_tensor.copyFromHost(logits.data(),
+                                   logits.size() * sizeof(float));
+
+        // Apply softmax using ML library
+        duorou::ml::Tensor probs_tensor =
+            logits_tensor.softmax(*ml_context_, -1);
+        std::vector<float> probs(logits.size());
+        probs_tensor.copyToHost(probs.data(), probs.size() * sizeof(float));
 
         // top-p sampling
+        const size_t vocab = probs.size();
         if (top_p >= 1.0f) {
           std::discrete_distribution<int> dist(probs.begin(), probs.end());
           next_token = dist(rng);
@@ -1363,7 +1370,6 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
           int pick = dist(rng);
           next_token = idx[pick];
         }
-        ggml_free(ctx);
       }
 
       if (next_token < 0)
