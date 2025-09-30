@@ -42,10 +42,14 @@ add_library(duorou_ml STATIC ${ML_SOURCES})
 target_include_directories(duorou_ml PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include
 )
 
 # Link dependency libraries
+find_package(Threads REQUIRED)
+
 target_link_libraries(duorou_ml
+    PRIVATE ggml Threads::Threads
     duorou_kvcache  # Link KV cache module
 )
 

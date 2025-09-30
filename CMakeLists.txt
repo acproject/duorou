@@ -339,6 +339,13 @@ endif()
 # 添加子项目
 add_subdirectory(third_party/llama.cpp)
 add_subdirectory(third_party/stable-diffusion.cpp)
+add_subdirectory(src/model)
+if(TARGET duorou_model)
+    target_include_directories(duorou_model PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include
+    )
+    target_link_libraries(duorou_model PRIVATE ggml)
+endif()
 # MiniMemory作为独立服务运行，不需要编译到主项目中
 
 # 添加工具模块
@@ -354,7 +361,7 @@ add_subdirectory(src/kvcache)
 add_subdirectory(src/ml)
 
 # 添加 Model 模块
-add_subdirectory(src/model)
+# (已在上方初始化 src/model；移除重复 add_subdirectory 以避免二次使用同一 binary 目录)
 
 # 集成测试
 if(BUILD_TESTING)
@@ -495,9 +502,14 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
     )
+    target_include_directories(duorou_model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include
+)
     if(GTK4_FOUND)
         target_include_directories(duorou PRIVATE ${GTK4_INCLUDE_DIRS})
     endif()
+
+    target_link_libraries(duorou_model PRIVATE ggml)
     
     # 链接库（GTK4 按条件链接）
     target_link_libraries(duorou
