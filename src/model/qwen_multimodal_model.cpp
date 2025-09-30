@@ -404,6 +404,8 @@ bool QwenMultimodalModel::initializeComponents() {
         if (!textModel_->initialize(config_.configPath, true)) {
             std::cerr << "[WARN] Failed to initialize text model with external vocabulary" << std::endl;
         }
+        // Bind external vocabulary to text model so its getVocabSize() matches external vocab
+        textModel_->setExternalVocabulary(external_vocabulary_);
         std::cout << "[DEBUG] Using external vocabulary with size: " << external_vocabulary_->size() << std::endl;
         
         // Create tokenizer based on external vocabulary (using Qwen architecture factory) ONLY if not already created

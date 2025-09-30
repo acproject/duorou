@@ -1050,6 +1050,25 @@ void QwenTextModel::setApplyRopeInAttention(bool v) {
   }
 }
 
+void QwenTextModel::setExternalVocabulary(std::shared_ptr<Vocabulary> vocab) {
+  // Bind external vocabulary by constructing a tokenizer with shared vocab
+  if (!vocab) {
+    tokenizer_.reset();
+    std::cout << "[DEBUG] QwenTextModel external vocabulary cleared" << std::endl;
+    return;
+  }
+
+  TokenizerFactoryOptions opts; // allow future overrides
+  auto tk = createTextProcessorForArchitecture("qwen", vocab, opts);
+  if (!tk) {
+    std::cerr << "[ERROR] QwenTextModel failed to create tokenizer from external vocabulary" << std::endl;
+    return;
+  }
+  tokenizer_ = std::move(tk);
+  std::cout << "[DEBUG] QwenTextModel bound external vocabulary via tokenizer (vocab_size="
+            << tokenizer_->getVocabSize() << ")" << std::endl;
+}
+
 ::duorou::ml::Tensor
 QwenTextModel::stepDecode(::duorou::ml::Context &ctx,
                           const ::duorou::ml::Tensor &lastTokenId,

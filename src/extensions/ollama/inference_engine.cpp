@@ -100,8 +100,18 @@ MLInferenceEngine::~MLInferenceEngine() {
 
   cleanupResources();
 
-  // Cleanup ML backends
-  duorou::ml::BackendManager::getInstance().cleanup();
+  // Important: do NOT aggressively cleanup ML backends here.
+  // Some tensors may still be alive and hold a Backend* for deallocation.
+  // Premature backend cleanup can cause dangling pointers and crash in
+  // duorou::ml::Tensor::deallocate. Let process exit handle final cleanup,
+  // or allow explicit cleanup via environment flag if needed.
+  const char *cleanup_flag = std::getenv("DUOROU_CLEANUP_BACKENDS");
+  if (cleanup_flag && std::string(cleanup_flag) == std::string("1")) {
+    std::cout << "[DEBUG] Cleaning up ML backends (DUOROU_CLEANUP_BACKENDS=1)" << std::endl;
+    duorou::ml::BackendManager::getInstance().cleanup();
+  } else {
+    std::cout << "[DEBUG] Skipping ML backend cleanup to avoid dangling Backend* in tensors" << std::endl;
+  }
 }
 
 bool MLInferenceEngine::initialize() {
@@ -385,8 +395,8 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
 
   try {
     if (use_llama_backend_) {
-      // Use llama.cpp for inference
-      return generateWithGGLM(prompt, max_tokens, temperature, top_p);
+      // Use ggml for inference
+      return generateWithLlama(prompt, max_tokens, temperature, top_p);
     } else {
       // Use internal Forward mode for inference
       return generateWithInternalForward(prompt, max_tokens, temperature,

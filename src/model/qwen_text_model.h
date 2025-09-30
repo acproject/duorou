@@ -203,6 +203,10 @@ public:
     void setRoPEFreqs(const std::vector<float>& freqs);
     // Control where RoPE is applied (attention vs. embeddings) for all layers
     void setApplyRopeInAttention(bool v);
+
+    // Bind an external vocabulary/tokenizer from upper-level (e.g., multimodal model)
+    // Ensures getVocabSize() reflects external vocab and logits size matches expected.
+    void setExternalVocabulary(std::shared_ptr<Vocabulary> vocab);
     
 private:
     TextModelOptions options_;

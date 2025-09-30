@@ -209,10 +209,9 @@ bool testGGMLInference() {
         struct ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
         ggml_build_forward_expand(gf, activated);
         
-        // 执行计算图 - 使用简化的方法
+        // 执行计算图
         std::cout << "执行计算图..." << std::endl;
-        // 注意：这里我们简化处理，不调用实际的计算函数
-        // 在实际应用中需要正确设置计算计划
+        ggml_graph_compute_with_ctx(ggml_ctx, gf, 1);
         
         // 7. 检查输出结果
         std::cout << "\n7. 检查输出结果..." << std::endl;
