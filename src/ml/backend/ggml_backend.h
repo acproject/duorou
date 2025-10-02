@@ -50,7 +50,7 @@ private:
 
   std::unique_ptr<ggml_context, decltype(&ggml_free)> ggml_ctx_{nullptr,
                                                                 ggml_free};
-  static constexpr size_t kGgmlCtxSize = 512 * 1024 * 1024; // 512 MB
+  static constexpr size_t kGgmlCtxSize = 1024ull * 1024ull * 1024ull; // 1 GB default
 };
 
 } // namespace ml

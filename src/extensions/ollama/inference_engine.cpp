@@ -1273,8 +1273,34 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
 
     static thread_local std::mt19937 rng(std::random_device{}());
 
+    // Precompute PAD-like token ids from vocabulary strings (e.g., "[PAD]", "[PAD270]")
+    // This helps mask tokens that are not marked as PAD in GGUF but exist in the vocabulary.
+    std::vector<int32_t> pad_like_ids;
+    const duorou::model::Vocabulary *vocab_ptr = qwen_model_->getVocabulary();
+    if (vocab_ptr) {
+      const auto &vals = vocab_ptr->getValues();
+      pad_like_ids.reserve(vals.size() / 128); // heuristic reserve
+      for (size_t i = 0; i < vals.size(); ++i) {
+        const std::string &tok = vals[i];
+        // Match common PAD patterns, e.g., "[PAD]", "[PAD270]", "<pad>", "<PAD>"
+        bool is_pad_like = false;
+        if (!tok.empty()) {
+          if (tok.size() >= 5 && tok.rfind("[PAD", 0) == 0) {
+            // Starts with "[PAD" (e.g., [PAD], [PAD270])
+            is_pad_like = true;
+          } else if (tok == "<pad>" || tok == "<PAD>" || tok == "[PAD]") {
+            is_pad_like = true;
+          }
+        }
+        if (is_pad_like) {
+          pad_like_ids.push_back(static_cast<int32_t>(i));
+        }
+      }
+    }
+
     size_t generated = 0;
     while (generated < max_tokens) {
+      auto t_loop_start = std::chrono::high_resolution_clock::now();
       // Build input tensor: full sequence for first step, last token afterwards
       duorou::ml::Tensor input_tensor;
       if (generated == 0) {
@@ -1296,10 +1322,28 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       }
 
       // Use multimodal forward for consistency (no images here)
+      auto t_fwd_start = std::chrono::high_resolution_clock::now();
       duorou::ml::Tensor logits_tensor =
           qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
+      auto t_fwd_end = std::chrono::high_resolution_clock::now();
       if (logits_tensor.numel() <= 0) {
         break;
+      }
+
+      // Diagnostics on first step: vocab vs logits size
+      if (generated == 0) {
+        size_t vocab_sz = qwen_model_->getVocabSize();
+        const auto &sh = logits_tensor.shape();
+        std::cout << "[DEBUG] [GGLM] logits size=" << logits_tensor.numel()
+                  << ", model vocab size=" << vocab_sz << ", shape=[";
+        for (size_t i = 0; i < sh.size(); ++i) {
+          std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
+        }
+        std::cout << "]" << std::endl;
+        auto dur_fwd = std::chrono::duration_cast<std::chrono::milliseconds>(
+            t_fwd_end - t_fwd_start);
+        std::cout << "[DEBUG] [GGLM] forward took " << dur_fwd.count()
+                  << " ms" << std::endl;
       }
 
       // Apply temperature scaling directly on tensor
@@ -1316,9 +1360,107 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
         logits_tensor = logits_tensor.div(*ml_context_, temp_tensor);
       }
 
-      // Copy temperature-scaled logits to host
-      std::vector<float> logits(static_cast<size_t>(logits_tensor.numel()));
-      logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
+      // Copy logits for the last step row only when needed
+      std::vector<float> logits;
+      {
+        const auto &sh = logits_tensor.shape();
+        const size_t vocab_sz = qwen_model_->getVocabSize();
+        if (sh.size() == 1 && static_cast<size_t>(sh[0]) == vocab_sz) {
+          logits.resize(vocab_sz);
+          logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
+        } else if (sh.size() == 2 && static_cast<size_t>(sh[1]) == vocab_sz) {
+          // Flattened layout: [T, V]. Copy entire then slice the last row.
+          // Note: Tensor API lacks ranged copy; keep it simple for now.
+          std::vector<float> tmp(static_cast<size_t>(logits_tensor.numel()));
+          logits_tensor.copyToHost(tmp.data(), tmp.size() * sizeof(float));
+          const size_t T = static_cast<size_t>(sh[0]);
+          const size_t V = vocab_sz;
+          const size_t offset = (T > 0 ? (T - 1) * V : 0);
+          logits.assign(tmp.begin() + static_cast<std::ptrdiff_t>(offset),
+                        tmp.begin() + static_cast<std::ptrdiff_t>(offset + V));
+        } else {
+          // Fallback: copy all and use as-is
+          std::cout << "[WARN] [GGLM] unexpected logits shape; copying all"
+                    << std::endl;
+          logits.resize(static_cast<size_t>(logits_tensor.numel()));
+          logits_tensor.copyToHost(logits.data(),
+                                   logits.size() * sizeof(float));
+        }
+      }
+
+      // Mask special tokens to avoid degenerate outputs like [PADxxx]
+      // Retrieve PAD/UNK/BOS ids from GGUF or vocabulary and set logits to a large negative
+      auto get_special_id = [&](duorou::model::Special sp) -> int32_t {
+        int32_t id = -1;
+        if (gguf_parser_) {
+          const char *key = nullptr;
+          switch (sp) {
+          case duorou::model::Special::PAD:
+            key = "tokenizer.ggml.pad_token_id";
+            break;
+          case duorou::model::Special::UNK:
+            key = "tokenizer.ggml.unk_token_id";
+            break;
+          case duorou::model::Special::BOS:
+            key = "tokenizer.ggml.bos_token_id";
+            break;
+          default:
+            key = nullptr;
+            break;
+          }
+          if (key) {
+            if (const auto *kv = gguf_parser_->getMetadata(key)) {
+              id = kv->asInt32();
+            }
+          }
+        }
+        if (id < 0) {
+          const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
+          if (v)
+            id = v->getSpecialId(sp);
+        }
+        return id;
+      };
+
+      const int32_t pad_id = get_special_id(duorou::model::Special::PAD);
+      const int32_t unk_id = get_special_id(duorou::model::Special::UNK);
+      const int32_t bos_id = get_special_id(duorou::model::Special::BOS);
+
+      if (generated == 0) {
+        std::cout << "[DEBUG] [GGLM] special ids - PAD=" << pad_id
+                  << ", UNK=" << unk_id << ", BOS=" << bos_id << std::endl;
+      }
+
+      auto mask_logit = [&](int32_t id) {
+        if (id >= 0 && static_cast<size_t>(id) < logits.size()) {
+          logits[static_cast<size_t>(id)] = -1e30f; // effectively -inf
+        }
+      };
+      mask_logit(pad_id);
+      mask_logit(unk_id);
+      // Avoid re-emitting BOS inside the sequence
+      mask_logit(bos_id);
+
+      // Mask PAD-like tokens inferred from vocabulary strings
+      if (!pad_like_ids.empty()) {
+        for (int32_t pid : pad_like_ids) {
+          if (pid >= 0 && static_cast<size_t>(pid) < logits.size()) {
+            logits[static_cast<size_t>(pid)] = -1e30f;
+          }
+        }
+        if (generated == 0) {
+          // Log summary of masked PAD-like ids for diagnostics
+          std::cout << "[DEBUG] [GGLM] masked " << pad_like_ids.size()
+                    << " PAD-like tokens by string pattern" << std::endl;
+          size_t show = std::min<size_t>(5, pad_like_ids.size());
+          for (size_t k = 0; k < show; ++k) {
+            int32_t pid = pad_like_ids[k];
+            const auto &vals = vocab_ptr ? vocab_ptr->getValues() : std::vector<std::string>();
+            std::string label = (vocab_ptr && static_cast<size_t>(pid) < vals.size()) ? vals[pid] : std::string("(unknown)");
+            std::cout << "[DEBUG] [GGLM] PAD-like id=" << pid << " token='" << label << "'" << std::endl;
+          }
+        }
+      }
 
       // Argmax shortcut when temperature is effectively 0
       int32_t next_token = -1;
@@ -1326,20 +1468,21 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
         next_token = static_cast<int32_t>(
             std::max_element(logits.begin(), logits.end()) - logits.begin());
       } else {
-        // Use ML library's softmax instead of raw ggml
-        duorou::ml::Tensor logits_tensor({static_cast<int64_t>(logits.size())},
-                                         duorou::ml::DataType::FLOAT32);
-        if (ml_context_->getBackend())
-          logits_tensor.setBackend(ml_context_->getBackend());
-        logits_tensor.allocate(logits_tensor.backend());
-        logits_tensor.copyFromHost(logits.data(),
-                                   logits.size() * sizeof(float));
-
-        // Apply softmax using ML library
-        duorou::ml::Tensor probs_tensor =
-            logits_tensor.softmax(*ml_context_, -1);
+        // CPU softmax (stable): exp(logit - max) / sum(exp(...))
+        auto t_softmax_start = std::chrono::high_resolution_clock::now();
         std::vector<float> probs(logits.size());
-        probs_tensor.copyToHost(probs.data(), probs.size() * sizeof(float));
+        float max_logit = -std::numeric_limits<float>::infinity();
+        for (float v : logits) max_logit = std::max(max_logit, v);
+        double sum = 0.0;
+        for (size_t i = 0; i < logits.size(); ++i) {
+          float x = logits[i] - max_logit;
+          float ex = std::exp(x);
+          probs[i] = ex;
+          sum += ex;
+        }
+        if (sum <= 0.0) sum = 1.0;
+        for (auto &p : probs) p = static_cast<float>(p / sum);
+        auto t_softmax_end = std::chrono::high_resolution_clock::now();
 
         // top-p sampling
         const size_t vocab = probs.size();
@@ -1347,6 +1490,7 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
           std::discrete_distribution<int> dist(probs.begin(), probs.end());
           next_token = dist(rng);
         } else {
+          auto t_sort_start = std::chrono::high_resolution_clock::now();
           std::vector<int> idx(vocab);
           std::iota(idx.begin(), idx.end(), 0);
           std::sort(idx.begin(), idx.end(),
@@ -1369,6 +1513,15 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
                                                kept_probs.end());
           int pick = dist(rng);
           next_token = idx[pick];
+          auto t_sort_end = std::chrono::high_resolution_clock::now();
+          auto dur_softmax = std::chrono::duration_cast<std::chrono::milliseconds>(
+              t_softmax_end - t_softmax_start);
+          auto dur_sort = std::chrono::duration_cast<std::chrono::milliseconds>(
+              t_sort_end - t_sort_start);
+          std::cout << "[DEBUG] [GGLM] step " << generated
+                    << " softmax=" << dur_softmax.count()
+                    << " ms, sort/sample=" << dur_sort.count() << " ms"
+                    << std::endl;
         }
       }
 
@@ -1380,6 +1533,14 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       sequence_ids.push_back(next_token);
       generated_ids.push_back(next_token);
       generated += 1;
+
+      auto t_loop_end = std::chrono::high_resolution_clock::now();
+      auto dur_loop = std::chrono::duration_cast<std::chrono::milliseconds>(
+          t_loop_end - t_loop_start);
+      std::cout << "[DEBUG] [GGLM] step " << generated
+                << " done, seq_len=" << sequence_ids.size()
+                << ", took " << dur_loop.count() << " ms, next_token="
+                << next_token << std::endl;
     }
 
     // Decode only generated part to text using Qwen detokenizer

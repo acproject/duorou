@@ -2,6 +2,7 @@
 #include "backend/backend.h"
 #include "context.h"
 #include "ggml.h"
+#include "ggml-cpu.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -13,6 +14,8 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <string>
 
 namespace duorou {
 namespace ml {
@@ -25,10 +28,12 @@ ggml_tensor *Tensor::to_ggml(ggml_context *ctx) const {
   ggml_type ggml_dtype =
       (dtype_ == DataType::FLOAT32) ? GGML_TYPE_F32 : GGML_TYPE_BF16;
   ggml_tensor *t = ggml_new_tensor_2d(ctx, ggml_dtype, n_cols, n_rows);
-  // 把 host buffer 映射过去（zero-copy)
-  // ggml does not expose a public ggml_set_data in this header version;
-  // assign the data pointer directly for zero-copy.
-  t->data = static_cast<void *>(buffer_.get() + offset_);
+  // 复制已有 data_ 到 ggml 的内存（避免错误的指针覆盖）
+  if (!data_) {
+    throw std::runtime_error("to_ggml: tensor data is not allocated");
+  }
+  const size_t bytes = nbytes();
+  std::memcpy(t->data, data_, bytes);
   return t;
 }
 
@@ -36,11 +41,10 @@ void Tensor::from_ggml(const ggml_tensor *src) {
   if (!src || src->type != GGML_TYPE_F32)
     throw std::runtime_error("only FP32 supported");
   const size_t nbytes = ggml_nbytes(src);
-  buffer_.reset(new uint8_t[nbytes], std::default_delete<uint8_t[]>());
-  offset_ = 0;
   dtype_ = DataType::FLOAT32;
   shape_ = {src->ne[1], src->ne[0]}; // ne[1]=rows, ne[0]=cols
-  std::memcpy(buffer_.get(), src->data, nbytes);
+  allocate(backend_);
+  std::memcpy(data_, src->data, nbytes);
 }
 
 // Constructor implementation
@@ -565,7 +569,10 @@ Tensor Tensor::div(Context & /*ctx*/, const Tensor &other) const {
   return result;
 }
 
-Tensor Tensor::matmul(Context & /*ctx*/, const Tensor &other) const {
+Tensor Tensor::matmul(Context &ctx, const Tensor &other) const {
+  // 如果可用 ggml 上下文，则走 ggml 路径
+  // 注意：保持原有签名，但内部获取 ggml_context 需通过可用后端
+  // 这里无法直接访问 ctx（被注释的参数），因此仅在 Linear 等高层已提供 ggml 路径时保留 CPU 回退。
   if (dtype_ != DataType::FLOAT32 || other.dtype_ != DataType::FLOAT32) {
     throw std::runtime_error(
         "matmul: only FLOAT32 supported in current implementation");
@@ -584,6 +591,46 @@ Tensor Tensor::matmul(Context & /*ctx*/, const Tensor &other) const {
   // Ensure inputs are allocated
   if (!data_ || !other.data_) {
     throw std::runtime_error("matmul: input tensors must have allocated data");
+  }
+
+  // ggml 加速路径（若上下文可用）
+  if (auto *gctx = ctx.ggml_ctx()) {
+    // 为本次 matmul 创建临时 ggml 上下文，避免长期复用导致内存池耗尽
+    const size_t bytesA = static_cast<size_t>(K * N) * sizeof(float);
+    const size_t bytesB = static_cast<size_t>(M * K) * sizeof(float);
+    const size_t bytesO = static_cast<size_t>(M * N) * sizeof(float);
+    size_t mem_size = bytesA + bytesB + bytesO + (64ull * 1024ull * 1024ull); // 额外留 64MB 余量
+    // 允许通过环境变量强制设定最小内存大小
+    if (const char *env_mb = std::getenv("DUOROU_GGML_TMP_MB")) {
+      try {
+        unsigned long long mb = std::stoull(std::string(env_mb));
+        unsigned long long min_bytes = mb * 1024ull * 1024ull;
+        if (min_bytes > mem_size) mem_size = static_cast<size_t>(min_bytes);
+      } catch (...) {}
+    }
+    ggml_init_params params{ .mem_size = mem_size, .mem_buffer = nullptr, .no_alloc = false };
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> local_ctx(ggml_init(params), ggml_free);
+    ggml_context *lc = local_ctx.get();
+
+    ggml_tensor *gg_A = other.to_ggml(lc); // [K, N]
+    ggml_tensor *gg_B = this->to_ggml(lc); // [M, K]
+    ggml_tensor *gg_out_nm = ggml_mul_mat(lc, gg_A, gg_B); // [N, M]
+
+    struct ggml_cgraph *gf = ggml_new_graph(lc);
+    ggml_build_forward_expand(gf, gg_out_nm);
+
+    // 线程数策略与 Context::compute 保持一致
+    unsigned n_threads = 4;
+    if (const char *env = std::getenv("DUOROU_NUM_THREADS")) {
+      try { int v = std::stoi(std::string(env)); if (v > 0) n_threads = static_cast<unsigned>(v); } catch (...) {}
+    } else {
+      unsigned hw = std::thread::hardware_concurrency(); if (hw > 0) n_threads = hw;
+    }
+    ggml_graph_compute_with_ctx(lc, gf, n_threads);
+
+    Tensor host_out;
+    host_out.from_ggml(gg_out_nm);
+    return host_out;
   }
 
   Tensor result({M, N}, dtype_);
@@ -632,9 +679,52 @@ Tensor Tensor::tanh(Context & /*ctx*/) const {
   return result;
 }
 
-Tensor Tensor::softmax(Context & /*ctx*/, int /*dim*/) const {
-  Tensor result(shape_, dtype_);
-  result.allocate();
+Tensor Tensor::softmax(Context &ctx, int /*dim*/) const {
+  if (dtype_ != DataType::FLOAT32) {
+    throw std::runtime_error("softmax: only FLOAT32 supported");
+  }
+  const std::vector<int64_t> &s = shape_;
+  if (s.empty()) {
+    return *this;
+  }
+
+  // ggml 路径（仅支持 2D：按行 softmax）
+  if (s.size() == 2) {
+    if (auto *gctx = ctx.ggml_ctx()) {
+      ggml_tensor *gg_in = to_ggml(gctx);
+      ggml_tensor *gg_out = ggml_soft_max(gctx, gg_in);
+      struct ggml_cgraph *gf = ggml_new_graph(gctx);
+      ggml_build_forward_expand(gf, gg_out);
+      ctx.compute(gf);
+      Tensor host_out;
+      host_out.from_ggml(gg_out);
+      return host_out;
+    }
+  }
+
+  // CPU 回退：沿最后维度
+  Tensor result(s, dtype_);
+  result.allocate(backend_);
+  const int64_t last = s.back();
+  const int64_t outer = numel() / last;
+
+  const float *in = static_cast<const float *>(data_);
+  float *out = static_cast<float *>(result.data_);
+
+  for (int64_t o = 0; o < outer; ++o) {
+    const float *row = in + o * last;
+    float *dst = out + o * last;
+    float maxv = -std::numeric_limits<float>::infinity();
+    for (int64_t i = 0; i < last; ++i) maxv = std::max(maxv, row[i]);
+    float sum = 0.0f;
+    for (int64_t i = 0; i < last; ++i) {
+      dst[i] = std::exp(row[i] - maxv);
+      sum += dst[i];
+    }
+    const float inv = (sum > 0.0f && std::isfinite(sum)) ? (1.0f / sum) : 0.0f;
+    for (int64_t i = 0; i < last; ++i) dst[i] *= inv;
+  }
+
   return result;
 }
 

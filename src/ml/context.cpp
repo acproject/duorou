@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
+#include <string>
 
 #ifdef _WIN32
 #include <malloc.h>
@@ -28,7 +30,47 @@ ggml_context *Context::ggml_ctx() const {
 }
 
 void Context::compute(ggml_cgraph *gf) const {
-  ggml_graph_compute_with_ctx(ggml_ctx(), gf, 4);
+  unsigned n_threads = 4;
+  // 允许通过环境变量覆盖线程数
+  if (const char *env = std::getenv("DUOROU_NUM_THREADS")) {
+    try {
+      int v = std::stoi(std::string(env));
+      if (v > 0) n_threads = static_cast<unsigned>(v);
+    } catch (...) {
+      // ignore
+    }
+  } else {
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw > 0) n_threads = hw;
+  }
+  const bool debug_timing = std::getenv("DUOROU_DEBUG_TIMING") != nullptr;
+  auto t0 = std::chrono::steady_clock::now();
+  if (debug_timing) {
+    std::cout << "[DEBUG] [Context::compute] start: threads=" << n_threads << std::endl;
+  }
+
+  // 使用 plan/work_data，避免将工作区占用到上下文内存池，降低 OOM 风险
+  ggml_cplan plan = ggml_graph_plan(gf, (int)n_threads, /*threadpool*/ nullptr);
+  std::unique_ptr<uint8_t, void(*)(void*)> work_buf(nullptr, [](void* p){ if (p) std::free(p); });
+  if (plan.work_size > 0) {
+    void *buf = std::malloc(plan.work_size);
+    if (!buf) {
+      throw std::runtime_error("Context::compute: failed to allocate work buffer");
+    }
+    plan.work_data = reinterpret_cast<uint8_t*>(buf);
+    work_buf.reset(reinterpret_cast<uint8_t*>(buf));
+  }
+
+  ggml_status st = ggml_graph_compute(gf, &plan);
+  if (st != GGML_STATUS_SUCCESS) {
+    throw std::runtime_error("Context::compute: ggml_graph_compute failed");
+  }
+
+  auto t1 = std::chrono::steady_clock::now();
+  if (debug_timing) {
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    std::cout << "[DEBUG] [Context::compute] done in " << ms << " ms" << std::endl;
+  }
 }
 
 void *Context::allocate(size_t bytes) {

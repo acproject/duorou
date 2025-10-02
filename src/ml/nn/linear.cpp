@@ -54,7 +54,9 @@ Tensor Linear::forward(Context &ctx, const Tensor &input) {
 
   if (hasBias_) {
     ggml_tensor *gg_b = bias_.to_ggml(gctx);
-    gg_out = ggml_add(gctx, gg_out, gg_b);
+    // Broadcast bias across the second dimension to match gg_out shape
+    ggml_tensor *gg_b_rep = ggml_repeat(gctx, gg_b, gg_out);
+    gg_out = ggml_add(gctx, gg_out, gg_b_rep);
   }
 
   // create graph and compute it

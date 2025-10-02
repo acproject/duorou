@@ -23,8 +23,30 @@ bool GGMLBackend::initialize() {
   // For now, treat as always available (CPU-backed ggml by default)
 
   // create ggml context
+  size_t mem_size = kGgmlCtxSize;
+  if (const char *env_mb = std::getenv("DUOROU_GGML_CTX_MB")) {
+    try {
+      long long mb = std::stoll(std::string(env_mb));
+      if (mb > 0) {
+        const unsigned long long min_mb = 64ull;
+        unsigned long long use_mb = static_cast<unsigned long long>(mb);
+        if (use_mb < min_mb) use_mb = min_mb;
+        mem_size = use_mb * 1024ull * 1024ull;
+      }
+    } catch (...) {
+      // ignore invalid env value
+    }
+  } else if (const char *env_bytes = std::getenv("DUOROU_GGML_CTX_BYTES")) {
+    try {
+      unsigned long long bytes = std::stoull(std::string(env_bytes));
+      const unsigned long long min_bytes = 64ull * 1024ull * 1024ull;
+      if (bytes >= min_bytes) mem_size = static_cast<size_t>(bytes);
+    } catch (...) {
+      // ignore invalid env value
+    }
+  }
   ggml_init_params params{
-      .mem_size = kGgmlCtxSize,
+      .mem_size = mem_size,
       .mem_buffer = nullptr,
       .no_alloc = false,
   };
