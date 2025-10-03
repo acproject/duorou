@@ -160,7 +160,6 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
 std::vector<float> SelfAttention::forward(
     duorou::ml::Context &ctx, const std::vector<float> &input,
     const std::vector<float> &attentionMask, duorou::kvcache::Cache *cache) {
-  (void)attentionMask;
   const size_t hidden = options_.hiddenSize;
   if (hidden == 0 || input.empty() || input.size() % hidden != 0) {
     // Fallback: return input unchanged if shape is inconsistent
@@ -210,8 +209,21 @@ std::vector<float> SelfAttention::forward(
     mhaWeightsReady_ = true;
   }
 
-  // Self-attention uses query as key/value when not provided
-  duorou::ml::Tensor out = mha_->forward(ctx, q, {}, {}, cache);
+  // Optional attention mask: support [Sq, Sq] when no KV cache expansion is needed
+  duorou::ml::Tensor maskT;
+  if (!attentionMask.empty() && cache == nullptr) {
+    size_t expected = static_cast<size_t>(seqLen * seqLen);
+    if (attentionMask.size() == expected) {
+      maskT = duorou::ml::Tensor({seqLen, seqLen}, duorou::ml::DataType::FLOAT32);
+      if (auto *backend = ctx.getBackend()) {
+        maskT.setBackend(backend);
+      }
+      maskT.copyFromHost(attentionMask.data(), attentionMask.size() * sizeof(float));
+    }
+  }
+
+  // Self-attention uses query as key/value when not provided; if maskT is empty, MHA will build a causal mask
+  duorou::ml::Tensor out = mha_->forward(ctx, q, {}, {}, cache, maskT);
 
   // Convert back to std::vector<float>
   std::vector<float> result(input.size(), 0.0f);
@@ -344,18 +356,102 @@ TransformerLayer::TransformerLayer(const TextModelOptions &options)
 std::vector<float> TransformerLayer::forward(
     duorou::ml::Context &ctx, const std::vector<float> &input,
     const std::vector<float> &attentionMask, duorou::kvcache::Cache *cache) {
-  // Placeholder: input norm -> attention -> post-attention norm -> FFN
-  auto hidden = input;
-  (void)attentionMask; // unused placeholder
+  static duorou::core::Logger tlogger;
+  static bool tlogger_initialized = false;
+  if (!tlogger_initialized) {
+    tlogger.initialize();
+    tlogger.setLogLevel(duorou::core::LogLevel::INFO);
+    tlogger_initialized = true;
+  }
+  auto stats = [&](const std::vector<float> &x) {
+    double sum = 0.0, sumsq = 0.0;
+    float mn = std::numeric_limits<float>::infinity();
+    float mx = -std::numeric_limits<float>::infinity();
+    size_t n = x.size();
+    size_t nonfinite = 0;
+    for (size_t i = 0; i < n; ++i) {
+      float v = x[i];
+      if (!std::isfinite(v)) {
+        nonfinite++;
+        continue;
+      }
+      sum += v;
+      sumsq += static_cast<double>(v) * static_cast<double>(v);
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    double mean = n ? sum / static_cast<double>(n - nonfinite) : 0.0;
+    double var = n && (n - nonfinite) ? (sumsq / static_cast<double>(n - nonfinite)) - mean * mean : 0.0;
+    double stdv = var > 0.0 ? std::sqrt(var) : 0.0;
+    return std::tuple<float, float, double, double, size_t>(mn, mx, mean, stdv, nonfinite);
+  };
+  // Pre-LN Transformer: LN -> Attn -> Residual -> LN -> FFN -> Residual
+  if (input.empty()) return input;
+  const size_t hiddenSize = options_.hiddenSize;
+  if (hiddenSize == 0 || input.size() % hiddenSize != 0) {
+    return input; // shape guard
+  }
 
-  // KV cache handling is performed inside SelfAttention::forward
+  // 1) Pre-attention layer norm
+  auto normedInput = layerNormVec(input, inputNormWeights_, options_.eps);
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(normedInput);
+    tlogger.info("[TransformerLayer] normedInput stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
 
-  // attention
-  hidden = attention_->forward(ctx, hidden, attentionMask, cache);
-  // post-attention norm (simplified)
-  // FFN
-  hidden = feedForward_->forward(hidden);
-  return hidden;
+  // 2) Self-attention (KV cache handled inside)
+  auto attnOut = attention_->forward(ctx, normedInput, attentionMask, cache);
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(attnOut);
+    tlogger.info("[TransformerLayer] attnOut stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
+
+  // 3) Residual connection
+  std::vector<float> resid1(attnOut.size());
+  for (size_t i = 0; i < resid1.size(); ++i) {
+    resid1[i] = input[i] + attnOut[i];
+  }
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(resid1);
+    tlogger.info("[TransformerLayer] resid1 stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
+
+  // 4) Post-attention layer norm
+  auto normedResid1 = layerNormVec(resid1, postAttentionNormWeights_, options_.eps);
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(normedResid1);
+    tlogger.info("[TransformerLayer] normedResid1 stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
+
+  // 5) Feed-forward
+  auto ffnOut = feedForward_->forward(normedResid1);
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(ffnOut);
+    tlogger.info("[TransformerLayer] ffnOut stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
+
+  // 6) Final residual
+  std::vector<float> output(ffnOut.size());
+  for (size_t i = 0; i < output.size(); ++i) {
+    output[i] = resid1[i] + ffnOut[i];
+  }
+  {
+    auto [mn, mx, mean, stdv, nf] = stats(output);
+    tlogger.info("[TransformerLayer] output stats mn=" + std::to_string(mn) +
+                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+                 " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+  }
+  return output;
 }
 
 bool TransformerLayer::loadWeights(const std::string &weightsPath,
@@ -417,6 +513,43 @@ void TransformerLayer::setApplyRopeInAttention(bool v) {
     attention_->setApplyRopeInAttention(v);
 }
 
+// Local LayerNorm helper consistent with QwenTextModel::layerNorm behavior
+std::vector<float> TransformerLayer::layerNormVec(const std::vector<float>& input,
+                                                  const std::vector<float>& weights,
+                                                  float eps) {
+  const size_t hidden = options_.hiddenSize;
+  if (hidden == 0) return input;
+  if (input.empty()) return {};
+  if (input.size() % hidden != 0) return input;
+
+  const size_t seq_len = input.size() / hidden;
+  std::vector<float> out(input.size());
+  const bool has_scale = (weights.size() == hidden);
+
+  for (size_t t = 0; t < seq_len; ++t) {
+    const size_t base = t * hidden;
+    // mean
+    double mean = 0.0;
+    for (size_t i = 0; i < hidden; ++i) mean += static_cast<double>(input[base + i]);
+    mean /= static_cast<double>(hidden);
+    // var
+    double var = 0.0;
+    for (size_t i = 0; i < hidden; ++i) {
+      double d = static_cast<double>(input[base + i]) - mean;
+      var += d * d;
+    }
+    var /= static_cast<double>(hidden);
+    float inv_std = 1.0f / std::sqrt(static_cast<float>(var) + eps);
+    // normalize
+    for (size_t i = 0; i < hidden; ++i) {
+      float norm = (input[base + i] - static_cast<float>(mean)) * inv_std;
+      float scale = has_scale ? weights[i] : 1.0f;
+      out[base + i] = norm * scale;
+    }
+  }
+  return out;
+}
+
 // ---------------- QwenTextModel ----------------
 QwenTextModel::QwenTextModel() : QwenTextModel(TextModelOptions{}) {}
 
@@ -468,11 +601,32 @@ std::string QwenTextModel::decode(const std::vector<int32_t> &ids) {
 }
 
 size_t QwenTextModel::getVocabSize() const {
-  if (tokenizer_) {
-    return tokenizer_->getVocabSize();
+  // Prefer aligning with loaded output weights to ensure logits match
+  size_t vocab_weights = 0;
+  if (options_.hiddenSize != 0 && !outputWeights_.empty()) {
+    vocab_weights = outputWeights_.size() / options_.hiddenSize;
   }
+
+  if (tokenizer_) {
+    size_t vocab_tokenizer = tokenizer_->getVocabSize();
+    if (vocab_weights > 0) {
+      // Return the intersection size to keep logits and embedding indices valid
+      return std::min(vocab_tokenizer, vocab_weights);
+    }
+    return vocab_tokenizer;
+  }
+
   if (vocabulary_) {
-    return vocabulary_->size();
+    size_t vocab_tokenizer = vocabulary_->size();
+    if (vocab_weights > 0) {
+      return std::min(vocab_tokenizer, vocab_weights);
+    }
+    return vocab_tokenizer;
+  }
+
+  // Fallback: if weights provide a size, use it; else use known default
+  if (vocab_weights > 0) {
+    return vocab_weights;
   }
   return 151936; // Default Qwen vocab size
 }

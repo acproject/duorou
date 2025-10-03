@@ -34,6 +34,15 @@ private:
     int currentLayer_;
     CacheConfig config_;
     bool initialized_;
+    // KV storage: seq_id -> layer_id -> contiguous K/V buffers
+    struct LayerKV {
+        std::vector<float> k; // [S * H * D] contiguous
+        std::vector<float> v; // [S * H * D] contiguous
+        int32_t length = 0;   // number of cached tokens (S)
+    };
+    std::unordered_map<int, std::unordered_map<int, LayerKV>> kv_store_;
+    // per-token stride = H * D
+    int kv_stride_ = 0;
 
 public:
     // Constructor

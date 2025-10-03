@@ -119,15 +119,7 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
             for (int dim : kPrevKV.shape()) prevShape64.push_back(static_cast<int64_t>(dim));
             if (prevShape64.size() == 4) {
                 prevLen = prevShape64[1];
-                // Convert kvcache::Tensor to ml::Tensor and copy data using backend-aware adapter
-                Tensor kPrevML(prevShape64, DataType::FLOAT32);
-                Tensor vPrevML(prevShape64, DataType::FLOAT32);
-                if (auto* b = ctx.getBackend()) { kPrevML.setBackend(b); vPrevML.setBackend(b); }
-                kPrevML.allocate();
-                vPrevML.allocate();
                 size_t kvPrevBytes = static_cast<size_t>(kPrevKV.bytesSize());
-                adapter.copy(kPrevML.data(), kPrevKV.data(), kvPrevBytes);
-                adapter.copy(vPrevML.data(), vPrevKV.data(), kvPrevBytes);
 
                 // Apply RoPE to current K with offset equal to previous length
                 k4 = applyRotaryPositionEmbedding(ctx, k4, Sk, /*offset=*/prevLen);
@@ -142,20 +134,18 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
 
                 size_t prevBytes = static_cast<size_t>(B * prevLen * numHeads_ * headDim_) * sizeof(float);
                 size_t newBytes  = static_cast<size_t>(B * Sk * numHeads_ * headDim_) * sizeof(float);
-                size_t kPrevMLBytes = static_cast<size_t>(kPrevML.nbytes());
-                size_t vPrevMLBytes = static_cast<size_t>(vPrevML.nbytes());
                 size_t k4Bytes = static_cast<size_t>(k4.nbytes());
                 size_t v4Bytes = static_cast<size_t>(v4.nbytes());
 
                 // Sanity checks to avoid out-of-bounds copies
-                if (prevBytes > kPrevMLBytes || prevBytes > vPrevMLBytes) {
-                    logger.debug("[MHA] KV concat prevBytes exceeds previous ML tensor bytes; skipping concat to prevent OOB");
+                if (prevBytes > kvPrevBytes) {
+                    logger.debug("[MHA] KV concat prevBytes exceeds previous cache tensor bytes; skipping concat to prevent OOB");
                 } else if (newBytes > k4Bytes || newBytes > v4Bytes) {
                     logger.debug("[MHA] KV concat newBytes exceeds current K/V tensor bytes; skipping concat to prevent OOB");
                 } else {
-                    // Copy previous part
-                    adapter.copy(kFull.data(), kPrevML.data(), prevBytes);
-                    adapter.copy(vFull.data(), vPrevML.data(), prevBytes);
+                    // Copy previous part directly from cache tensors
+                    adapter.copy(kFull.data(), kPrevKV.data(), prevBytes);
+                    adapter.copy(vFull.data(), vPrevKV.data(), prevBytes);
                     // Copy new part right after previous
                     void* kDst = static_cast<void*>(static_cast<char*>(kFull.data()) + prevBytes);
                     void* vDst = static_cast<void*>(static_cast<char*>(vFull.data()) + prevBytes);
@@ -222,13 +212,15 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
 
         // Copy data from ml::Tensor to kvcache::Tensor (ONLY new segment)
         size_t newBytes = static_cast<size_t>(B * newSk * numHeads_ * headDim_) * sizeof(float);
-        // The new segment is exactly the current k4/v4 contents (length = newSk), do NOT offset by prevLen
-        const void* kNewSrc = static_cast<const void*>(k4.data());
-        const void* vNewSrc = static_cast<const void*>(v4.data());
+        // Offset source by previous length if k4/v4 contain concatenated [prevLen + newSk]
+        size_t prevBytes = static_cast<size_t>(B * prevLen * numHeads_ * headDim_) * sizeof(float);
+        const void* kNewSrc = (k4.data() ? static_cast<const void*>(static_cast<const char*>(k4.data()) + prevBytes) : nullptr);
+        const void* vNewSrc = (v4.data() ? static_cast<const void*>(static_cast<const char*>(v4.data()) + prevBytes) : nullptr);
         if (kNewSrc == nullptr || vNewSrc == nullptr) {
             logger.debug("[MHA] KV put skipped: null kNewSrc/vNewSrc");
-        } else if (newBytes > static_cast<size_t>(k4.nbytes()) || newBytes > static_cast<size_t>(v4.nbytes())) {
-            logger.debug("[MHA] KV put skipped: newBytes exceeds k4/v4 bytes; newBytes=" + std::to_string(newBytes) +
+        } else if (prevBytes + newBytes > static_cast<size_t>(k4.nbytes()) || prevBytes + newBytes > static_cast<size_t>(v4.nbytes())) {
+            logger.debug("[MHA] KV put skipped: (prevBytes + newBytes) exceeds k4/v4 bytes; prevBytes=" + std::to_string(prevBytes) +
+                         ", newBytes=" + std::to_string(newBytes) +
                          ", k4Bytes=" + std::to_string(static_cast<size_t>(k4.nbytes())) +
                          ", v4Bytes=" + std::to_string(static_cast<size_t>(v4.nbytes())));
         } else {
@@ -236,16 +228,38 @@ Tensor MultiHeadAttention::forward(Context& ctx, const Tensor& query,
             adapter.copy(vKV.data(), vNewSrc, newBytes);
             logger.debug("[MHA] KV put new segment: B=" + std::to_string(B) +
                          ", newSk=" + std::to_string(newSk) +
-                         ", bytes=" + std::to_string(newBytes));
+                         ", bytes=" + std::to_string(newBytes) +
+                         ", prevOffsetBytes=" + std::to_string(prevBytes));
         }
 
         // Store into cache
         cache->put(kctx, kKV, vKV);
     }
 
+    // Build effective attention mask: if caller didn't provide one, create causal mask
+    Tensor usedMask;
+    if (mask.data() == nullptr) {
+        // 2D mask [Sq, Sk]: allow attending to all cached tokens (prevLen) and up to current index within new segment
+        usedMask = Tensor({Sq, Sk}, DataType::FLOAT32);
+        usedMask.allocate();
+        // Fill mask with 0 for allowed, -inf for disallowed
+        std::vector<float> m(static_cast<size_t>(Sq * Sk), 0.0f);
+        for (int64_t s = 0; s < Sq; ++s) {
+            int64_t allowed = prevLen + s + 1; // number of key positions allowed for this query
+            if (allowed > Sk) allowed = Sk;
+            // disallow positions t >= allowed
+            for (int64_t t = allowed; t < Sk; ++t) {
+                m[static_cast<size_t>(s * Sk + t)] = -std::numeric_limits<float>::infinity();
+            }
+        }
+        usedMask.copyFromHost(m.data(), m.size() * sizeof(float));
+    } else {
+        usedMask = mask;
+    }
+
     // Execute attention computation in 4D
     logger.debug("[MHA] Calling scaledDotProductAttention with q4=[" + std::to_string(B) + "," + std::to_string(Sq) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] k4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "] v4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," + std::to_string(numHeads_) + "," + std::to_string(headDim_) + "]");
-    Tensor attnOut4 = scaledDotProductAttention(ctx, q4, k4, v4, mask); // [B,Sq,H,D]
+    Tensor attnOut4 = scaledDotProductAttention(ctx, q4, k4, v4, usedMask); // [B,Sq,H,D]
 
     // Merge heads: [B,Sq,H,D] -> [B*Sq, H*D]
     Tensor merged = attnOut4.reshape({B * Sq, numHeads_ * headDim_});

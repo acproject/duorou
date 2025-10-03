@@ -1246,10 +1246,27 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       return "Error: Qwen model or ML context not initialized";
     }
 
-    // Encode with Qwen tokenizer
-    std::vector<int32_t> input_ids = qwen_model_->encode(prompt, true);
+    // Encode with Qwen tokenizer (apply minimal ChatML formatting for Qwen architectures)
+    std::string effective_prompt = prompt;
+    bool used_chatml = false;
+    if (gguf_parser_) {
+      auto archName = gguf_parser_->getArchitecture().name;
+      bool is_qwen = (archName.find("qwen") != std::string::npos) ||
+                     (archName.find("Qwen") != std::string::npos);
+      if (is_qwen) {
+        // Minimal ChatML commonly used by Qwen instruct models
+        effective_prompt = std::string("<|im_start|>system\n你是一个有帮助的助手。<|im_end|>\n") +
+                           "<|im_start|>user\n" + prompt + "\n<|im_end|>\n" +
+                           "<|im_start|>assistant\n";
+        used_chatml = true;
+      }
+    }
+    std::vector<int32_t> input_ids = qwen_model_->encode(effective_prompt, /*addSpecial=*/!used_chatml);
     if (input_ids.empty()) {
       return "Error: Failed to encode prompt";
+    }
+    if (used_chatml) {
+      std::cout << "[DEBUG] [GGLM] Using Qwen ChatML-formatted prompt" << std::endl;
     }
 
     // Get EOS from GGUF or vocabulary
@@ -1364,24 +1381,36 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       std::vector<float> logits;
       {
         const auto &sh = logits_tensor.shape();
-        const size_t vocab_sz = qwen_model_->getVocabSize();
-        if (sh.size() == 1 && static_cast<size_t>(sh[0]) == vocab_sz) {
-          logits.resize(vocab_sz);
+        const size_t model_vocab_sz = qwen_model_->getVocabSize();
+        if (sh.size() == 1) {
+          const size_t V = static_cast<size_t>(sh[0]);
+          if (generated == 0 && V != model_vocab_sz) {
+            std::cout << "[DEBUG] [GGLM] logits 1D size " << V
+                      << " differs from model vocab " << model_vocab_sz
+                      << "; proceeding with V=" << V << std::endl;
+          }
+          logits.resize(V);
           logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
-        } else if (sh.size() == 2 && static_cast<size_t>(sh[1]) == vocab_sz) {
-          // Flattened layout: [T, V]. Copy entire then slice the last row.
-          // Note: Tensor API lacks ranged copy; keep it simple for now.
+        } else if (sh.size() == 2) {
+          // Layout: [T, V]. Copy entire then slice the last row.
+          const size_t T = static_cast<size_t>(sh[0]);
+          const size_t V = static_cast<size_t>(sh[1]);
+          if (generated == 0 && V != model_vocab_sz) {
+            std::cout << "[DEBUG] [GGLM] logits 2D shape [" << T << "," << V
+                      << "] differs from model vocab " << model_vocab_sz
+                      << "; slicing last row with V=" << V << std::endl;
+          }
           std::vector<float> tmp(static_cast<size_t>(logits_tensor.numel()));
           logits_tensor.copyToHost(tmp.data(), tmp.size() * sizeof(float));
-          const size_t T = static_cast<size_t>(sh[0]);
-          const size_t V = vocab_sz;
           const size_t offset = (T > 0 ? (T - 1) * V : 0);
           logits.assign(tmp.begin() + static_cast<std::ptrdiff_t>(offset),
                         tmp.begin() + static_cast<std::ptrdiff_t>(offset + V));
         } else {
-          // Fallback: copy all and use as-is
-          std::cout << "[WARN] [GGLM] unexpected logits shape; copying all"
-                    << std::endl;
+          // Fallback: copy all and use as-is (rare). Avoid noisy warnings.
+          if (generated == 0) {
+            std::cout << "[DEBUG] [GGLM] unexpected logits shape ndim="
+                      << sh.size() << "; copying all" << std::endl;
+          }
           logits.resize(static_cast<size_t>(logits_tensor.numel()));
           logits_tensor.copyToHost(logits.data(),
                                    logits.size() * sizeof(float));

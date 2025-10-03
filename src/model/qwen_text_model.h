@@ -131,6 +131,13 @@ private:
     // Layer normalization weights
     std::vector<float> inputNormWeights_;
     std::vector<float> postAttentionNormWeights_;
+
+    // Helper: local LayerNorm operating on std::vector<float>
+    std::vector<float> layerNormVec(
+        const std::vector<float>& input,
+        const std::vector<float>& weights,
+        float eps
+    );
 };
 
 // Qwen text model implementation
