@@ -94,7 +94,7 @@ MLInferenceEngine::~MLInferenceEngine() {
   }
 
   if (llama_model_) {
-    llama_free_model(llama_model_);
+    llama_model_free(llama_model_);
     llama_model_ = nullptr;
   }
 
@@ -513,7 +513,7 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
     model_params.n_gpu_layers = 0; // CPU only for now
 
     // Load model
-    llama_model_ = llama_load_model_from_file(model_path.c_str(), model_params);
+    llama_model_ = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!llama_model_) {
       std::cerr << "[ERROR] Failed to load llama.cpp model from: " << model_path
                 << std::endl;
