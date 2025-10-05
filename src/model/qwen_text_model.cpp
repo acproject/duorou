@@ -314,21 +314,31 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
     return input;
   const size_t seqLen = input.size() / hidden;
 
-  auto matmul_seq_hidden =
-      [&](const std::vector<float> &A,
-          const std::vector<float> &W) -> std::vector<float> {
-    std::vector<float> out(seqLen * hidden, 0.0f);
+  // General matmul supporting arbitrary [in_dim, out_dim] or [out_dim, in_dim] layouts
+  auto matmul_seq_general = [&](const std::vector<float> &A,
+                                size_t in_dim,
+                                const std::vector<float> &W,
+                                size_t w_dim0,
+                                size_t w_dim1,
+                                bool w_is_in_out) -> std::vector<float> {
+    const size_t out_dim = w_is_in_out ? w_dim1 : w_dim0;
+    const size_t w_in_dim = w_is_in_out ? w_dim0 : w_dim1;
+    if (in_dim != w_in_dim) {
+      // Shape guard: if mismatch, return zero output to avoid UB
+      return std::vector<float>(seqLen * out_dim, 0.0f);
+    }
+    std::vector<float> out(seqLen * out_dim, 0.0f);
     for (size_t t = 0; t < seqLen; ++t) {
-      const float *a = &A[t * hidden];
-      float *o = &out[t * hidden];
-      for (int outc = 0; outc < static_cast<int>(hidden); ++outc) {
+      const float *a = &A[t * in_dim];
+      float *o = &out[t * out_dim];
+      for (size_t outc = 0; outc < out_dim; ++outc) {
         double acc = 0.0;
-        // Assume W is [hidden, hidden] in row-major as (in_dim, out_dim) ->
-        // index in*hidden + out
-        for (int in = 0; in < static_cast<int>(hidden); ++in) {
-          acc +=
-              static_cast<double>(a[in]) *
-              static_cast<double>(W[static_cast<size_t>(in) * hidden + outc]);
+        for (size_t in = 0; in < in_dim; ++in) {
+          // Row-major indexing per layout
+          size_t w_idx = w_is_in_out
+            ? (in * out_dim + outc)   // [in_dim, out_dim]
+            : (outc * in_dim + in);   // [out_dim, in_dim]
+          acc += static_cast<double>(a[in]) * static_cast<double>(W[w_idx]);
         }
         o[outc] = static_cast<float>(acc);
       }
@@ -339,17 +349,38 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
   auto sigmoid = [](float x) -> float { return 1.0f / (1.0f + std::exp(-x)); };
   auto silu = [&](float x) -> float { return x * sigmoid(x); };
 
-  std::vector<float> g = matmul_seq_hidden(input, gateWeights_);
-  std::vector<float> u = matmul_seq_hidden(input, upWeights_);
+  // Determine gate/up/down shapes; fall back to hidden x hidden if unknown
+  size_t gate_d0 = gateRows_ ? gateRows_ : hidden;
+  size_t gate_d1 = gateCols_ ? gateCols_ : hidden;
+  size_t up_d0   = upRows_   ? upRows_   : hidden;
+  size_t up_d1   = upCols_   ? upCols_   : hidden;
+  size_t down_d0 = downRows_ ? downRows_ : hidden;
+  size_t down_d1 = downCols_ ? downCols_ : hidden;
+
+  // Layout detection: prefer orientation that makes w_in_dim == hidden
+  bool gate_in_out = (gate_d0 == hidden) || (gate_d1 != hidden);
+  if (!(gate_d0 == hidden || gate_d1 == hidden)) gate_in_out = true; // default
+  bool up_in_out   = (up_d0 == hidden) || (up_d1 != hidden);
+  if (!(up_d0 == hidden || up_d1 == hidden)) up_in_out = true;
+  // For down, input is intermediate, output is hidden
+  size_t inter = interDim_ ? interDim_ : (gate_in_out ? gate_d1 : gate_d0);
+  bool down_in_out = (down_d0 == inter) || (down_d1 == hidden);
+  if (!(down_d0 == inter || down_d1 == inter || down_d0 == hidden || down_d1 == hidden)) down_in_out = true;
+
+  // Compute gate and up projections: [seq, inter]
+  std::vector<float> g = matmul_seq_general(input, hidden, gateWeights_, gate_d0, gate_d1, gate_in_out);
+  std::vector<float> u = matmul_seq_general(input, hidden, upWeights_,   up_d0,   up_d1,   up_in_out);
 
   // element-wise SwiGLU: silu(g) * u
-  std::vector<float> inter(g.size());
+  std::vector<float> interVec(g.size());
   for (size_t i = 0; i < g.size(); ++i) {
-    inter[i] = silu(g[i]) * u[i];
+    interVec[i] = silu(g[i]) * u[i];
   }
 
-  // down projection
-  std::vector<float> out = matmul_seq_hidden(inter, downWeights_);
+  // down projection back to hidden
+  // Determine actual intermediate dimension from gate output
+  size_t inter_dim_actual = g.empty() ? inter : (g.size() / seqLen);
+  std::vector<float> out = matmul_seq_general(interVec, inter_dim_actual, downWeights_, down_d0, down_d1, down_in_out);
   return out;
 }
 
@@ -361,23 +392,36 @@ bool FeedForward::loadWeights(const std::string & /*weightsPath*/) {
 // New overload: load weights for a specific layer from a parsed GGUF
 bool FeedForward::loadWeights(duorou::extensions::ollama::GGUFParser &parser,
                               size_t layerIndex) {
-  auto get = [&](const std::string &name, std::vector<float> &dst) {
+  auto get = [&](const std::string &name, std::vector<float> &dst, size_t &rows, size_t &cols) {
     std::vector<float> tmp;
     std::vector<int64_t> shape;
     if (!readGGUFTensorToFloat(parser, name, tmp, &shape)) {
       return false;
     }
     dst.assign(tmp.begin(), tmp.end());
+    if (shape.size() == 2) {
+      rows = static_cast<size_t>(shape[0]);
+      cols = static_cast<size_t>(shape[1]);
+    } else {
+      rows = cols = 0;
+    }
     return true;
   };
   char buf[128];
   bool ok = true;
   std::snprintf(buf, sizeof(buf), "blk.%zu.ffn_gate.weight", layerIndex);
-  ok &= get(buf, gateWeights_);
+  ok &= get(buf, gateWeights_, gateRows_, gateCols_);
   std::snprintf(buf, sizeof(buf), "blk.%zu.ffn_up.weight", layerIndex);
-  ok &= get(buf, upWeights_);
+  ok &= get(buf, upWeights_, upRows_, upCols_);
   std::snprintf(buf, sizeof(buf), "blk.%zu.ffn_down.weight", layerIndex);
-  ok &= get(buf, downWeights_);
+  ok &= get(buf, downWeights_, downRows_, downCols_);
+  // Infer intermediate dimension
+  if (ok) {
+    size_t hidden = options_.hiddenSize;
+    size_t gate_out = (gateRows_ == hidden) ? gateCols_ : gateRows_;
+    size_t up_out   = (upRows_   == hidden) ? upCols_   : upRows_;
+    interDim_ = gate_out ? gate_out : up_out;
+  }
   weightsLoaded_ = ok;
   return ok;
 }
@@ -418,8 +462,12 @@ std::vector<float> TransformerLayer::forward(
       if (v < mn) mn = v;
       if (v > mx) mx = v;
     }
-    double mean = n ? sum / static_cast<double>(n - nonfinite) : 0.0;
-    double var = n && (n - nonfinite) ? (sumsq / static_cast<double>(n - nonfinite)) - mean * mean : 0.0;
+    size_t finite = n - nonfinite;
+    if (finite == 0) {
+      return std::tuple<float, float, double, double, size_t>(0.0f, 0.0f, 0.0, 0.0, nonfinite);
+    }
+    double mean = sum / static_cast<double>(finite);
+    double var = (sumsq / static_cast<double>(finite)) - mean * mean;
     double stdv = var > 0.0 ? std::sqrt(var) : 0.0;
     return std::tuple<float, float, double, double, size_t>(mn, mx, mean, stdv, nonfinite);
   };
@@ -446,7 +494,11 @@ std::vector<float> TransformerLayer::forward(
       }
     }
   }
-  {
+  // Throttle logging frequency to reduce overhead
+  static size_t s_logCounter = 0;
+  static const size_t s_logStride = 16; // log every 16 calls
+  bool doLog = ((s_logCounter++) % s_logStride) == 0;
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedInput);
     tlogger.info("[TransformerLayer] normedInput stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
@@ -469,7 +521,7 @@ std::vector<float> TransformerLayer::forward(
       }
     }
   }
-  {
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(attnOut);
     tlogger.info("[TransformerLayer] attnOut stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
@@ -481,7 +533,7 @@ std::vector<float> TransformerLayer::forward(
   for (size_t i = 0; i < resid1.size(); ++i) {
     resid1[i] = input[i] + attnOut[i];
   }
-  {
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(resid1);
     tlogger.info("[TransformerLayer] resid1 stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
@@ -490,7 +542,7 @@ std::vector<float> TransformerLayer::forward(
 
   // 4) Post-attention layer norm
   auto normedResid1 = layerNormVec(resid1, postAttentionNormWeights_, options_.eps);
-  {
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedResid1);
     tlogger.info("[TransformerLayer] normedResid1 stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
@@ -513,7 +565,7 @@ std::vector<float> TransformerLayer::forward(
       }
     }
   }
-  {
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(ffnOut);
     tlogger.info("[TransformerLayer] ffnOut stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
@@ -525,7 +577,7 @@ std::vector<float> TransformerLayer::forward(
   for (size_t i = 0; i < output.size(); ++i) {
     output[i] = resid1[i] + ffnOut[i];
   }
-  {
+  if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(output);
     tlogger.info("[TransformerLayer] output stats mn=" + std::to_string(mn) +
                  " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +

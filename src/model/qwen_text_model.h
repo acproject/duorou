@@ -106,6 +106,12 @@ private:
   std::vector<float> gateWeights_;
   std::vector<float> upWeights_;
   std::vector<float> downWeights_;
+  // Weight shapes [rows, cols] as read from GGUF (row-major)
+  size_t gateRows_ = 0, gateCols_ = 0;
+  size_t upRows_ = 0, upCols_ = 0;
+  size_t downRows_ = 0, downCols_ = 0;
+  // Derived intermediate dimension used by SwiGLU
+  size_t interDim_ = 0;
 };
 
 // Transformer layer combining attention and FFN
