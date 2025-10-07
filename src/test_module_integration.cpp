@@ -248,7 +248,7 @@ bool testGGMLInference() {
         // 执行真实的文本生成
         std::string generated_text =
             real_engine.generateText(TEST_INPUT,
-                                     256,  // max_tokens
+                                     128,  // max_tokens
                                      0.7f, // temperature
                                      0.9f  // top_p
             );

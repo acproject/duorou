@@ -1,5 +1,8 @@
 #pragma once
 
+// Ensure this header is only parsed by a C++ compiler
+#ifdef __cplusplus
+
 #include "../kvcache/cache.h"
 #include "../ml/context.h"
 #include "../ml/nn/attention.h"
@@ -7,6 +10,7 @@
 #include "base_model.h"
 #include "byte_pair_encoding.h"
 #include "vocabulary.h"
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -246,3 +250,5 @@ std::unique_ptr<BaseModel> createQwenTextModel(const std::string &configPath);
 
 } // namespace model
 } // namespace duorou
+
+#endif // __cplusplus
