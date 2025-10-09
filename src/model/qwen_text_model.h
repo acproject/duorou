@@ -114,6 +114,10 @@ private:
   size_t gateRows_ = 0, gateCols_ = 0;
   size_t upRows_ = 0, upCols_ = 0;
   size_t downRows_ = 0, downCols_ = 0;
+  // Weight layout flags: true means [in_dim, out_dim]; false means [out_dim, in_dim]
+  bool gateIsInOut_ = false;
+  bool upIsInOut_ = false;
+  bool downIsInOut_ = false;
   // Derived intermediate dimension used by SwiGLU
   size_t interDim_ = 0;
 };
@@ -150,6 +154,9 @@ private:
   // Helper: local LayerNorm operating on std::vector<float>
   std::vector<float> layerNormVec(const std::vector<float> &input,
                                   const std::vector<float> &weights, float eps);
+  // Helper: local RMSNorm operating on std::vector<float>
+  std::vector<float> rmsNormVec(const std::vector<float> &input,
+                                const std::vector<float> &weights, float eps);
 };
 
 // Qwen text model implementation

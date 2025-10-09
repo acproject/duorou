@@ -349,7 +349,8 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
   auto sigmoid = [](float x) -> float { return 1.0f / (1.0f + std::exp(-x)); };
   auto silu = [&](float x) -> float { return x * sigmoid(x); };
 
-  // Determine gate/up/down shapes; fall back to hidden x hidden if unknown
+  // Determine gate/up/down shapes; fall back to hidden x hidden if unknown,
+  // and use stored, deterministic layout flags
   size_t gate_d0 = gateRows_ ? gateRows_ : hidden;
   size_t gate_d1 = gateCols_ ? gateCols_ : hidden;
   size_t up_d0   = upRows_   ? upRows_   : hidden;
@@ -357,15 +358,11 @@ std::vector<float> FeedForward::forward(const std::vector<float> &input) {
   size_t down_d0 = downRows_ ? downRows_ : hidden;
   size_t down_d1 = downCols_ ? downCols_ : hidden;
 
-  // Layout detection: prefer orientation that makes w_in_dim == hidden
-  bool gate_in_out = (gate_d0 == hidden) || (gate_d1 != hidden);
-  if (!(gate_d0 == hidden || gate_d1 == hidden)) gate_in_out = true; // default
-  bool up_in_out   = (up_d0 == hidden) || (up_d1 != hidden);
-  if (!(up_d0 == hidden || up_d1 == hidden)) up_in_out = true;
+  bool gate_in_out = gateIsInOut_;
+  bool up_in_out   = upIsInOut_;
   // For down, input is intermediate, output is hidden
   size_t inter = interDim_ ? interDim_ : (gate_in_out ? gate_d1 : gate_d0);
-  bool down_in_out = (down_d0 == inter) || (down_d1 == hidden);
-  if (!(down_d0 == inter || down_d1 == inter || down_d0 == hidden || down_d1 == hidden)) down_in_out = true;
+  bool down_in_out = downIsInOut_;
 
   // Compute gate and up projections: [seq, inter]
   std::vector<float> g = matmul_seq_general(input, hidden, gateWeights_, gate_d0, gate_d1, gate_in_out);
@@ -421,6 +418,22 @@ bool FeedForward::loadWeights(duorou::extensions::ollama::GGUFParser &parser,
     size_t gate_out = (gateRows_ == hidden) ? gateCols_ : gateRows_;
     size_t up_out   = (upRows_   == hidden) ? upCols_   : upRows_;
     interDim_ = gate_out ? gate_out : up_out;
+    // Determine deterministic layouts: prefer [in_dim, out_dim]
+    gateIsInOut_ = (gateRows_ == hidden);
+    upIsInOut_   = (upRows_   == hidden);
+    // down expects input=interDim_, output=hidden
+    downIsInOut_ = (downRows_ == interDim_);
+
+    // Print a one-time summary to std::cout to aid debugging
+    std::cout << "[FFN] Layer " << layerIndex
+              << " gate shape=" << gateRows_ << "x" << gateCols_
+              << " layout=" << (gateIsInOut_ ? "[in,out]" : "[out,in]")
+              << " up shape=" << upRows_ << "x" << upCols_
+              << " layout=" << (upIsInOut_ ? "[in,out]" : "[out,in]")
+              << " down shape=" << downRows_ << "x" << downCols_
+              << " layout=" << (downIsInOut_ ? "[in,out]" : "[out,in]")
+              << " hidden=" << hidden
+              << " interDim=" << interDim_ << std::endl;
   }
   weightsLoaded_ = ok;
   return ok;
@@ -478,8 +491,8 @@ std::vector<float> TransformerLayer::forward(
     return input; // shape guard
   }
 
-  // 1) Pre-attention layer norm
-  auto normedInput = layerNormVec(input, inputNormWeights_, options_.eps);
+  // 1) Pre-attention RMSNorm
+  auto normedInput = rmsNormVec(input, inputNormWeights_, options_.eps);
   // 若层归一化输出为全零，注入极小扰动避免全零传播
   {
     bool all_zero = true;
@@ -496,7 +509,7 @@ std::vector<float> TransformerLayer::forward(
   }
   // Throttle logging frequency to reduce overhead
   static size_t s_logCounter = 0;
-  static const size_t s_logStride = 16; // log every 16 calls
+  static const size_t s_logStride = 1; // log every call for debugging
   bool doLog = ((s_logCounter++) % s_logStride) == 0;
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedInput);
@@ -540,8 +553,8 @@ std::vector<float> TransformerLayer::forward(
                  " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
   }
 
-  // 4) Post-attention layer norm
-  auto normedResid1 = layerNormVec(resid1, postAttentionNormWeights_, options_.eps);
+  // 4) Post-attention RMSNorm
+  auto normedResid1 = rmsNormVec(resid1, postAttentionNormWeights_, options_.eps);
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedResid1);
     tlogger.info("[TransformerLayer] normedResid1 stats mn=" + std::to_string(mn) +
@@ -677,6 +690,37 @@ std::vector<float> TransformerLayer::layerNormVec(const std::vector<float>& inpu
       float norm = (input[base + i] - static_cast<float>(mean)) * inv_std;
       float scale = has_scale ? weights[i] : 1.0f;
       out[base + i] = norm * scale;
+    }
+  }
+  return out;
+}
+
+std::vector<float> TransformerLayer::rmsNormVec(const std::vector<float>& input,
+                                                const std::vector<float>& weights,
+                                                float eps) {
+  const size_t hidden = options_.hiddenSize;
+  if (hidden == 0) return input;
+  if (input.empty()) return {};
+  if (input.size() % hidden != 0) return input;
+
+  const size_t seq_len = input.size() / hidden;
+  std::vector<float> out(input.size());
+  const bool has_scale = (weights.size() == hidden);
+
+  for (size_t t = 0; t < seq_len; ++t) {
+    const size_t base = t * hidden;
+    // Compute mean of squared values (RMS)
+    double msq = 0.0;
+    for (size_t i = 0; i < hidden; ++i) {
+      double v = static_cast<double>(input[base + i]);
+      msq += v * v;
+    }
+    msq /= static_cast<double>(hidden);
+    float inv_rms = 1.0f / std::sqrt(static_cast<float>(msq) + eps);
+
+    for (size_t i = 0; i < hidden; ++i) {
+      float scale = has_scale ? weights[i] : 1.0f;
+      out[base + i] = input[base + i] * inv_rms * scale;
     }
   }
   return out;
@@ -1087,30 +1131,20 @@ std::vector<float> QwenTextModel::layerNorm(const std::vector<float> &input,
   const size_t seq_len = input.size() / hidden;
   std::vector<float> out(input.size());
   const bool has_scale = (weights.size() == hidden);
-
+  // RMSNorm: x / sqrt(mean(x^2) + eps) * gamma
   for (size_t t = 0; t < seq_len; ++t) {
     const size_t base = t * hidden;
-    // Compute mean
-    double mean = 0.0;
+    double msq = 0.0;
     for (size_t i = 0; i < hidden; ++i) {
-      mean += static_cast<double>(input[base + i]);
+      double v = static_cast<double>(input[base + i]);
+      msq += v * v;
     }
-    mean /= static_cast<double>(hidden);
+    msq /= static_cast<double>(hidden);
+    float inv_rms = 1.0f / std::sqrt(static_cast<float>(msq) + eps);
 
-    // Compute variance
-    double var = 0.0;
     for (size_t i = 0; i < hidden; ++i) {
-      double d = static_cast<double>(input[base + i]) - mean;
-      var += d * d;
-    }
-    var /= static_cast<double>(hidden);
-    float inv_std = 1.0f / std::sqrt(static_cast<float>(var) + eps);
-
-    // Normalize and scale (no bias for text model LN here)
-    for (size_t i = 0; i < hidden; ++i) {
-      float norm = (input[base + i] - static_cast<float>(mean)) * inv_std;
       float scale = has_scale ? weights[i] : 1.0f;
-      out[base + i] = norm * scale;
+      out[base + i] = input[base + i] * inv_rms * scale;
     }
   }
   return out;
