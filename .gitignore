@@ -147,3 +147,6 @@ other
 models
 models/**
 .vs
+llama.cpp
+llama.cpp/**
+third_party/llama.cpp
