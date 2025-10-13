@@ -34,10 +34,15 @@ using namespace duorou::model;
 const std::string TEST_INPUT =
     "你好，马上是中秋节了，帮我写一首诗，并翻译为英文。";
 
-// 模型文件路径
+// 模型文件路径 Qwen2.5vl
+// const std::string MODEL_PATH =
+//     "/Users/acproject/.ollama/models/blobs/"
+//     "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025";
+
+// 模型文件路径 Qwen3
 const std::string MODEL_PATH =
     "/Users/acproject/.ollama/models/blobs/"
-    "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025";
+    "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e";
 
 // 简单的 KV 缓存后端实现
 class SimpleKVBackend : public duorou::kvcache::Backend {
@@ -246,12 +251,12 @@ bool testGGMLInference() {
         std::cout << "推理引擎初始化成功，开始生成文本..." << std::endl;
 
         // 执行真实的文本生成
-        std::string generated_text =
-            real_engine.generateText(TEST_INPUT,
-                                     8,    // max_tokens (shortened for faster test)
-                                     0.7f, // temperature
-                                     0.9f  // top_p
-            );
+        std::string generated_text = real_engine.generateText(
+            TEST_INPUT,
+            8,    // max_tokens (shortened for faster test)
+            0.7f, // temperature
+            0.9f  // top_p
+        );
 
         std::cout << "生成的文本: " << generated_text << std::endl;
 

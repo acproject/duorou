@@ -181,24 +181,26 @@ bool MLInferenceEngine::initialize() {
     const auto &arch = gguf_parser_->getArchitecture().name;
     // Allow forcing llama.cpp via environment variable DUOROU_FORCE_LLAMA
     const char *force_llama_env = std::getenv("DUOROU_FORCE_LLAMA");
-    bool force_llama = force_llama_env && std::string(force_llama_env) != "0" &&
-                       std::string(force_llama_env).size() > 0;
+    // bool force_llama = force_llama_env && std::string(force_llama_env) != "0" &&
+    //                    std::string(force_llama_env).size() > 0;
+    bool force_llama = true;
     bool llama_supported = isSupportedByLlamaCpp(arch);
-    if (force_llama && !llama_supported) {
-      std::cerr
-          << "[WARN] DUOROU_FORCE_LLAMA requested but architecture '" << arch
-          << "' is unsupported by llama.cpp; using internal forward instead"
-          << std::endl;
-    }
+    // if (force_llama && !llama_supported) {
+    //   std::cerr
+    //       << "[WARN] DUOROU_FORCE_LLAMA requested but architecture '" << arch
+    //       << "' is unsupported by llama.cpp; using internal forward instead"
+    //       << std::endl;
+    // }
 
-    use_llama_backend_ = force_llama && llama_supported;
-    std::cout << "[DEBUG] Detected architecture: '" << arch
-              << "', use_llama_backend_="
-              << (use_llama_backend_ ? "true" : "false")
-              << ((force_llama && llama_supported)
-                      ? " (forced by DUOROU_FORCE_LLAMA)"
-                      : "")
-              << std::endl;
+    use_llama_backend_ = force_llama ;
+    // && llama_supported;
+    // std::cout << "[DEBUG] Detected architecture: '" << arch
+    //           << "', use_llama_backend_="
+    //           << (use_llama_backend_ ? "true" : "false")
+    //           << ((force_llama && llama_supported)
+    //                   ? " (forced by DUOROU_FORCE_LLAMA)"
+    //                   : "")
+    //           << std::endl;
 
     if (use_llama_backend_) {
       // Only initialize llama.cpp backend and load model when llama.cpp is
@@ -502,11 +504,11 @@ bool MLInferenceEngine::loadLlamaModel(const std::string &model_path) {
       }
     } catch (...) {
     }
-    if (!arch_for_check.empty() && !isSupportedByLlamaCpp(arch_for_check)) {
-      std::cerr << "[WARN] llama.cpp does not support architecture '"
-                << arch_for_check << "'; skipping llama.cpp load" << std::endl;
-      return false;
-    }
+    // if (!arch_for_check.empty() && !isSupportedByLlamaCpp(arch_for_check)) {
+    //   std::cerr << "[WARN] llama.cpp does not support architecture '"
+    //             << arch_for_check << "'; skipping llama.cpp load" << std::endl;
+    //   return false;
+    // }
 
     // Set model parameters
     llama_model_params model_params = llama_model_default_params();
