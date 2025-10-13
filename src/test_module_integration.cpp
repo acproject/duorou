@@ -42,7 +42,7 @@ const std::string TEST_INPUT =
 // 模型文件路径 Qwen3
 const std::string MODEL_PATH =
     "/Users/acproject/.ollama/models/blobs/"
-    "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e";
+    "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f";
 
 // 简单的 KV 缓存后端实现
 class SimpleKVBackend : public duorou::kvcache::Backend {

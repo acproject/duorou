@@ -400,8 +400,8 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
 
   try {
     if (use_llama_backend_) {
-      // Use ggml for inference
-      return generateWithGGLM(prompt, max_tokens, temperature, top_p);
+      // Use llama.cpp backend for inference
+      return generateWithLlama(prompt, max_tokens, temperature, top_p);
     } else {
       // Use internal Forward mode for inference
       return generateWithGGLM(prompt, max_tokens, temperature, top_p);
@@ -418,8 +418,8 @@ bool MLInferenceEngine::isReady() const {
   if (!initialized_)
     return false;
   if (use_llama_backend_) {
-    return ml_context_ != nullptr && attention_ != nullptr &&
-           llama_model_ != nullptr && llama_context_ != nullptr &&
+    // Llama backend only requires llama-specific resources
+    return llama_model_ != nullptr && llama_context_ != nullptr &&
            llama_sampler_ != nullptr;
   } else {
     // Internal Forward mode: requires at least ML context, attention, and
