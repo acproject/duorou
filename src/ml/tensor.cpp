@@ -21,13 +21,44 @@ namespace duorou {
 namespace ml {
 
 ggml_tensor *Tensor::to_ggml(ggml_context *ctx) const {
-  if (shape_.size() != 2)
-    throw std::runtime_error("ggml wrapper only 2-D for now");
-  const int64_t n_rows = shape_[0];
-  const int64_t n_cols = shape_[1];
   ggml_type ggml_dtype =
       (dtype_ == DataType::FLOAT32) ? GGML_TYPE_F32 : GGML_TYPE_BF16;
-  ggml_tensor *t = ggml_new_tensor_2d(ctx, ggml_dtype, n_cols, n_rows);
+  
+  ggml_tensor *t = nullptr;
+  
+  // 根据张量维度创建相应的 GGML 张量
+  switch (shape_.size()) {
+    case 1: {
+      const int64_t n_elements = shape_[0];
+      t = ggml_new_tensor_1d(ctx, ggml_dtype, n_elements);
+      break;
+    }
+    case 2: {
+      const int64_t n_rows = shape_[0];
+      const int64_t n_cols = shape_[1];
+      t = ggml_new_tensor_2d(ctx, ggml_dtype, n_cols, n_rows);
+      break;
+    }
+    case 3: {
+      const int64_t ne0 = shape_[2];  // 最内层维度
+      const int64_t ne1 = shape_[1];
+      const int64_t ne2 = shape_[0];  // 最外层维度
+      t = ggml_new_tensor_3d(ctx, ggml_dtype, ne0, ne1, ne2);
+      break;
+    }
+    case 4: {
+      const int64_t ne0 = shape_[3];  // 最内层维度
+      const int64_t ne1 = shape_[2];
+      const int64_t ne2 = shape_[1];
+      const int64_t ne3 = shape_[0];  // 最外层维度
+      t = ggml_new_tensor_4d(ctx, ggml_dtype, ne0, ne1, ne2, ne3);
+      break;
+    }
+    default:
+      throw std::runtime_error("ggml wrapper supports 1D-4D tensors only, got " + 
+                               std::to_string(shape_.size()) + "D");
+  }
+  
   // 复制已有 data_ 到 ggml 的内存（避免错误的指针覆盖）
   if (!data_) {
     throw std::runtime_error("to_ggml: tensor data is not allocated");

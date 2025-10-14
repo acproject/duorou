@@ -97,6 +97,7 @@ private:
   // 注意力每头维度（来自GGUF）：Q的head_dim与K/V的head_dim_k（GQA场景）
   uint32_t head_dim_q_;
   uint32_t head_dim_k_;
+  uint32_t ffn_dim_;     // FFN 中间维度 (feed_forward_length)
 
   // RoPE参数
   std::vector<float> rope_freqs_;

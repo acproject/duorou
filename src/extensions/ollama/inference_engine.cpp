@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
-// Include the actual llama.cpp header files
+// 固定使用项目内置的 llama.cpp 头文件，避免误用系统头导致 IDE 诊断引用缺失的 `llama-model.h`
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -24,6 +24,11 @@
 #endif
 #endif
 #include "../../../third_party/llama.cpp/include/llama.h"
+// Compatibility: some IDE indexers may look for 'llama-model.h' via system headers.
+// Explicitly reference the project-local header if present to avoid false diagnostics.
+#if __has_include("../../../third_party/llama.cpp/include/llama-model.h")
+#include "../../../third_party/llama.cpp/include/llama-model.h"
+#endif
 #include "ggml-cpu.h"
 #include "ggml.h"
 
@@ -36,7 +41,6 @@
 #include "inference_engine.h"
 #include "ollama_model_manager.h"
 
-#include "llama-model.h"
 
 namespace duorou {
 namespace extensions {
@@ -77,7 +81,7 @@ MLInferenceEngine::MLInferenceEngine(const std::string &model_id)
     : model_id_(model_id), initialized_(false), ml_context_(nullptr),
       attention_(nullptr), gguf_parser_(nullptr), kv_cache_(nullptr),
       vocab_size_(0), n_layers_(0), n_heads_(0), n_embd_(0), n_ctx_(0),
-      head_dim_q_(0), head_dim_k_(0),
+      head_dim_q_(0), head_dim_k_(0), ffn_dim_(0),
       rope_freqs_(), rope_initialized_(false), llama_model_(nullptr),
       llama_context_(nullptr), llama_sampler_(nullptr),
       use_llama_backend_(false) {
@@ -239,6 +243,13 @@ bool MLInferenceEngine::initialize() {
         return false;
       }
 
+      // 加载权重到 weight_map_ 以支持 generateWithGGLM
+      if (!loadModelWeights()) {
+        std::cerr << "[ERROR] Failed to load model weights for GGML inference" << std::endl;
+        initialized_ = false;
+        return false;
+      }
+
       initialized_ = true;
       std::cout << "[DEBUG] MLInferenceEngine initialized successfully (InternalForward)" << std::endl;
       return true;
@@ -316,6 +327,12 @@ bool MLInferenceEngine::initialize() {
         }
         if (!parseModelConfig()) {
           std::cerr << "[WARN] Failed to parse model config from GGUF metadata" << std::endl;
+        }
+        // 加载权重到 weight_map_ 以支持 generateWithGGLM
+        if (!loadModelWeights()) {
+          std::cerr << "[ERROR] Failed to load model weights for GGML inference during fallback" << std::endl;
+          initialized_ = false;
+          return false;
         }
         initialized_ = true;
         std::cout << "[DEBUG] InternalForward initialization succeeded after llama load failure" << std::endl;
@@ -808,6 +825,9 @@ bool MLInferenceEngine::parseModelConfig() {
     head_dim_k_ = arch.attention_head_dim_k ? arch.attention_head_dim_k
                                             : head_dim_q_;
 
+    // FFN 维度
+    ffn_dim_ = arch.feed_forward_length ? arch.feed_forward_length : 0;
+
     // RoPE 参数
     rope_dim_ = arch.rope_dimension_count
                     ? arch.rope_dimension_count
@@ -854,6 +874,8 @@ bool MLInferenceEngine::parseModelConfig() {
       n_ctx_ = 2048;
     if (rope_dim_ == 0)
       rope_dim_ = head_dim_q_;
+    if (ffn_dim_ == 0)
+      ffn_dim_ = n_embd_ * 4; // 默认为 4 倍隐藏维度
 
     // 调试输出（含 RoPE mrope sections）
     std::cout << "[DEBUG] Parsed GGUF architecture: '" << arch.name << "'"
@@ -871,8 +893,8 @@ bool MLInferenceEngine::parseModelConfig() {
               << ", n_layers: " << n_layers_ << ", n_heads: " << n_heads_
               << ", n_kv_heads: " << n_kv_heads_ << ", n_embd: " << n_embd_
               << ", n_ctx: " << n_ctx_ << ", head_dim_q: " << head_dim_q_
-              << ", head_dim_k: " << head_dim_k_ << ", rope_dim: "
-              << rope_dim_ << ", rope_freq_base: " << rope_freq_base_
+              << ", head_dim_k: " << head_dim_k_ << ", ffn_dim: " << ffn_dim_
+              << ", rope_dim: " << rope_dim_ << ", rope_freq_base: " << rope_freq_base_
               << std::endl;
 
     // 基本合法性检查
@@ -1218,355 +1240,7 @@ std::string MLInferenceEngine::generateWithLlama(const std::string &prompt,
   }
 }
 
-// std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
-//                                                 uint32_t max_tokens,
-//                                                 float temperature,
-//                                                 float top_p) {
-//   try {
-//     if (!initialized_) {
-//       return "Error: Inference engine not initialized";
-//     }
-//     if (!qwen_model_ || !ml_context_) {
-//       return "Error: Qwen model or ML context not initialized";
-//     }
 
-//     // Encode with Qwen tokenizer (apply minimal ChatML formatting for Qwen architectures)
-//     std::string effective_prompt = prompt;
-//     bool used_chatml = false;
-//     if (gguf_parser_) {
-//       auto archName = gguf_parser_->getArchitecture().name;
-//       bool is_qwen = (archName.find("qwen") != std::string::npos) ||
-//                      (archName.find("Qwen") != std::string::npos);
-//       if (is_qwen) {
-//         // Minimal ChatML commonly used by Qwen instruct models
-//         effective_prompt = std::string("<|im_start|>system\n你是一个有帮助的助手。<|im_end|>\n") +
-//                            "<|im_start|>user\n" + prompt + "\n<|im_end|>\n" +
-//                            "<|im_start|>assistant\n";
-//         used_chatml = true;
-//       }
-//     }
-//     std::vector<int32_t> input_ids = qwen_model_->encode(effective_prompt, /*addSpecial=*/!used_chatml);
-//     if (input_ids.empty()) {
-//       return "Error: Failed to encode prompt";
-//     }
-//     if (used_chatml) {
-//       std::cout << "[DEBUG] [GGLM] Using Qwen ChatML-formatted prompt" << std::endl;
-//     }
-
-//     // Get EOS from GGUF or vocabulary
-//     int32_t eos_id = -1;
-//     if (gguf_parser_) {
-//       if (const auto *kvEOS =
-//               gguf_parser_->getMetadata("tokenizer.ggml.eos_token_id")) {
-//         eos_id = kvEOS->asInt32();
-//       }
-//     }
-//     if (eos_id < 0) {
-//       const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
-//       eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
-//     }
-//     if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
-//       input_ids.pop_back();
-//     }
-
-//     std::vector<int32_t> sequence_ids = input_ids;
-//     std::vector<int32_t> generated_ids;
-
-//     static thread_local std::mt19937 rng(std::random_device{}());
-
-//     // Precompute PAD-like token ids from vocabulary strings (e.g., "[PAD]", "[PAD270]")
-//     // This helps mask tokens that are not marked as PAD in GGUF but exist in the vocabulary.
-//     std::vector<int32_t> pad_like_ids;
-//     const duorou::model::Vocabulary *vocab_ptr = qwen_model_->getVocabulary();
-//     if (vocab_ptr) {
-//       const auto &vals = vocab_ptr->getValues();
-//       pad_like_ids.reserve(vals.size() / 128); // heuristic reserve
-//       for (size_t i = 0; i < vals.size(); ++i) {
-//         const std::string &tok = vals[i];
-//         // Match common PAD patterns, e.g., "[PAD]", "[PAD270]", "<pad>", "<PAD>"
-//         bool is_pad_like = false;
-//         if (!tok.empty()) {
-//           if (tok.size() >= 5 && tok.rfind("[PAD", 0) == 0) {
-//             // Starts with "[PAD" (e.g., [PAD], [PAD270])
-//             is_pad_like = true;
-//           } else if (tok == "<pad>" || tok == "<PAD>" || tok == "[PAD]") {
-//             is_pad_like = true;
-//           }
-//         }
-//         if (is_pad_like) {
-//           pad_like_ids.push_back(static_cast<int32_t>(i));
-//         }
-//       }
-//     }
-
-//     size_t generated = 0;
-//     while (generated < max_tokens) {
-//       auto t_loop_start = std::chrono::high_resolution_clock::now();
-//       // Build input tensor: full sequence for first step, last token afterwards
-//       duorou::ml::Tensor input_tensor;
-//       if (generated == 0) {
-//         input_tensor =
-//             duorou::ml::Tensor({static_cast<int64_t>(sequence_ids.size())},
-//                                duorou::ml::DataType::INT32);
-//         if (ml_context_->getBackend())
-//           input_tensor.setBackend(ml_context_->getBackend());
-//         input_tensor.allocate(input_tensor.backend());
-//         input_tensor.copyFromHost(sequence_ids.data(),
-//                                   sequence_ids.size() * sizeof(int32_t));
-//       } else {
-//         int32_t last_id = sequence_ids.back();
-//         input_tensor = duorou::ml::Tensor({1}, duorou::ml::DataType::INT32);
-//         if (ml_context_->getBackend())
-//           input_tensor.setBackend(ml_context_->getBackend());
-//         input_tensor.allocate(input_tensor.backend());
-//         input_tensor.copyFromHost(&last_id, sizeof(int32_t));
-//       }
-
-//       // Use multimodal forward for consistency (no images here)
-//       auto t_fwd_start = std::chrono::high_resolution_clock::now();
-//       duorou::ml::Tensor logits_tensor =
-//           qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
-//       auto t_fwd_end = std::chrono::high_resolution_clock::now();
-//       if (logits_tensor.numel() <= 0) {
-//         break;
-//       }
-
-//       // Diagnostics on first step: vocab vs logits size
-//       if (generated == 0) {
-//         size_t vocab_sz = qwen_model_->getVocabSize();
-//         const auto &sh = logits_tensor.shape();
-//         std::cout << "[DEBUG] [GGLM] logits size=" << logits_tensor.numel()
-//                   << ", model vocab size=" << vocab_sz << ", shape=[";
-//         for (size_t i = 0; i < sh.size(); ++i) {
-//           std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
-//         }
-//         std::cout << "]" << std::endl;
-//         auto dur_fwd = std::chrono::duration_cast<std::chrono::milliseconds>(
-//             t_fwd_end - t_fwd_start);
-//         std::cout << "[DEBUG] [GGLM] forward took " << dur_fwd.count()
-//                   << " ms" << std::endl;
-//       }
-
-//       // Apply temperature scaling directly on tensor
-//       if (temperature > 0.0f) {
-//         // Create temperature tensor and divide
-//         duorou::ml::Tensor temp_tensor({1}, duorou::ml::DataType::FLOAT32);
-//         if (ml_context_->getBackend())
-//           temp_tensor.setBackend(ml_context_->getBackend());
-//         temp_tensor.allocate(temp_tensor.backend());
-//         float temp_val = temperature;
-//         temp_tensor.copyFromHost(&temp_val, sizeof(float));
-
-//         // Temperature scaling: logits = logits / temperature
-//         logits_tensor = logits_tensor.div(*ml_context_, temp_tensor);
-//       }
-
-//       // Copy logits for the last step row only when needed
-//       std::vector<float> logits;
-//       {
-//         const auto &sh = logits_tensor.shape();
-//         const size_t model_vocab_sz = qwen_model_->getVocabSize();
-//         if (sh.size() == 1) {
-//           const size_t V = static_cast<size_t>(sh[0]);
-//           if (generated == 0 && V != model_vocab_sz) {
-//             std::cout << "[DEBUG] [GGLM] logits 1D size " << V
-//                       << " differs from model vocab " << model_vocab_sz
-//                       << "; proceeding with V=" << V << std::endl;
-//           }
-//           logits.resize(V);
-//           logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
-//         } else if (sh.size() == 2) {
-//           // Layout: [T, V]. Copy entire then slice the last row.
-//           const size_t T = static_cast<size_t>(sh[0]);
-//           const size_t V = static_cast<size_t>(sh[1]);
-//           if (generated == 0 && V != model_vocab_sz) {
-//             std::cout << "[DEBUG] [GGLM] logits 2D shape [" << T << "," << V
-//                       << "] differs from model vocab " << model_vocab_sz
-//                       << "; slicing last row with V=" << V << std::endl;
-//           }
-//           std::vector<float> tmp(static_cast<size_t>(logits_tensor.numel()));
-//           logits_tensor.copyToHost(tmp.data(), tmp.size() * sizeof(float));
-//           const size_t offset = (T > 0 ? (T - 1) * V : 0);
-//           logits.assign(tmp.begin() + static_cast<std::ptrdiff_t>(offset),
-//                         tmp.begin() + static_cast<std::ptrdiff_t>(offset + V));
-//         } else {
-//           // Fallback: copy all and use as-is (rare). Avoid noisy warnings.
-//           if (generated == 0) {
-//             std::cout << "[DEBUG] [GGLM] unexpected logits shape ndim="
-//                       << sh.size() << "; copying all" << std::endl;
-//           }
-//           logits.resize(static_cast<size_t>(logits_tensor.numel()));
-//           logits_tensor.copyToHost(logits.data(),
-//                                    logits.size() * sizeof(float));
-//         }
-//       }
-
-//       // Mask special tokens to avoid degenerate outputs like [PADxxx]
-//       // Retrieve PAD/UNK/BOS ids from GGUF or vocabulary and set logits to a large negative
-//       auto get_special_id = [&](duorou::model::Special sp) -> int32_t {
-//         int32_t id = -1;
-//         if (gguf_parser_) {
-//           const char *key = nullptr;
-//           switch (sp) {
-//           case duorou::model::Special::PAD:
-//             key = "tokenizer.ggml.pad_token_id";
-//             break;
-//           case duorou::model::Special::UNK:
-//             key = "tokenizer.ggml.unk_token_id";
-//             break;
-//           case duorou::model::Special::BOS:
-//             key = "tokenizer.ggml.bos_token_id";
-//             break;
-//           default:
-//             key = nullptr;
-//             break;
-//           }
-//           if (key) {
-//             if (const auto *kv = gguf_parser_->getMetadata(key)) {
-//               id = kv->asInt32();
-//             }
-//           }
-//         }
-//         if (id < 0) {
-//           const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
-//           if (v)
-//             id = v->getSpecialId(sp);
-//         }
-//         return id;
-//       };
-
-//       const int32_t pad_id = get_special_id(duorou::model::Special::PAD);
-//       const int32_t unk_id = get_special_id(duorou::model::Special::UNK);
-//       const int32_t bos_id = get_special_id(duorou::model::Special::BOS);
-
-//       if (generated == 0) {
-//         std::cout << "[DEBUG] [GGLM] special ids - PAD=" << pad_id
-//                   << ", UNK=" << unk_id << ", BOS=" << bos_id << std::endl;
-//       }
-
-//       auto mask_logit = [&](int32_t id) {
-//         if (id >= 0 && static_cast<size_t>(id) < logits.size()) {
-//           logits[static_cast<size_t>(id)] = -1e30f; // effectively -inf
-//         }
-//       };
-//       mask_logit(pad_id);
-//       mask_logit(unk_id);
-//       // Avoid re-emitting BOS inside the sequence
-//       mask_logit(bos_id);
-
-//       // Mask PAD-like tokens inferred from vocabulary strings
-//       if (!pad_like_ids.empty()) {
-//         for (int32_t pid : pad_like_ids) {
-//           if (pid >= 0 && static_cast<size_t>(pid) < logits.size()) {
-//             logits[static_cast<size_t>(pid)] = -1e30f;
-//           }
-//         }
-//         if (generated == 0) {
-//           // Log summary of masked PAD-like ids for diagnostics
-//           std::cout << "[DEBUG] [GGLM] masked " << pad_like_ids.size()
-//                     << " PAD-like tokens by string pattern" << std::endl;
-//           size_t show = std::min<size_t>(5, pad_like_ids.size());
-//           for (size_t k = 0; k < show; ++k) {
-//             int32_t pid = pad_like_ids[k];
-//             const auto &vals = vocab_ptr ? vocab_ptr->getValues() : std::vector<std::string>();
-//             std::string label = (vocab_ptr && static_cast<size_t>(pid) < vals.size()) ? vals[pid] : std::string("(unknown)");
-//             std::cout << "[DEBUG] [GGLM] PAD-like id=" << pid << " token='" << label << "'" << std::endl;
-//           }
-//         }
-//       }
-
-//       // Argmax shortcut when temperature is effectively 0
-//       int32_t next_token = -1;
-//       if (temperature <= 0.0f) {
-//         next_token = static_cast<int32_t>(
-//             std::max_element(logits.begin(), logits.end()) - logits.begin());
-//       } else {
-//         // CPU softmax (stable): exp(logit - max) / sum(exp(...))
-//         auto t_softmax_start = std::chrono::high_resolution_clock::now();
-//         std::vector<float> probs(logits.size());
-//         float max_logit = -std::numeric_limits<float>::infinity();
-//         for (float v : logits) max_logit = std::max(max_logit, v);
-//         double sum = 0.0;
-//         for (size_t i = 0; i < logits.size(); ++i) {
-//           float x = logits[i] - max_logit;
-//           float ex = std::exp(x);
-//           probs[i] = ex;
-//           sum += ex;
-//         }
-//         if (sum <= 0.0) sum = 1.0;
-//         for (auto &p : probs) p = static_cast<float>(p / sum);
-//         auto t_softmax_end = std::chrono::high_resolution_clock::now();
-
-//         // top-p sampling
-//         const size_t vocab = probs.size();
-//         if (top_p >= 1.0f) {
-//           std::discrete_distribution<int> dist(probs.begin(), probs.end());
-//           next_token = dist(rng);
-//         } else {
-//           auto t_sort_start = std::chrono::high_resolution_clock::now();
-//           std::vector<int> idx(vocab);
-//           std::iota(idx.begin(), idx.end(), 0);
-//           std::sort(idx.begin(), idx.end(),
-//                     [&](int a, int b) { return probs[a] > probs[b]; });
-//           float acc = 0.0f;
-//           size_t cut = 0;
-//           for (; cut < idx.size(); ++cut) {
-//             acc += probs[idx[cut]];
-//             if (acc >= top_p)
-//               break;
-//           }
-//           if (cut >= idx.size())
-//             cut = idx.size() - 1;
-//           std::vector<float> kept_probs(cut + 1);
-//           for (size_t i = 0; i <= cut; ++i)
-//             kept_probs[i] = probs[idx[i]];
-//           for (auto &p : kept_probs)
-//             p /= (acc > 0.0f ? acc : 1.0f);
-//           std::discrete_distribution<int> dist(kept_probs.begin(),
-//                                                kept_probs.end());
-//           int pick = dist(rng);
-//           next_token = idx[pick];
-//           auto t_sort_end = std::chrono::high_resolution_clock::now();
-//           auto dur_softmax = std::chrono::duration_cast<std::chrono::milliseconds>(
-//               t_softmax_end - t_softmax_start);
-//           auto dur_sort = std::chrono::duration_cast<std::chrono::milliseconds>(
-//               t_sort_end - t_sort_start);
-//           std::cout << "[DEBUG] [GGLM] step " << generated
-//                     << " softmax=" << dur_softmax.count()
-//                     << " ms, sort/sample=" << dur_sort.count() << " ms"
-//                     << std::endl;
-//         }
-//       }
-
-//       if (next_token < 0)
-//         break;
-//       if (eos_id >= 0 && next_token == eos_id)
-//         break;
-
-//       sequence_ids.push_back(next_token);
-//       generated_ids.push_back(next_token);
-//       generated += 1;
-
-//       auto t_loop_end = std::chrono::high_resolution_clock::now();
-//       auto dur_loop = std::chrono::duration_cast<std::chrono::milliseconds>(
-//           t_loop_end - t_loop_start);
-//       std::cout << "[DEBUG] [GGLM] step " << generated
-//                 << " done, seq_len=" << sequence_ids.size()
-//                 << ", took " << dur_loop.count() << " ms, next_token="
-//                 << next_token << std::endl;
-//     }
-
-//     // Decode only generated part to text using Qwen detokenizer
-//     std::string out = generated_ids.empty()
-//                           ? std::string()
-//                           : qwen_model_->decode(generated_ids);
-//     return out.empty() ? std::string("(empty)") : out;
-//   } catch (const std::exception &e) {
-//     std::cerr << "[ERROR] Exception in generateWithGGLM: " << e.what()
-//               << std::endl;
-//     return "Error: " + std::string(e.what());
-//   }
-// }
 
 std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
                                                   uint32_t max_tokens,
@@ -1574,6 +1248,13 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
                                                   float top_p) {
   try {
     std::cout << "[DEBUG] [GGML] Starting Qwen2VL GGML-based inference" << std::endl;
+    
+    // Debug: Print all available weight keys
+    std::cout << "[DEBUG] Available weight keys (" << weight_map_.size() << " total):" << std::endl;
+    for (const auto& kv : weight_map_) {
+      std::cout << "[DEBUG]   - " << kv.first << std::endl;
+    }
+    std::cout << "[DEBUG] End of weight keys list" << std::endl;
     
     // 验证初始化状态
     if (!gguf_parser_ || !ml_context_) {
@@ -1604,13 +1285,47 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
     if (input_tokens.empty()) {
       return "Error: Failed to tokenize input";
     }
-    
+
+    // 支持通过环境变量限制输入 token 数，降低计算图峰值内存
+    if (const char *env_max_tok = std::getenv("DUOROU_GGML_MAX_INPUT_TOKENS")) {
+      try {
+        long long cap = std::stoll(std::string(env_max_tok));
+        if (cap > 0 && static_cast<long long>(input_tokens.size()) > cap) {
+          input_tokens.resize(static_cast<size_t>(cap));
+        }
+      } catch (...) {
+        // 忽略非法值
+      }
+    }
+
     const int64_t n_tokens = static_cast<int64_t>(input_tokens.size());
     std::cout << "[DEBUG] [GGML] Input tokens: " << n_tokens << std::endl;
     
-    // 创建 GGML 计算图上下文
+    // 创建 GGML 计算图上下文（增加默认内存并支持环境变量覆盖）
+    size_t mem_size = 3ull * 1024ull * 1024ull * 1024ull; // 默认 3GB，避免 OOM（日志需求约 2.34GB）
+    if (const char *env_mb = std::getenv("DUOROU_GGML_CTX_MB")) {
+      try {
+        long long mb = std::stoll(std::string(env_mb));
+        if (mb > 0) {
+          const unsigned long long min_mb = 64ull; // 最低 64MB
+          unsigned long long use_mb = static_cast<unsigned long long>(mb);
+          if (use_mb < min_mb) use_mb = min_mb;
+          mem_size = use_mb * 1024ull * 1024ull;
+        }
+      } catch (...) {
+        // 忽略非法值
+      }
+    } else if (const char *env_bytes = std::getenv("DUOROU_GGML_CTX_BYTES")) {
+      try {
+        unsigned long long bytes = std::stoull(std::string(env_bytes));
+        const unsigned long long min_bytes = 64ull * 1024ull * 1024ull;
+        if (bytes >= min_bytes) mem_size = static_cast<size_t>(bytes);
+      } catch (...) {
+        // 忽略非法值
+      }
+    }
     struct ggml_init_params params = {
-      .mem_size = 1024 * 1024 * 1024, // 1GB
+      .mem_size = mem_size,
       .mem_buffer = nullptr,
       .no_alloc = false,
     };
@@ -1622,6 +1337,7 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
     // 创建输入张量
     struct ggml_tensor* input_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
     memcpy(input_ids->data, input_tokens.data(), n_tokens * sizeof(llama_token));
+    std::cout << "[DEBUG] [GGML] Input IDs shape: [" << input_ids->ne[0] << "]" << std::endl;
     
     // 创建位置编码张量
     struct ggml_tensor* pos_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
@@ -1630,17 +1346,23 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
     }
     
     // 获取嵌入权重
-    auto emb_it = weight_map_.find("model.embed_tokens.weight");
+    auto emb_it = weight_map_.find("token_embd.weight");
     if (emb_it == weight_map_.end() || !emb_it->second) {
       throw std::runtime_error("Embedding weights not found");
     }
     
     // 词嵌入查找
     struct ggml_tensor* emb_weight = emb_it->second->to_ggml(ctx);
-    struct ggml_tensor* embeddings = ggml_get_rows(ctx, emb_weight, input_ids);
-    struct ggml_tensor* cur = embeddings; // [n_tokens, n_embd]
+    std::cout << "[DEBUG] [GGML] Original embedding weight shape: [" << emb_weight->ne[0] << ", " << emb_weight->ne[1] << "]" << std::endl;
     
-    std::cout << "[DEBUG] [GGML] Embeddings shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
+    // 转置嵌入权重以匹配 llama.cpp 的格式 [n_embd, vocab_size]
+    struct ggml_tensor* emb_weight_transposed = ggml_transpose(ctx, emb_weight);
+    std::cout << "[DEBUG] [GGML] Transposed embedding weight shape: [" << emb_weight_transposed->ne[0] << ", " << emb_weight_transposed->ne[1] << "]" << std::endl;
+    
+    // 使用转置后的权重进行嵌入查找
+    // ggml_get_rows 返回 [n_embd, n_tokens]，这正是 llama.cpp 期望的格式
+    struct ggml_tensor* cur = ggml_get_rows(ctx, emb_weight_transposed, input_ids);
+    std::cout << "[DEBUG] [GGML] Final embeddings shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
     
     // RoPE 配置
     const float rope_freq_base = rope_freq_base_ > 0.0f ? rope_freq_base_ : 10000.0f;
@@ -1664,21 +1386,31 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       struct ggml_tensor* residual = cur;
       
       // 1. 输入层归一化 (RMSNorm)
-      std::string attn_norm_name = "model.layers." + std::to_string(layer_idx) + ".input_layernorm.weight";
+      std::string attn_norm_name = "blk." + std::to_string(layer_idx) + ".attn_norm.weight";
       auto attn_norm_it = weight_map_.find(attn_norm_name);
       if (attn_norm_it != weight_map_.end() && attn_norm_it->second) {
+        std::cout << "[DEBUG] [GGML] Before RMS norm - cur shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
         cur = ggml_rms_norm(ctx, cur, 1e-6f);
+        std::cout << "[DEBUG] [GGML] After RMS norm - cur shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
+        
         struct ggml_tensor* norm_weight = attn_norm_it->second->to_ggml(ctx);
-        cur = ggml_mul(ctx, cur, norm_weight);
+        std::cout << "[DEBUG] [GGML] Norm weight shape: [" << norm_weight->ne[0] << ", " << norm_weight->ne[1] << "]" << std::endl;
+        
+        // Reshape norm_weight from [3584, 1] to [3584] to match llama.cpp format
+        struct ggml_tensor* norm_weight_1d = ggml_reshape_1d(ctx, norm_weight, norm_weight->ne[0]);
+        std::cout << "[DEBUG] [GGML] Norm weight 1D shape: [" << norm_weight_1d->ne[0] << "]" << std::endl;
+        
+        cur = ggml_mul(ctx, cur, norm_weight_1d);
+        std::cout << "[DEBUG] [GGML] After norm mul - cur shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
       }
       
       // 2. 自注意力机制
       {
         // Q, K, V 投影
-        std::string q_proj_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.q_proj.weight";
-        std::string k_proj_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.k_proj.weight";
-        std::string v_proj_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.v_proj.weight";
-        std::string o_proj_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.o_proj.weight";
+        std::string q_proj_name = "blk." + std::to_string(layer_idx) + ".attn_q.weight";
+        std::string k_proj_name = "blk." + std::to_string(layer_idx) + ".attn_k.weight";
+        std::string v_proj_name = "blk." + std::to_string(layer_idx) + ".attn_v.weight";
+        std::string o_proj_name = "blk." + std::to_string(layer_idx) + ".attn_output.weight";
         
         auto q_weight_it = weight_map_.find(q_proj_name);
         auto k_weight_it = weight_map_.find(k_proj_name);
@@ -1692,14 +1424,36 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
           struct ggml_tensor* q_weight = q_weight_it->second->to_ggml(ctx);
           struct ggml_tensor* k_weight = k_weight_it->second->to_ggml(ctx);
           struct ggml_tensor* v_weight = v_weight_it->second->to_ggml(ctx);
-          struct ggml_tensor* Q = ggml_mul_mat(ctx, q_weight, cur);
-          struct ggml_tensor* K = ggml_mul_mat(ctx, k_weight, cur);
-          struct ggml_tensor* V = ggml_mul_mat(ctx, v_weight, cur);
+          
+          std::cout << "[DEBUG] [GGML] Q weight shape: [" << q_weight->ne[0] << ", " << q_weight->ne[1] << ", " << q_weight->ne[2] << ", " << q_weight->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Current tensor shape: [" << cur->ne[0] << ", " << cur->ne[1] << ", " << cur->ne[2] << ", " << cur->ne[3] << "]" << std::endl;
+          
+          // 检查 ggml_can_mul_mat 的条件
+          bool cond1 = (q_weight->ne[0] == cur->ne[0]);
+          bool cond2 = (cur->ne[2] % q_weight->ne[2] == 0);
+          bool cond3 = (cur->ne[3] % q_weight->ne[3] == 0);
+          std::cout << "[DEBUG] [GGML] ggml_can_mul_mat conditions: " << cond1 << ", " << cond2 << ", " << cond3 << std::endl;
+          
+          // 检查张量是否转置
+          bool q_weight_is_transposed = (q_weight->nb[0] > q_weight->nb[1]);
+          bool cur_transposed = (cur->nb[0] > cur->nb[1]);
+          std::cout << "[DEBUG] [GGML] Q weight transposed: " << q_weight_is_transposed << " (nb[0]=" << q_weight->nb[0] << ", nb[1]=" << q_weight->nb[1] << ")" << std::endl;
+          std::cout << "[DEBUG] [GGML] Current tensor transposed: " << cur_transposed << " (nb[0]=" << cur->nb[0] << ", nb[1]=" << cur->nb[1] << ")" << std::endl;
+          
+          // 为满足 ggml 的量化路径（左操作数为量化权重且非转置视图），对权重做一次 contiguous 转置
+          // NOTE: 这会分配与权重同等大小的内存，但仅执行一次，保证维度正确和性能路径稳定
+          struct ggml_tensor* q_w_ct = ggml_cont(ctx, ggml_transpose(ctx, q_weight)); // [out_dim, in_dim]
+          struct ggml_tensor* k_w_ct = ggml_cont(ctx, ggml_transpose(ctx, k_weight));
+          struct ggml_tensor* v_w_ct = ggml_cont(ctx, ggml_transpose(ctx, v_weight));
+
+          struct ggml_tensor* Q = ggml_mul_mat(ctx, q_w_ct, cur); // [out_dim, n_tokens]
+          struct ggml_tensor* K = ggml_mul_mat(ctx, k_w_ct, cur);
+          struct ggml_tensor* V = ggml_mul_mat(ctx, v_w_ct, cur);
           
           // 添加偏置（如果存在）
-          std::string q_bias_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.q_proj.bias";
-          std::string k_bias_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.k_proj.bias";
-          std::string v_bias_name = "model.layers." + std::to_string(layer_idx) + ".self_attn.v_proj.bias";
+          std::string q_bias_name = "blk." + std::to_string(layer_idx) + ".attn_q.bias";
+          std::string k_bias_name = "blk." + std::to_string(layer_idx) + ".attn_k.bias";
+          std::string v_bias_name = "blk." + std::to_string(layer_idx) + ".attn_v.bias";
           
           auto q_bias_it = weight_map_.find(q_bias_name);
           auto k_bias_it = weight_map_.find(k_bias_name);
@@ -1707,21 +1461,92 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
           
           if (q_bias_it != weight_map_.end() && q_bias_it->second) {
             struct ggml_tensor* q_bias = q_bias_it->second->to_ggml(ctx);
-            Q = ggml_add(ctx, Q, q_bias);
+            std::cout << "[DEBUG] [GGML] Q bias shape: [" << q_bias->ne[0] << ", " << q_bias->ne[1] << "]" << std::endl;
+            std::cout << "[DEBUG] [GGML] Q tensor shape before bias: [" << Q->ne[0] << ", " << Q->ne[1] << "]" << std::endl;
+            
+            // 确保bias维度正确：如果bias是1D，重塑为[n_embd, 1]
+            if (q_bias->ne[1] == 1 && q_bias->ne[0] == n_embd) {
+              // bias已经是正确的形状 [n_embd, 1]
+              struct ggml_tensor* q_bias_repeated = ggml_repeat(ctx, q_bias, Q);
+              Q = ggml_add(ctx, Q, q_bias_repeated);
+            } else if (ggml_nelements(q_bias) == n_embd) {
+              // bias是1D张量，需要重塑
+              struct ggml_tensor* q_bias_reshaped = ggml_reshape_2d(ctx, q_bias, n_embd, 1);
+              struct ggml_tensor* q_bias_repeated = ggml_repeat(ctx, q_bias_reshaped, Q);
+              Q = ggml_add(ctx, Q, q_bias_repeated);
+            } else {
+              std::cout << "[WARN] [GGML] Q bias dimension mismatch, skipping bias addition" << std::endl;
+            }
           }
           if (k_bias_it != weight_map_.end() && k_bias_it->second) {
             struct ggml_tensor* k_bias = k_bias_it->second->to_ggml(ctx);
-            K = ggml_add(ctx, K, k_bias);
+            std::cout << "[DEBUG] [GGML] K bias shape: [" << k_bias->ne[0] << ", " << k_bias->ne[1] << "]" << std::endl;
+            
+            if (k_bias->ne[1] == 1 && k_bias->ne[0] == n_embd) {
+              struct ggml_tensor* k_bias_repeated = ggml_repeat(ctx, k_bias, K);
+              K = ggml_add(ctx, K, k_bias_repeated);
+            } else if (ggml_nelements(k_bias) == n_embd) {
+              struct ggml_tensor* k_bias_reshaped = ggml_reshape_2d(ctx, k_bias, n_embd, 1);
+              struct ggml_tensor* k_bias_repeated = ggml_repeat(ctx, k_bias_reshaped, K);
+              K = ggml_add(ctx, K, k_bias_repeated);
+            } else {
+              std::cout << "[WARN] [GGML] K bias dimension mismatch, skipping bias addition" << std::endl;
+            }
           }
           if (v_bias_it != weight_map_.end() && v_bias_it->second) {
             struct ggml_tensor* v_bias = v_bias_it->second->to_ggml(ctx);
-            V = ggml_add(ctx, V, v_bias);
+            std::cout << "[DEBUG] [GGML] V bias shape: [" << v_bias->ne[0] << ", " << v_bias->ne[1] << "]" << std::endl;
+            
+            if (v_bias->ne[1] == 1 && v_bias->ne[0] == n_embd) {
+              struct ggml_tensor* v_bias_repeated = ggml_repeat(ctx, v_bias, V);
+              V = ggml_add(ctx, V, v_bias_repeated);
+            } else if (ggml_nelements(v_bias) == n_embd) {
+              struct ggml_tensor* v_bias_reshaped = ggml_reshape_2d(ctx, v_bias, n_embd, 1);
+              struct ggml_tensor* v_bias_repeated = ggml_repeat(ctx, v_bias_reshaped, V);
+              V = ggml_add(ctx, V, v_bias_repeated);
+            } else {
+              std::cout << "[WARN] [GGML] V bias dimension mismatch, skipping bias addition" << std::endl;
+            }
           }
           
           // 重塑为多头格式
+          std::cout << "[DEBUG] [GGML] Before reshape - Q shape: [" << Q->ne[0] << ", " << Q->ne[1] << ", " << Q->ne[2] << ", " << Q->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Before reshape - K shape: [" << K->ne[0] << ", " << K->ne[1] << ", " << K->ne[2] << ", " << K->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Before reshape - V shape: [" << V->ne[0] << ", " << V->ne[1] << ", " << V->ne[2] << ", " << V->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Reshape params - head_dim: " << head_dim << ", n_heads: " << n_heads << ", n_kv_heads: " << n_kv_heads << ", n_tokens: " << n_tokens << std::endl;
+          
+          // 验证元素数量匹配
+          int64_t q_elements_before = ggml_nelements(Q);
+          int64_t k_elements_before = ggml_nelements(K);
+          int64_t v_elements_before = ggml_nelements(V);
+          int64_t q_elements_after = head_dim * n_heads * n_tokens;
+          int64_t k_elements_after = head_dim * n_kv_heads * n_tokens;
+          int64_t v_elements_after = head_dim * n_kv_heads * n_tokens;
+          
+          std::cout << "[DEBUG] [GGML] Q elements: before=" << q_elements_before << ", after=" << q_elements_after << std::endl;
+          std::cout << "[DEBUG] [GGML] K elements: before=" << k_elements_before << ", after=" << k_elements_after << std::endl;
+          std::cout << "[DEBUG] [GGML] V elements: before=" << v_elements_before << ", after=" << v_elements_after << std::endl;
+          
+          if (q_elements_before != q_elements_after) {
+            std::cout << "[ERROR] [GGML] Q reshape element count mismatch!" << std::endl;
+            return "";
+          }
+          if (k_elements_before != k_elements_after) {
+            std::cout << "[ERROR] [GGML] K reshape element count mismatch!" << std::endl;
+            return "";
+          }
+          if (v_elements_before != v_elements_after) {
+            std::cout << "[ERROR] [GGML] V reshape element count mismatch!" << std::endl;
+            return "";
+          }
+          
           Q = ggml_reshape_3d(ctx, Q, head_dim, n_heads, n_tokens);
           K = ggml_reshape_3d(ctx, K, head_dim, n_kv_heads, n_tokens);
           V = ggml_reshape_3d(ctx, V, head_dim, n_kv_heads, n_tokens);
+          
+          std::cout << "[DEBUG] [GGML] After reshape - Q shape: [" << Q->ne[0] << ", " << Q->ne[1] << ", " << Q->ne[2] << ", " << Q->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] After reshape - K shape: [" << K->ne[0] << ", " << K->ne[1] << ", " << K->ne[2] << ", " << K->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] After reshape - V shape: [" << V->ne[0] << ", " << V->ne[1] << ", " << V->ne[2] << ", " << V->ne[3] << "]" << std::endl;
           
           // 应用 RoPE（多段）
           if (!rope_sections.empty()) {
@@ -1733,32 +1558,99 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
                              rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
           }
           
-          // 注意力计算
-          // Q: [head_dim, n_heads, n_tokens] -> [n_heads, n_tokens, head_dim]
-          Q = ggml_cont(ctx, ggml_permute(ctx, Q, 1, 2, 0, 3));
-          K = ggml_cont(ctx, ggml_permute(ctx, K, 1, 2, 0, 3));
-          V = ggml_cont(ctx, ggml_permute(ctx, V, 1, 2, 0, 3));
+          // GQA 注意力计算
+          // 首先统一置为 [head_dim, n_tokens, n_heads]，方便后续 repeat；
+          // 之后在计算 scores 前对 K 做一次小张量转置得到 [n_tokens, head_dim, n_heads]
+          Q = ggml_cont(ctx, ggml_permute(ctx, Q, 0, 2, 1, 3));
+          K = ggml_cont(ctx, ggml_permute(ctx, K, 0, 2, 1, 3));
+          V = ggml_cont(ctx, ggml_permute(ctx, V, 0, 2, 1, 3));
+          
+          // 对于 GQA，需要重复 K 和 V 以匹配 Q 的头数
+          if (n_kv_heads < n_heads) {
+            std::cout << "[DEBUG] [GGML] GQA: Repeating K and V from " << n_kv_heads << " heads to " << n_heads << " heads" << std::endl;
+            std::cout << "[DEBUG] [GGML] K shape before repeat: [" << K->ne[0] << ", " << K->ne[1] << ", " << K->ne[2] << ", " << K->ne[3] << "]" << std::endl;
+            std::cout << "[DEBUG] [GGML] V shape before repeat: [" << V->ne[0] << ", " << V->ne[1] << ", " << V->ne[2] << ", " << V->ne[3] << "]" << std::endl;
+            
+            // 计算重复因子
+            int repeat_factor = n_heads / n_kv_heads;
+            std::cout << "[DEBUG] [GGML] Repeat factor: " << repeat_factor << std::endl;
+            
+            // 创建目标张量形状，保持与源张量相同的维度顺序
+            // K,V当前形状: [n_tokens, head_dim, n_kv_heads, 1] 
+            // 目标形状: [n_tokens, head_dim, n_heads, 1]
+            struct ggml_tensor* K_target = ggml_new_tensor_4d(ctx, K->type, K->ne[0], K->ne[1], n_heads, 1);
+            struct ggml_tensor* V_target = ggml_new_tensor_4d(ctx, V->type, V->ne[0], V->ne[1], n_heads, 1);
+            
+            std::cout << "[DEBUG] [GGML] K target shape: [" << K_target->ne[0] << ", " << K_target->ne[1] << ", " << K_target->ne[2] << ", " << K_target->ne[3] << "]" << std::endl;
+            std::cout << "[DEBUG] [GGML] V target shape: [" << V_target->ne[0] << ", " << V_target->ne[1] << ", " << V_target->ne[2] << ", " << V_target->ne[3] << "]" << std::endl;
+            
+            K = ggml_repeat(ctx, K, K_target);
+            V = ggml_repeat(ctx, V, V_target);
+            
+            std::cout << "[DEBUG] [GGML] K shape after repeat: [" << K->ne[0] << ", " << K->ne[1] << ", " << K->ne[2] << ", " << K->ne[3] << "]" << std::endl;
+            std::cout << "[DEBUG] [GGML] V shape after repeat: [" << V->ne[0] << ", " << V->ne[1] << ", " << V->ne[2] << ", " << V->ne[3] << "]" << std::endl;
+          }
           
           // 缩放点积注意力
           const float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
           
-          // Q @ K^T
-          struct ggml_tensor* scores = ggml_mul_mat(ctx, K, Q); // [n_heads, n_tokens, n_tokens]
+          // 点积注意力分数：按 ggml 的约定 mul_mat(A,B) 要求 A.ne0 == B.ne0（收缩维）
+          // 因此直接使用 K、Q 的形状 [head_dim, n_tokens, n_heads] 计算 scores
+          std::cout << "[DEBUG] [GGML] Before scores matmul - K shape: [" << K->ne[0]
+                    << ", " << K->ne[1] << ", " << K->ne[2] << ", " << K->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Before scores matmul - Q shape: [" << Q->ne[0]
+                    << ", " << Q->ne[1] << ", " << Q->ne[2] << ", " << Q->ne[3] << "]" << std::endl;
+          bool scores_dim_ok = (K->ne[0] == Q->ne[0]) && (K->ne[2] == Q->ne[2]) && (K->ne[3] == Q->ne[3]);
+          std::cout << "[DEBUG] [GGML] scores matmul dims ok: " << (scores_dim_ok ? 1 : 0) << std::endl;
+          std::cout << "[DEBUG] [GGML] Calling mul_mat: scores = K x Q" << std::endl;
+          struct ggml_tensor* scores = ggml_mul_mat(ctx, K, Q); // [n_tokens, n_tokens, n_heads]
           scores = ggml_scale(ctx, scores, scale);
           
           // Softmax
           scores = ggml_soft_max(ctx, scores);
           
-          // scores @ V
-          struct ggml_tensor* attn_out = ggml_mul_mat(ctx, V, scores); // [n_heads, n_tokens, head_dim]
+          // 使用 scores × V^T：确保收缩维一致（scores.ne0 == V^T.ne0 == n_tokens）
+          std::cout << "[DEBUG] [GGML] Before attn_out matmul - scores shape: [" << scores->ne[0]
+                    << ", " << scores->ne[1] << ", " << scores->ne[2] << ", " << scores->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Before attn_out matmul - V shape: [" << V->ne[0]
+                    << ", " << V->ne[1] << ", " << V->ne[2] << ", " << V->ne[3] << "]" << std::endl;
+          struct ggml_tensor* V_mat = ggml_cont(ctx, ggml_permute(ctx, V, 1, 0, 2, 3)); // [n_tokens, head_dim, n_heads]
+          std::cout << "[DEBUG] [GGML] V_mat shape: [" << V_mat->ne[0] << ", " << V_mat->ne[1] << ", " << V_mat->ne[2] << ", " << V_mat->ne[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] scores nb: [" << scores->nb[0] << ", " << scores->nb[1] << ", " << scores->nb[2] << ", " << scores->nb[3] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] V_mat nb: [" << V_mat->nb[0] << ", " << V_mat->nb[1] << ", " << V_mat->nb[2] << ", " << V_mat->nb[3] << "]" << std::endl;
+          bool scores_transposed = (scores->nb[0] > scores->nb[1]);
+          bool vmat_transposed = (V_mat->nb[0] > V_mat->nb[1]);
+          std::cout << "[DEBUG] [GGML] is_transposed(scores): " << (scores_transposed ? 1 : 0) << ", is_transposed(V_mat): " << (vmat_transposed ? 1 : 0) << std::endl;
+          bool attn_dim_ok = (scores->ne[0] == V_mat->ne[0]) && (scores->ne[2] == V_mat->ne[2]) && (scores->ne[3] == V_mat->ne[3]);
+          std::cout << "[DEBUG] [GGML] attn_out matmul dims ok: " << (attn_dim_ok ? 1 : 0) << std::endl;
+          // 逐项打印 ggml_can_mul_mat 条件
+          int64_t t0_ne0 = V_mat->ne[0];
+          int64_t t1_ne0 = scores->ne[0];
+          int64_t t0_ne2 = V_mat->ne[2];
+          int64_t t1_ne2 = scores->ne[2];
+          int64_t t0_ne3 = V_mat->ne[3];
+          int64_t t1_ne3 = scores->ne[3];
+          bool cm_ne0_eq = (t0_ne0 == t1_ne0);
+          bool cm_ne2_broadcast = (t1_ne2 % t0_ne2 == 0);
+          bool cm_ne3_broadcast = (t1_ne3 % t0_ne3 == 0);
+          std::cout << "[DEBUG] [GGML] can_mul_mat terms: (ne0 eq=" << (cm_ne0_eq?1:0) << ") (ne2 broadcast=" << (cm_ne2_broadcast?1:0) << ") (ne3 broadcast=" << (cm_ne3_broadcast?1:0) << ")" << std::endl;
+          // 改为 V_mat × scores，以满足 ggml 的 A[K,N], B[K,M] -> [N,M] 约定
+          std::cout << "[DEBUG] [GGML] Calling mul_mat: attn_out = V_mat x scores" << std::endl;
+          struct ggml_tensor* attn_out = ggml_mul_mat(ctx, V_mat, scores); // [head_dim, n_tokens, n_heads]
           
           // 重塑回原始形状
           attn_out = ggml_cont(ctx, ggml_permute(ctx, attn_out, 2, 0, 1, 3));
           attn_out = ggml_reshape_2d(ctx, attn_out, n_embd, n_tokens);
           
-          // 输出投影
+          // 输出投影：采用“小输入转置”策略，避免对巨型权重转置拷贝，符合 ggml 约定
+          // 形状：attn_out [n_embd, n_tokens]，o_weight [n_embd, n_embd]
+          // 先将 attn_out 做一次小输入转置得到 [n_tokens, n_embd]，再与权重相乘，最后转置回 [n_embd, n_tokens]
           struct ggml_tensor* o_weight = o_weight_it->second->to_ggml(ctx);
+          // 直接按 ggml 约定使用：A[K,N]=o_weight([n_embd,n_embd]), B[K,M]=attn_out([n_embd,n_tokens])
+          std::cout << "[DEBUG] [GGML] Out proj - o_weight shape: [" << o_weight->ne[0] << ", " << o_weight->ne[1] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] Out proj - attn_out shape: [" << attn_out->ne[0] << ", " << attn_out->ne[1] << "]" << std::endl;
           cur = ggml_mul_mat(ctx, o_weight, attn_out);
+          std::cout << "[DEBUG] [GGML] Out proj - cur shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
         }
       }
       
@@ -1767,7 +1659,7 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       residual = cur;
       
       // 4. FFN 前的层归一化
-      std::string ffn_norm_name = "model.layers." + std::to_string(layer_idx) + ".post_attention_layernorm.weight";
+      std::string ffn_norm_name = "blk." + std::to_string(layer_idx) + ".ffn_norm.weight";
       auto ffn_norm_it = weight_map_.find(ffn_norm_name);
       if (ffn_norm_it != weight_map_.end() && ffn_norm_it->second) {
         cur = ggml_rms_norm(ctx, cur, 1e-6f);
@@ -1777,9 +1669,9 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
       
       // 5. FFN (SwiGLU)
       {
-        std::string gate_proj_name = "model.layers." + std::to_string(layer_idx) + ".mlp.gate_proj.weight";
-        std::string up_proj_name = "model.layers." + std::to_string(layer_idx) + ".mlp.up_proj.weight";
-        std::string down_proj_name = "model.layers." + std::to_string(layer_idx) + ".mlp.down_proj.weight";
+        std::string gate_proj_name = "blk." + std::to_string(layer_idx) + ".ffn_gate.weight";
+        std::string up_proj_name = "blk." + std::to_string(layer_idx) + ".ffn_up.weight";
+        std::string down_proj_name = "blk." + std::to_string(layer_idx) + ".ffn_down.weight";
         
         auto gate_weight_it = weight_map_.find(gate_proj_name);
         auto up_weight_it = weight_map_.find(up_proj_name);
@@ -1792,17 +1684,32 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
           struct ggml_tensor* up_weight = up_weight_it->second->to_ggml(ctx);
           struct ggml_tensor* down_weight = down_weight_it->second->to_ggml(ctx);
           
-          struct ggml_tensor* gate = ggml_mul_mat(ctx, gate_weight, cur);
-          struct ggml_tensor* up = ggml_mul_mat(ctx, up_weight, cur);
-          
+          // 直接使用“权重在左”的矩阵乘法以满足 ggml 约定，避免左操作数是转置视图
+          // 约定：cur 形状为 [n_embd, n_tokens]
+          std::cout << "[DEBUG] [GGML] FFN - cur shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
+          std::cout << "[DEBUG] [GGML] FFN - gate_weight shape: [" << gate_weight->ne[0] << ", " << gate_weight->ne[1] << "]" << std::endl;
+          // 创建权重的连续转置副本，保证左操作数满足 ggml_mul_mat K 维匹配
+          struct ggml_tensor* gate_w_ct = ggml_cont(ctx, ggml_transpose(ctx, gate_weight)); // 期望形状 [n_embd, ffn_dim]
+          std::cout << "[DEBUG] [GGML] FFN - gate_w_ct (transposed) shape: [" << gate_w_ct->ne[0] << ", " << gate_w_ct->ne[1] << "]" << std::endl;
+          struct ggml_tensor* gate = ggml_mul_mat(ctx, gate_w_ct, cur); // [ffn_dim, n_tokens]
+
+          std::cout << "[DEBUG] [GGML] FFN - up_weight shape: [" << up_weight->ne[0] << ", " << up_weight->ne[1] << "]" << std::endl;
+          struct ggml_tensor* up_w_ct = ggml_cont(ctx, ggml_transpose(ctx, up_weight));
+          std::cout << "[DEBUG] [GGML] FFN - up_w_ct (transposed) shape: [" << up_w_ct->ne[0] << ", " << up_w_ct->ne[1] << "]" << std::endl;
+          struct ggml_tensor* up = ggml_mul_mat(ctx, up_w_ct, cur);     // [ffn_dim, n_tokens]
+
           // SiLU 激活函数
-          gate = ggml_silu(ctx, gate);
+          struct ggml_tensor* gate_act = ggml_silu(ctx, gate);
           
           // 门控机制
-          struct ggml_tensor* ffn_out = ggml_mul(ctx, gate, up);
+          struct ggml_tensor* ffn_out = ggml_mul(ctx, gate_act, up); // [ffn_dim, n_tokens]
           
-          // 下投影
-          cur = ggml_mul_mat(ctx, down_weight, ffn_out);
+          // 下投影到 [n_embd, n_tokens]
+          std::cout << "[DEBUG] [GGML] FFN - down_weight shape: [" << down_weight->ne[0] << ", " << down_weight->ne[1] << "]" << std::endl;
+          struct ggml_tensor* down_w_ct = ggml_cont(ctx, ggml_transpose(ctx, down_weight)); // 期望形状 [ffn_dim, n_embd]
+          std::cout << "[DEBUG] [GGML] FFN - down_w_ct (transposed) shape: [" << down_w_ct->ne[0] << ", " << down_w_ct->ne[1] << "]" << std::endl;
+          cur = ggml_mul_mat(ctx, down_w_ct, ffn_out); // [n_embd, n_tokens]
+          std::cout << "[DEBUG] [GGML] FFN - cur after down shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
         }
       }
       
@@ -1811,7 +1718,7 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
     }
     
     // 最终层归一化
-    auto final_norm_it = weight_map_.find("model.norm.weight");
+    auto final_norm_it = weight_map_.find("norm.weight");
     if (final_norm_it != weight_map_.end() && final_norm_it->second) {
       cur = ggml_rms_norm(ctx, cur, 1e-6f);
       struct ggml_tensor* final_norm_weight = final_norm_it->second->to_ggml(ctx);
@@ -1819,10 +1726,18 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
     }
     
     // LM Head 投影到词汇表
-    auto lm_head_it = weight_map_.find("lm_head.weight");
+    auto lm_head_it = weight_map_.find("output.weight");
     if (lm_head_it != weight_map_.end() && lm_head_it->second) {
       struct ggml_tensor* lm_head_weight = lm_head_it->second->to_ggml(ctx);
+
+      // 直接使用原始权重进行矩阵乘法，避免对巨型矩阵进行转置与拷贝（显著降低峰值内存）
+      // 约定：lm_head_weight 形状为 [n_vocab, n_embd]，cur 为 [n_embd, n_tokens]
+      std::cout << "[DEBUG] [GGML] LM Head weight shape: [" << lm_head_weight->ne[0] << ", " << lm_head_weight->ne[1] << "]" << std::endl;
+      std::cout << "[DEBUG] [GGML] cur before LM Head mul shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
+
       cur = ggml_mul_mat(ctx, lm_head_weight, cur);
+
+      std::cout << "[DEBUG] [GGML] cur after LM Head mul shape: [" << cur->ne[0] << ", " << cur->ne[1] << "]" << std::endl;
     }
     
     // 构建计算图
@@ -1923,442 +1838,7 @@ std::string MLInferenceEngine::generateWithGGLM(const std::string &prompt,
   }
 }
 
-// Internal Forward mode: Use Qwen model for actual inference
-// std::string
-// MLInferenceEngine::generateWithInternalForward(const std::string &prompt,
-//                                                uint32_t max_tokens,
-//                                                float temperature, float top_p) {
-//   try {
-//     std::cout << "[DEBUG] [InternalForward] Starting Qwen model tensor forward "
-//                  "with KV cache"
-//               << std::endl;
-//     // Diagnostics: model configuration and components
-//     std::cout << "[DEBUG] [InternalForward] Model config - vocab_size: "
-//               << vocab_size_ << ", n_layers: " << n_layers_
-//               << ", n_heads: " << n_heads_ << ", n_kv_heads: " << n_kv_heads_
-//               << ", n_embd: " << n_embd_ << ", n_ctx: " << n_ctx_
-//               << ", rope_dim: " << rope_dim_
-//               << ", rope_freq_base: " << rope_freq_base_ << std::endl;
-//     std::cout << "[DEBUG] [InternalForward] Weight map tensors: "
-//               << weight_map_.size() << std::endl;
-//     // Log key tensor shapes to aid diagnosis
-//     {
-//       auto logTensorShape = [&](const char *name) {
-//         auto it = weight_map_.find(name);
-//         if (it != weight_map_.end() && it->second) {
-//           const auto &sh = it->second->shape();
-//           std::cout << "[DEBUG] [InternalForward] tensor '" << name
-//                     << "' shape: [";
-//           for (size_t i = 0; i < sh.size(); ++i) {
-//             std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
-//           }
-//           std::cout << "], dtype="
-//                     << duorou::ml::dataTypeToString(it->second->dtype())
-//                     << std::endl;
-//         } else {
-//           std::cout << "[DEBUG] [InternalForward] tensor '" << name
-//                     << "' not found" << std::endl;
-//         }
-//       };
-//       logTensorShape("token_embd.weight");
-//       logTensorShape("output.weight");
-//       logTensorShape("output_norm.weight");
-//       // Scan a few critical weights for dtype and basic stats
-//       auto scanTensor = [&](const char *name) {
-//         auto it = weight_map_.find(name);
-//         if (it != weight_map_.end() && it->second) {
-//           const auto &t = it->second;
-//           std::cout << "[DEBUG] [InternalForward] scan '" << name
-//                     << "' dtype=" << duorou::ml::dataTypeToString(t->dtype())
-//                     << ", numel=" << t->numel() << std::endl;
-//           size_t n = static_cast<size_t>(std::min<int64_t>(t->numel(), 1024));
-//           if (n > 0) {
-//             std::vector<float> buf(n);
-//             // Best-effort read as float
-//             t->copyToHost(buf.data(), n * sizeof(float));
-//             bool has_nan = false, has_inf = false;
-//             bool all_zero = true;
-//             float mn = buf[0], mx = buf[0];
-//             for (size_t i = 0; i < n; ++i) {
-//               float v = buf[i];
-//               if (std::isnan(v))
-//                 has_nan = true;
-//               if (std::isinf(v))
-//                 has_inf = true;
-//               if (v != 0.0f)
-//                 all_zero = false;
-//               mn = std::min(mn, v);
-//               mx = std::max(mx, v);
-//             }
-//             std::cout << "[DEBUG] [InternalForward] '" << name
-//                       << "' sample stats min=" << mn << ", max=" << mx
-//                       << ", NaN=" << has_nan << ", Inf=" << has_inf
-//                       << ", all_zero=" << all_zero << std::endl;
-//           }
-//         }
-//       };
-//       scanTensor("token_embd.weight");
-//       scanTensor("output.weight");
-//       scanTensor("output_norm.weight");
-//     }
-//     if (kv_cache_) {
-//       std::cout << "[DEBUG] [InternalForward] KV cache type: Causal; cache "
-//                    "initialized"
-//                 << std::endl;
-//     } else {
-//       std::cout << "[DEBUG] [InternalForward] KV cache not present"
-//                 << std::endl;
-//     }
 
-//     // Check if Qwen model and ML context are available
-//     if (!qwen_model_ || !ml_context_) {
-//       std::cerr << "[ERROR] Qwen model or ML context not initialized"
-//                 << std::endl;
-//       return generateIntelligentResponse(prompt, max_tokens, temperature);
-//     }
-
-//     // First encode text to token IDs using Qwen tokenizer (llama.cpp tokenizer
-//     // disabled)
-//     std::vector<int32_t> input_ids = qwen_model_->encode(prompt, true);
-//     std::cout << "[DEBUG] [InternalForward] Using Qwen tokenization (llama.cpp "
-//                  "tokenizer disabled)"
-//               << std::endl;
-
-//     if (input_ids.empty()) {
-//       std::cout
-//           << "[WARN] [InternalForward] Failed to encode prompt, using fallback"
-//           << std::endl;
-//       return generateIntelligentResponse(prompt, max_tokens, temperature);
-//     }
-
-//     std::cout << "[DEBUG] [InternalForward] Encoded " << input_ids.size()
-//               << " tokens from prompt" << std::endl;
-
-//     // Remove trailing EOS from input to allow generation to proceed,
-//     // and remember prompt length so we can strip it from the final output
-//     size_t prompt_len = input_ids.size();
-
-//     // Get EOS token ID from GGUF metadata (Qwen2.5VL uses 151645)
-//     int32_t eos_id = -1;
-//     if (gguf_parser_) {
-//       if (const auto *kvEOS =
-//               gguf_parser_->getMetadata("tokenizer.ggml.eos_token_id")) {
-//         eos_id = kvEOS->asInt32();
-//         std::cout << "[DEBUG] [InternalForward] Using EOS token ID from GGUF: "
-//                   << eos_id << std::endl;
-//       }
-//     }
-
-//     // Fallback to vocabulary if GGUF parsing fails
-//     if (eos_id < 0) {
-//       const duorou::model::Vocabulary *v = qwen_model_->getVocabulary();
-//       eos_id = v ? v->getSpecialId(duorou::model::Special::EOS) : -1;
-//       std::cout
-//           << "[DEBUG] [InternalForward] Using EOS token ID from vocabulary: "
-//           << eos_id << std::endl;
-//     }
-
-//     if (!input_ids.empty() && eos_id >= 0 && input_ids.back() == eos_id) {
-//       input_ids.pop_back();
-//       prompt_len = input_ids.size();
-//       std::cout
-//           << "[DEBUG] [InternalForward] Removed trailing EOS from prompt tokens"
-//           << std::endl;
-//     }
-
-//     // Prepare generation loop
-//     std::vector<int32_t> sequence_ids = input_ids; // prompt + generated
-
-//     // Ensure KV cache is initialized
-//     if (!kv_cache_) {
-//       std::cout << "[WARN] [InternalForward] KV cache not initialized; "
-//                    "proceeding without cache"
-//                 << std::endl;
-//     } else {
-//       std::cout << "[DEBUG] [InternalForward] KV cache available; will be "
-//                    "passed into forward()"
-//                 << std::endl;
-//     }
-
-//     // Random engine for sampling
-//     static thread_local std::mt19937 rng(std::random_device{}());
-
-//     auto apply_temperature = [&](std::vector<float> &logits, float temp) {
-//       if (temp <= 0.0f)
-//         return; // handled by argmax path later
-//       for (auto &x : logits) {
-//         x /= temp;
-//       }
-//     };
-
-//     auto softmax = [&](const std::vector<float> &logits) {
-//       std::vector<float> probs(logits.size());
-//       if (logits.empty())
-//         return probs;
-//       float max_logit = *std::max_element(logits.begin(), logits.end());
-//       double sum = 0.0;
-//       for (size_t i = 0; i < logits.size(); ++i) {
-//         double e = std::exp(static_cast<double>(logits[i] - max_logit));
-//         probs[i] = static_cast<float>(e);
-//         sum += e;
-//       }
-//       if (sum > 0.0) {
-//         for (auto &p : probs)
-//           p = static_cast<float>(p / sum);
-//       }
-//       return probs;
-//     };
-
-//     auto sample_top_p = [&](const std::vector<float> &probs, float tp) {
-//       if (probs.empty())
-//         return int32_t(-1);
-//       if (tp >= 1.0f) {
-//         // Full distribution sampling
-//         std::discrete_distribution<int> dist(probs.begin(), probs.end());
-//         return static_cast<int32_t>(dist(rng));
-//       }
-//       // Sort indices by prob desc
-//       std::vector<int> idx(probs.size());
-//       std::iota(idx.begin(), idx.end(), 0);
-//       std::sort(idx.begin(), idx.end(),
-//                 [&](int a, int b) { return probs[a] > probs[b]; });
-//       // Accumulate until reaching top_p
-//       std::vector<int> kept;
-//       std::vector<float> kept_probs;
-//       float acc = 0.0f;
-//       for (int id : idx) {
-//         kept.push_back(id);
-//         kept_probs.push_back(probs[id]);
-//         acc += probs[id];
-//         if (acc >= tp)
-//           break;
-//       }
-//       // Normalize kept_probs
-//       if (acc > 0.0f) {
-//         for (auto &p : kept_probs)
-//           p = p / acc;
-//       }
-//       // Sample among kept
-//       std::discrete_distribution<int> dist(kept_probs.begin(),
-//                                            kept_probs.end());
-//       int pick = dist(rng);
-//       return static_cast<int32_t>(kept[pick]);
-//     };
-
-//     // Main generation loop performing tensor forward per step
-//     size_t generated = 0;
-//     while (generated < max_tokens) {
-//       duorou::ml::Tensor logits_tensor;
-
-//       // Unified inference: always use multimodal model's forward method for
-//       // consistency
-//       duorou::ml::Tensor input_tensor;
-
-//       if (generated == 0) {
-//         // Prime KV cache with full prompt on first pass
-//         input_tensor =
-//             duorou::ml::Tensor({static_cast<int64_t>(sequence_ids.size())},
-//                                duorou::ml::DataType::INT32);
-//         if (ml_context_->getBackend()) {
-//           input_tensor.setBackend(ml_context_->getBackend());
-//         }
-//         if (!sequence_ids.empty()) {
-//           input_tensor.copyFromHost(sequence_ids.data(),
-//                                     sequence_ids.size() * sizeof(int32_t));
-//         }
-//         std::cout << "[DEBUG] [InternalForward] First pass: processing "
-//                   << sequence_ids.size() << " tokens" << std::endl;
-//         {
-//           const auto &sh = input_tensor.shape();
-//           std::cout << "[DEBUG] [InternalForward] input_tensor shape: [";
-//           for (size_t i = 0; i < sh.size(); ++i) {
-//             std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
-//           }
-//           std::cout << "], dtype="
-//                     << duorou::ml::dataTypeToString(input_tensor.dtype())
-//                     << std::endl;
-//         }
-//       } else {
-//         // Step-by-step decode using only the last generated token
-//         int32_t last_id = sequence_ids.back();
-//         input_tensor = duorou::ml::Tensor({1}, duorou::ml::DataType::INT32);
-//         if (ml_context_->getBackend()) {
-//           input_tensor.setBackend(ml_context_->getBackend());
-//         }
-//         input_tensor.copyFromHost(&last_id, sizeof(int32_t));
-//         std::cout << "[DEBUG] [InternalForward] Step " << generated
-//                   << ": processing token " << last_id << std::endl;
-//         {
-//           const auto &sh = input_tensor.shape();
-//           std::cout << "[DEBUG] [InternalForward] input_tensor shape: [";
-//           for (size_t i = 0; i < sh.size(); ++i) {
-//             std::cout << sh[i] << (i + 1 < sh.size() ? "," : "");
-//           }
-//           std::cout << "], dtype="
-//                     << duorou::ml::dataTypeToString(input_tensor.dtype())
-//                     << std::endl;
-//         }
-//       }
-
-//       // Always use multimodal model's forward method for consistency
-//       logits_tensor =
-//           qwen_model_->forward(*ml_context_, input_tensor, {}, kv_cache_.get());
-
-//       std::cout
-//           << "[DEBUG] [InternalForward] Forward pass completed, logits numel="
-//           << logits_tensor.numel()
-//           << ", dtype=" << duorou::ml::dataTypeToString(logits_tensor.dtype())
-//           << std::endl;
-
-//       // Convert logits to host vector
-//       std::vector<float> logits;
-//       if (logits_tensor.numel() > 0) {
-//         logits.resize(static_cast<size_t>(logits_tensor.numel()));
-//         logits_tensor.copyToHost(logits.data(), logits.size() * sizeof(float));
-//       }
-//       if (logits.empty()) {
-//         std::cout
-//             << "[WARN] [InternalForward] Empty logits from forward(); breaking"
-//             << std::endl;
-//         break;
-//       }
-
-//       // Validate logits size equals vocabulary size; otherwise assert and
-//       // fallback to llama.cpp
-//       {
-//         size_t vocab_size = qwen_model_->getVocabSize();
-//         if (vocab_size == 0 || logits.size() != vocab_size) {
-//           std::cerr << "[ERROR] [InternalForward] Logits size mismatch: got "
-//                     << logits.size() << ", expected vocab size " << vocab_size
-//                     << "; falling back to llama.cpp" << std::endl;
-//           // Attempt auto fallback and delegate to llama backend
-//           if (tryAutoFallback("Logits size mismatch in internal forward")) {
-//             // Prefer intelligent response to reduce llama.cpp dependency
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           } else {
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           }
-//         }
-
-//         // Debug: Check logits validity and range
-//         auto minmax = std::minmax_element(logits.begin(), logits.end());
-//         float min_logit = *minmax.first;
-//         float max_logit = *minmax.second;
-
-//         std::cout << "[DEBUG] [InternalForward] Logits range: [" << min_logit
-//                   << ", " << max_logit << "]" << std::endl;
-
-//         // Check for invalid values
-//         bool has_nan = false, has_inf = false;
-//         for (float logit : logits) {
-//           if (std::isnan(logit))
-//             has_nan = true;
-//           if (std::isinf(logit))
-//             has_inf = true;
-//         }
-
-//         if (has_nan || has_inf) {
-//           std::cerr
-//               << "[ERROR] [InternalForward] Invalid logits detected - NaN: "
-//               << has_nan << ", Inf: " << has_inf
-//               << "; falling back to llama.cpp" << std::endl;
-//           if (tryAutoFallback("Invalid logits (NaN/Inf) in internal forward")) {
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           } else {
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           }
-//         }
-
-//         // Check if logits are all zeros (indicating potential weight loading
-//         // issues)
-//         bool all_zeros = std::all_of(logits.begin(), logits.end(),
-//                                      [](float x) { return x == 0.0f; });
-//         if (all_zeros) {
-//           std::cerr
-//               << "[ERROR] [InternalForward] All logits are zero - potential "
-//                  "weight loading issue; falling back to llama.cpp"
-//               << std::endl;
-//           if (tryAutoFallback("All-zero logits in internal forward")) {
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           } else {
-//             return generateIntelligentResponse(prompt, max_tokens, temperature);
-//           }
-//         }
-
-//         // Check for extremely large values that might indicate numerical
-//         // instability
-//         if (max_logit > 1000.0f || min_logit < -1000.0f) {
-//           std::cerr << "[WARN] [InternalForward] Extreme logit values detected "
-//                        "- may indicate numerical instability"
-//                     << std::endl;
-//         }
-//       }
-
-//       int32_t next_token = -1;
-//       if (temperature <= 0.0f) {
-//         // Greedy: pick argmax
-//         next_token = static_cast<int32_t>(std::distance(
-//             logits.begin(), std::max_element(logits.begin(), logits.end())));
-//       } else {
-//         // Temperature scaling then top-p sampling
-//         apply_temperature(logits, temperature);
-//         std::vector<float> probs = softmax(logits);
-//         next_token = sample_top_p(probs, std::clamp(top_p, 0.0f, 1.0f));
-//       }
-
-//       if (next_token < 0) {
-//         std::cout << "[WARN] [InternalForward] Sampling returned invalid "
-//                      "token; stopping"
-//                   << std::endl;
-//         break;
-//       }
-
-//       sequence_ids.push_back(next_token);
-//       generated += 1;
-
-//       // Stop at EOS if available
-//       if (eos_id >= 0 && next_token == eos_id) {
-//         std::cout << "[DEBUG] [InternalForward] Reached EOS token; stopping "
-//                      "generation"
-//                   << std::endl;
-//         break;
-//       }
-//     }
-
-//     // Decode output token IDs to text
-//     std::string result;
-
-//     // Only decode newly generated tokens (exclude the prompt)
-//     std::vector<int32_t> gen_ids;
-//     if (sequence_ids.size() > prompt_len) {
-//       gen_ids.assign(sequence_ids.begin() +
-//                          static_cast<std::ptrdiff_t>(prompt_len),
-//                      sequence_ids.end());
-//     }
-
-//     // Unified: always use Qwen decoder for internal forward output
-//     result = gen_ids.empty() ? std::string() : qwen_model_->decode(gen_ids);
-//     std::cout << "[DEBUG] [InternalForward] Using Qwen detokenization "
-//                  "(excluded prompt tokens)"
-//               << std::endl;
-
-//     if (result.empty()) {
-//       std::cout << "[WARN] [InternalForward] Failed to decode output tokens, "
-//                    "using fallback"
-//                 << std::endl;
-//       return generateIntelligentResponse(prompt, max_tokens, temperature);
-//     }
-
-//     std::cout << "[DEBUG] [InternalForward] Generated response: "
-//               << result.substr(0, 50) << "..." << std::endl;
-//     return result;
-
-//   } catch (const std::exception &e) {
-//     std::cerr << "[ERROR] Exception in generateWithInternalForward: "
-//               << e.what() << std::endl;
-//     return "Error: " + std::string(e.what());
-//   }
-// }
 
 void MLInferenceEngine::cleanupResources() {
   std::cout << "[DEBUG] Cleaning up inference engine resources" << std::endl;
