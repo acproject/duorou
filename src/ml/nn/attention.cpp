@@ -55,9 +55,14 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
         "MultiHeadAttention::forward: only FLOAT32 supported");
   }
   if (kvHeads_ != numHeads_) {
-    // For now, simplify: require kvHeads == numHeads
-    throw std::runtime_error("MultiHeadAttention::forward: kvHeads must equal "
-                             "numHeads in current implementation");
+    // 支持 GQA：要求 numHeads 是 kvHeads 的整数倍
+    if (numHeads_ % kvHeads_ != 0) {
+      throw std::runtime_error(
+          "MultiHeadAttention::forward: numHeads must be a multiple of kvHeads for GQA");
+    }
+    logger.info(std::string("[MHA] Using GQA: numHeads=") + std::to_string(numHeads_) +
+                ", kvHeads=" + std::to_string(kvHeads_) +
+                ", group=" + std::to_string(numHeads_ / kvHeads_));
   }
   // Determine input shape
   auto qShape = query.shape();
@@ -132,16 +137,16 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
   logger.debug(std::string("[MHA] kProj stats: ") + tensor_stats(kProj));
   logger.debug(std::string("[MHA] vProj stats: ") + tensor_stats(vProj));
 
-  // Reshape to 4D: [B, S, H, D]
+  // Reshape到4D：Q使用所有头，K/V使用 kvHeads
   Tensor q4 = qProj.reshape({B, Sq, numHeads_, headDim_});
-  Tensor k4 = kProj.reshape({B, Sk, numHeads_, headDim_});
-  Tensor v4 = vProj.reshape({B, Sk, numHeads_, headDim_});
+  Tensor k4 = kProj.reshape({B, Sk, kvHeads_, headDim_});
+  Tensor v4 = vProj.reshape({B, Sk, kvHeads_, headDim_});
   logger.debug("[MHA] Shapes after projection: q4=[" + std::to_string(B) + "," +
                std::to_string(Sq) + "," + std::to_string(numHeads_) + "," +
                std::to_string(headDim_) + "] k4=[" + std::to_string(B) + "," +
-               std::to_string(Sk) + "," + std::to_string(numHeads_) + "," +
+               std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
                std::to_string(headDim_) + "] v4=[" + std::to_string(B) + "," +
-               std::to_string(Sk) + "," + std::to_string(numHeads_) + "," +
+               std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
                std::to_string(headDim_) + "]");
 
   // Prepare KV Cache integration: fetch previous K/V and concatenate
@@ -195,10 +200,10 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
         // Apply RoPE to current K with offset equal to previous length
         k4 = applyRotaryPositionEmbedding(ctx, k4, Sk, /*offset=*/prevLen);
 
-        // Concatenate along sequence dimension: [B, prevLen + Sk, H, D]
+        // 沿序列维拼接: [B, prevLen + Sk, kvHeads, D]
         int64_t totalSk = prevLen + Sk;
-        Tensor kFull({B, totalSk, numHeads_, headDim_}, DataType::FLOAT32);
-        Tensor vFull({B, totalSk, numHeads_, headDim_}, DataType::FLOAT32);
+        Tensor kFull({B, totalSk, kvHeads_, headDim_}, DataType::FLOAT32);
+        Tensor vFull({B, totalSk, kvHeads_, headDim_}, DataType::FLOAT32);
         if (auto *b = ctx.getBackend()) {
           kFull.setBackend(b);
           vFull.setBackend(b);
@@ -207,10 +212,10 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
         vFull.allocate();
 
         size_t prevBytes =
-            static_cast<size_t>(B * prevLen * numHeads_ * headDim_) *
+            static_cast<size_t>(B * prevLen * kvHeads_ * headDim_) *
             sizeof(float);
         size_t newBytes =
-            static_cast<size_t>(B * Sk * numHeads_ * headDim_) * sizeof(float);
+            static_cast<size_t>(B * Sk * kvHeads_ * headDim_) * sizeof(float);
         size_t k4Bytes = static_cast<size_t>(k4.nbytes());
         size_t v4Bytes = static_cast<size_t>(v4.nbytes());
 
@@ -242,7 +247,8 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
               ", prevLen=" + std::to_string(prevLen) + ", newSk=" +
               std::to_string((kIs3D ? keyRef.shape()[1] : keyRef.shape()[0])) +
               ", totalSk=" + std::to_string(Sk) + ", bytes(prev,new)=" +
-              std::to_string(prevBytes) + "," + std::to_string(newBytes));
+              std::to_string(prevBytes) + "," + std::to_string(newBytes) +
+              ", kvHeads=" + std::to_string(kvHeads_));
         }
       } else {
         // No valid previous shape, apply default RoPE for K
@@ -294,10 +300,10 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
 
     duorou::kvcache::Context kctx(&adapter);
 
-    // Build kvcache tensors for the NEW segment only [B, newSk, H, D]
+    // 构建仅包含新增片段的 kvcache 张量 [B, newSk, kvHeads, D]
     int64_t newSk = is3D ? keyRef.shape()[1] : keyRef.shape()[0];
     std::vector<int> kvShape = {static_cast<int>(B), static_cast<int>(newSk),
-                                static_cast<int>(numHeads_),
+                                static_cast<int>(kvHeads_),
                                 static_cast<int>(headDim_)};
     duorou::kvcache::Tensor kKV(kvShape, duorou::kvcache::DType::FLOAT32,
                                 &adapter);
@@ -306,11 +312,11 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
 
     // Copy data from ml::Tensor to kvcache::Tensor (ONLY new segment)
     size_t newBytes =
-        static_cast<size_t>(B * newSk * numHeads_ * headDim_) * sizeof(float);
+        static_cast<size_t>(B * newSk * kvHeads_ * headDim_) * sizeof(float);
     // Offset source by previous length if k4/v4 contain concatenated [prevLen +
     // newSk]
     size_t prevBytes =
-        static_cast<size_t>(B * prevLen * numHeads_ * headDim_) * sizeof(float);
+        static_cast<size_t>(B * prevLen * kvHeads_ * headDim_) * sizeof(float);
     const void *kNewSrc =
         (k4.data() ? static_cast<const void *>(
                          static_cast<const char *>(k4.data()) + prevBytes)
@@ -335,7 +341,8 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
       logger.debug("[MHA] KV put new segment: B=" + std::to_string(B) +
                    ", newSk=" + std::to_string(newSk) +
                    ", bytes=" + std::to_string(newBytes) +
-                   ", prevOffsetBytes=" + std::to_string(prevBytes));
+                   ", prevOffsetBytes=" + std::to_string(prevBytes) +
+                   ", kvHeads=" + std::to_string(kvHeads_));
     }
 
     // Store into cache
@@ -368,7 +375,52 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
     usedMask = mask;
   }
 
-  // Execute attention computation in 4D
+  // 在注意力前将 K/V 从 kvHeads 扩展到 numHeads（GQA）
+  Tensor k4_exp, v4_exp;
+  if (kvHeads_ == numHeads_) {
+    k4_exp = k4;
+    v4_exp = v4;
+  } else {
+    int64_t group = numHeads_ / kvHeads_;
+    k4_exp = Tensor({B, Sk, numHeads_, headDim_}, DataType::FLOAT32);
+    v4_exp = Tensor({B, Sk, numHeads_, headDim_}, DataType::FLOAT32);
+    if (auto *b = ctx.getBackend()) { k4_exp.setBackend(b); v4_exp.setBackend(b); }
+    k4_exp.allocate();
+    v4_exp.allocate();
+
+    const float *kSrc = k4.data<float>();
+    const float *vSrc = v4.data<float>();
+    float *kDst = k4_exp.data<float>();
+    float *vDst = v4_exp.data<float>();
+    auto idxSrc = [&](int64_t b, int64_t s, int64_t h, int64_t d) -> int64_t {
+      return (((b * Sk + s) * kvHeads_ + h) * headDim_ + d);
+    };
+    auto idxDst = [&](int64_t b, int64_t s, int64_t h, int64_t d) -> int64_t {
+      return (((b * Sk + s) * numHeads_ + h) * headDim_ + d);
+    };
+    for (int64_t b = 0; b < B; ++b) {
+      for (int64_t s = 0; s < Sq /* expand uses Sk; Sq==Sk only for self */; ++s) {}
+    }
+    // 使用 Sk 作为序列长度进行复制
+    for (int64_t b = 0; b < B; ++b) {
+      for (int64_t s = 0; s < Sk; ++s) {
+        for (int64_t hk = 0; hk < kvHeads_; ++hk) {
+          for (int64_t g = 0; g < group; ++g) {
+            int64_t hdst = hk * group + g;
+            for (int64_t d = 0; d < headDim_; ++d) {
+              kDst[idxDst(b, s, hdst, d)] = kSrc[idxSrc(b, s, hk, d)];
+              vDst[idxDst(b, s, hdst, d)] = vSrc[idxSrc(b, s, hk, d)];
+            }
+          }
+        }
+      }
+    }
+    logger.debug(std::string("[MHA] Expanded KV heads for GQA: kvHeads=") +
+                 std::to_string(kvHeads_) + ", numHeads=" + std::to_string(numHeads_) +
+                 ", group=" + std::to_string(group));
+  }
+
+  // 执行注意力计算（现 q/k/v 的头维一致）
   logger.debug("[MHA] Calling scaledDotProductAttention with q4=[" +
                std::to_string(B) + "," + std::to_string(Sq) + "," +
                std::to_string(numHeads_) + "," + std::to_string(headDim_) +
@@ -378,7 +430,7 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
                std::to_string(numHeads_) + "," + std::to_string(headDim_) +
                "]");
   Tensor attnOut4 =
-      scaledDotProductAttention(ctx, q4, k4, v4, usedMask); // [B,Sq,H,D]
+      scaledDotProductAttention(ctx, q4, k4_exp, v4_exp, usedMask); // [B,Sq,H,D]
 
   // Merge heads: [B,Sq,H,D] -> [B*Sq, H*D]
   Tensor merged = attnOut4.reshape({B * Sq, numHeads_ * headDim_});
@@ -743,33 +795,56 @@ Tensor MultiHeadAttention::applyRotaryPositionEmbedding(Context &ctx,
   const float *x = tensor.data<float>();
   float *outPtr = out.data<float>();
 
-  // Precompute invFreq for first D/2 dims
-  int64_t half = D / 2;
+  // Determine rotate dimension and theta
+  int64_t rotateDims = D;
+  float theta = 10000.0f;
+  if (ropeCfgSet_) {
+    if (ropeCfg_.dimension > 0) rotateDims = std::min<int64_t>(D, ropeCfg_.dimension);
+    theta = ropeCfg_.theta > 0.0f ? ropeCfg_.theta : 10000.0f;
+  }
+  int64_t half = rotateDims / 2;
+
+  // Precompute invFreq for first rotateDims/2 dims
   std::vector<float> invFreq(static_cast<size_t>(half));
   for (int64_t i = 0; i < half; ++i) {
     invFreq[static_cast<size_t>(i)] =
         1.0f /
-        std::pow(10000.0f, static_cast<float>(i) / static_cast<float>(half));
+        std::pow(theta, static_cast<float>(i) / static_cast<float>(half));
   }
 
   auto idx = [&](int64_t b, int64_t s, int64_t h, int64_t d) -> int64_t {
     return (((b * S + s) * H + h) * D + d);
   };
 
+  // Helper to rotate a contiguous segment [base, base+rotateDims)
+  auto rotateSegment = [&](int64_t b, int64_t sPos, int64_t h) {
+    int64_t pos = offset + sPos;
+    for (int64_t i = 0; i < half; ++i) {
+      float freq = invFreq[static_cast<size_t>(i)] * static_cast<float>(pos);
+      float c = std::cos(freq);
+      float s = std::sin(freq);
+      // pair indices within the first rotateDims dims
+      float x0 = x[idx(b, sPos, h, i)];
+      float x1 = x[idx(b, sPos, h, i + half)];
+      outPtr[idx(b, sPos, h, i)] = x0 * c - x1 * s;
+      outPtr[idx(b, sPos, h, i + half)] = x0 * s + x1 * c;
+    }
+  };
+
+  // Copy remainder dims unchanged
+  auto copyRemainder = [&](int64_t b, int64_t sPos, int64_t h) {
+    for (int64_t d = rotateDims; d < D; ++d) {
+      outPtr[idx(b, sPos, h, d)] = x[idx(b, sPos, h, d)];
+    }
+  };
+
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t sPos = 0; sPos < S; ++sPos) {
-      int64_t pos = offset + sPos;
       for (int64_t h = 0; h < H; ++h) {
-        for (int64_t i = 0; i < half; ++i) {
-          float freq =
-              invFreq[static_cast<size_t>(i)] * static_cast<float>(pos);
-          float c = std::cos(freq);
-          float s = std::sin(freq);
-          float x0 = x[idx(b, sPos, h, i)];
-          float x1 = x[idx(b, sPos, h, i + half)];
-          outPtr[idx(b, sPos, h, i)] = x0 * c - x1 * s;
-          outPtr[idx(b, sPos, h, i + half)] = x0 * s + x1 * c;
-        }
+        // If sections are provided, we still rotate the first rotateDims dims
+        // contiguously as an approximation. Full section-specific scaling is a TODO.
+        rotateSegment(b, sPos, h);
+        copyRemainder(b, sPos, h);
       }
     }
   }

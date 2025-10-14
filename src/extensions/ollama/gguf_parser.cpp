@@ -357,6 +357,16 @@ const GGUFKeyValue *GGUFParser::getMetadata(const std::string &key) const {
   return (it != metadata_.end()) ? &it->second : nullptr;
 }
 
+std::vector<std::string> GGUFParser::listMetadataKeys() const {
+  std::vector<std::string> keys;
+  keys.reserve(metadata_.size());
+  for (const auto &pair : metadata_) {
+    keys.push_back(pair.first);
+  }
+  std::sort(keys.begin(), keys.end());
+  return keys;
+}
+
 const GGUFTensorInfo *GGUFParser::getTensorInfo(const std::string &name) const {
   auto it = tensor_name_to_index_.find(name);
   if (it != tensor_name_to_index_.end() && it->second < tensor_infos_.size()) {
@@ -570,6 +580,14 @@ bool GGUFParser::parseArchitecture() {
     architecture_.attention_head_count_kv = kv->asUInt32();
   }
 
+  // Qwen2.5-VL 使用 GQA：Q 的每头维度可能与 K/V 不同
+  if (const auto *kv = getMetadata(arch_prefix + ".attention.head_dim")) {
+    architecture_.attention_head_dim = kv->asUInt32();
+  }
+  if (const auto *kv = getMetadata(arch_prefix + ".attention.head_dim_k")) {
+    architecture_.attention_head_dim_k = kv->asUInt32();
+  }
+
   if (const auto *kv =
           getMetadata(arch_prefix + ".attention.layer_norm_rms_epsilon")) {
     architecture_.layer_norm_rms_epsilon = kv->asFloat32();
@@ -601,8 +619,14 @@ bool GGUFParser::parseArchitecture() {
       } else {
         auto sections = kv->asUInt64Array();
         architecture_.rope_dimension_sections = sections;
+        // 如果全部为0或总和为0，添加警告以辅助调试
+        uint64_t sum = 0; bool all_zero = true;
+        for (auto s : sections) { sum += s; if (s != 0) all_zero = false; }
+        if (all_zero || sum == 0) {
+          log("WARNING", "rope.mrope_section parsed but sections sum to 0; will fallback to no-rotation for safety");
+        }
         log("DEBUG", "Successfully parsed rope.mrope_section with " +
-                         std::to_string(sections.size()) + " elements");
+                     std::to_string(sections.size()) + " elements");
       }
     }
   }
@@ -648,6 +672,10 @@ bool GGUFParser::parseArchitecture() {
   log("INFO",
       "  Embedding length: " + std::to_string(architecture_.embedding_length));
   log("INFO", "  Block count: " + std::to_string(architecture_.block_count));
+  log("INFO", "  Attention heads: Q=" + std::to_string(architecture_.attention_head_count) +
+                  ", KV=" + std::to_string(architecture_.attention_head_count_kv));
+  log("INFO", "  Per-head dims: q_dim=" + std::to_string(architecture_.attention_head_dim) +
+                  ", kv_dim=" + std::to_string(architecture_.attention_head_dim_k));
   log("INFO", std::string("  Has vision: ") +
                   (architecture_.has_vision ? "Yes" : "No"));
 

@@ -1,6 +1,10 @@
 #ifndef DUOROU_ML_NN_ATTENTION_H
 #define DUOROU_ML_NN_ATTENTION_H
 
+#ifdef __cplusplus
+#include <vector>
+#include <cstdint>
+
 #include "../tensor.h"
 #include "../context.h"
 #include "../../kvcache/cache.h"
@@ -8,6 +12,13 @@
 namespace duorou {
 namespace ml {
 namespace nn {
+
+// Configuration for Rotary Position Embedding (RoPE)
+struct RoPEConfig {
+    int64_t dimension = 0;         // number of dims to rotate (<= headDim)
+    float theta = 10000.0f;        // base frequency (rope.freq_base)
+    std::vector<int64_t> sections; // optional mrope sections
+};
 
 // Multi-head attention mechanism
 class MultiHeadAttention {
@@ -49,6 +60,10 @@ public:
                     const std::vector<float>* kB = nullptr,
                     const std::vector<float>* vB = nullptr,
                     const std::vector<float>* oB = nullptr);
+
+    // Configure RoPE (optional). If not set, defaults are used.
+    void setRoPEConfig(const RoPEConfig& cfg) { ropeCfg_ = cfg; ropeCfgSet_ = true; }
+    bool hasRoPEConfig() const { return ropeCfgSet_; }
     
     // Getters
     int64_t embedDim() const { return embedDim_; }
@@ -89,6 +104,10 @@ private:
                                    const Tensor& mask = {});
     Tensor applyRotaryPositionEmbedding(Context& ctx, const Tensor& tensor, 
                                       int64_t seqLen, int64_t offset = 0);
+
+    // RoPE config state
+    RoPEConfig ropeCfg_{};
+    bool ropeCfgSet_ = false;
 };
 
 // Standalone attention functions
@@ -104,3 +123,5 @@ Tensor attentionWithSinks(Context& ctx, const Tensor& query, const Tensor& key,
 } // namespace duorou
 
 #endif // DUOROU_ML_NN_ATTENTION_H
+
+#endif // __cplusplus

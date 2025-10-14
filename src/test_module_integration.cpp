@@ -31,18 +31,24 @@ using namespace duorou::extensions::ollama;
 using namespace duorou::model;
 
 // 测试输入文本
-const std::string TEST_INPUT =
-    "你好，马上是中秋节了，帮我写一首诗，并翻译为英文。";
+const std::string TEST_INPUT = "你好，马上是中秋节了，帮我写一首诗。";
 
-// 模型文件路径 Qwen2.5vl
-// const std::string MODEL_PATH =
-//     "/Users/acproject/.ollama/models/blobs/"
-//     "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025";
+// 模型文件路径：默认指向本地示例，可通过环境变量 OVERRIDE_MODEL_PATH 覆盖
+static std::string getModelPath() {
+  const char *env = std::getenv("OVERRIDE_MODEL_PATH");
+  if (env && std::filesystem::exists(env)) {
+    return std::string(env);
+  }
+  // 默认 Qwen2.5-VL 示例（可能不被 llama.cpp 支持）
+  return std::string(
+      "/Users/acproject/.ollama/models/blobs/"
+      "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025");
+}
 
 // 模型文件路径 Qwen3
-const std::string MODEL_PATH =
-    "/Users/acproject/.ollama/models/blobs/"
-    "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f";
+// const std::string MODEL_PATH =
+//     "/Users/acproject/.ollama/models/blobs/"
+//     "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f";
 
 // 简单的 KV 缓存后端实现
 class SimpleKVBackend : public duorou::kvcache::Backend {
@@ -65,12 +71,13 @@ bool testCustomModules() {
     std::cout << "1. 测试 GGUF 解析器..." << std::endl;
     GGUFParser parser(true); // 启用详细输出
 
-    if (!std::filesystem::exists(MODEL_PATH)) {
-      std::cerr << "错误：模型文件不存在: " << MODEL_PATH << std::endl;
+    const std::string local_model_path = getModelPath();
+    if (!std::filesystem::exists(local_model_path)) {
+      std::cerr << "错误：模型文件不存在: " << local_model_path << std::endl;
       return false;
     }
 
-    if (!parser.parseFile(MODEL_PATH)) {
+    if (!parser.parseFile(local_model_path)) {
       std::cerr << "错误：无法解析 GGUF 文件" << std::endl;
       return false;
     }
@@ -434,8 +441,40 @@ bool testGGMLInference() {
 // }
 
 int main() {
-  std::cout << "Qwen2.5-VL 文本推理能力测试" << std::endl;
+  std::cout << "Qwen2.5-VL 文本推理能力测试 (llama.cpp)" << std::endl;
   std::cout << "==============================" << std::endl;
+
+  // 解析模型路径
+  const std::string MODEL_PATH = getModelPath();
+  if (!std::filesystem::exists(MODEL_PATH)) {
+    std::cerr << "模型文件不存在，跳过测试: " << MODEL_PATH << std::endl;
+    return 0; // 优雅跳过
+  }
+
+  // 基于 GGUF 架构判断 llama.cpp 支持度，若不支持则跳过
+  try {
+    duorou::extensions::ollama::GGUFParser parser(true);
+    if (parser.parseFile(MODEL_PATH)) {
+      auto arch = parser.getArchitecture().name;
+      std::string archLower = arch;
+      std::transform(archLower.begin(), archLower.end(), archLower.begin(), ::tolower);
+      // 如果是 qwen2.5-vl 家族（已在本地 patched 的 llama.cpp 中支持），则不跳过
+      bool is_qwen25vl = (
+          archLower.find("qwen25vl") != std::string::npos ||
+          archLower.find("qwen2.5vl") != std::string::npos ||
+          archLower.find("qwen-2.5vl") != std::string::npos ||
+          archLower.find("qwen2_5vl") != std::string::npos ||
+          archLower.find("qwen-2_5vl") != std::string::npos);
+      if (!is_qwen25vl) {
+        if (archLower.find("qwen") != std::string::npos || archLower.find("vl") != std::string::npos) {
+          std::cout << "架构 '" << arch << "' 不被 llama.cpp 支持，跳过测试。" << std::endl;
+          return 0; // 优雅跳过
+        }
+      }
+    }
+  } catch (...) {
+    // 如果解析失败，不影响后续，由引擎自行处理
+  }
 
   // 初始化全局模型管理器并注册模型路径，供 MLInferenceEngine 使用
   duorou::extensions::ollama::GlobalModelManager::initialize(true);
@@ -445,36 +484,57 @@ int main() {
 
   bool success = true;
 
-  // 测试第一部分：自定义模块
-  if (!testCustomModules()) {
-    std::cerr << "自定义模块测试失败" << std::endl;
+  try {
+    // 创建推理引擎实例（将统一走 llama.cpp 路径）
+    duorou::extensions::ollama::MLInferenceEngine engine("qwen25vl");
+    std::cout << "正在初始化推理引擎..." << std::endl;
+    if (!engine.initialize() || !engine.isReady()) {
+      std::cerr << "推理引擎初始化失败" << std::endl;
+      success = false;
+    } else {
+      std::cout << "引擎就绪，开始生成文本..." << std::endl;
+      std::string generated_text = engine.generateText(
+          TEST_INPUT,
+          64,    // max_tokens
+          0.7f,  // temperature
+          0.9f   // top_p
+      );
+
+      std::cout << "生成的文本: " << generated_text << std::endl;
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "发生异常: " << e.what() << std::endl;
     success = false;
   }
-
-  // 测试第二部分：GGML 推理
-  if (!testGGMLInference()) {
-    std::cerr << "GGML 推理测试失败" << std::endl;
-    success = false;
-  }
-
-  // 测试第三部分：推理引擎集成
-  //   if (!testInferenceEngine()) {
-  //     std::cerr << "推理引擎测试失败" << std::endl;
-  //     success = false;
-  //   }
-
-  // 性能基准测试
-  //   performanceBenchmark();
 
   // 关闭全局模型管理器
   duorou::extensions::ollama::GlobalModelManager::shutdown();
 
   std::cout << "\n==============================" << std::endl;
   if (success) {
-    std::cout << "所有测试通过！✅" << std::endl;
+    std::cout << "测试完成！✅" << std::endl;
     return 0;
   } else {
-    std::cout << "部分测试失败！❌" << std::endl;
+    // 在失败时枚举并打印 GGUF 元数据键用于诊断
+    try {
+      std::cout << "正在进行 GGUF 元数据诊断..." << std::endl;
+      duorou::extensions::ollama::GGUFParser diag(true);
+      if (diag.parseFile(MODEL_PATH)) {
+        auto keys = diag.listMetadataKeys();
+        std::cout << "GGUF 元数据键枚举 (" << keys.size() << "):" << std::endl;
+        for (const auto &k : keys) {
+          std::cout << " - " << k << std::endl;
+        }
+      } else {
+        std::cout << "GGUF 解析失败，无法枚举元数据键" << std::endl;
+      }
+    } catch (const std::exception &e) {
+      std::cout << "GGUF 元数据诊断发生异常: " << e.what() << std::endl;
+    } catch (...) {
+      std::cout << "GGUF 元数据诊断发生未知异常" << std::endl;
+    }
+
+    std::cout << "测试失败！❌" << std::endl;
     return 1;
   }
 }

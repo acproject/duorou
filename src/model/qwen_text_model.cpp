@@ -181,8 +181,7 @@ SelfAttention::SelfAttention(const TextModelOptions &options)
   mha_ = std::make_unique<duorou::ml::nn::MultiHeadAttention>(
       static_cast<int64_t>(options_.hiddenSize),
       static_cast<int64_t>(options_.numHeads),
-      static_cast<int64_t>(
-          options_.numHeads), // temporarily align kvHeads with numHeads
+      static_cast<int64_t>(options_.numKVHeads),
       /*bias=*/true,
       /*dropout=*/0.0f);
 }
@@ -211,12 +210,13 @@ std::vector<float> SelfAttention::forward(
     // sensible defaults via Xavier
     const int64_t E = static_cast<int64_t>(options_.hiddenSize);
     const int64_t H = static_cast<int64_t>(options_.numHeads);
+    const int64_t HK = static_cast<int64_t>(options_.numKVHeads);
     const int64_t D = E / H;
     // Prepare expected shapes and sizes
     const size_t qSz =
         static_cast<size_t>(E * H * D); // queryWeight_ shape in MHA is [E, H*D]
-    const size_t kSz = static_cast<size_t>(E * H * D);
-    const size_t vSz = static_cast<size_t>(E * H * D);
+    const size_t kSz = static_cast<size_t>(E * HK * D);
+    const size_t vSz = static_cast<size_t>(E * HK * D);
     const size_t oSz = static_cast<size_t>(H * D * E); // outputWeight_ [H*D, E]
 
     auto ensure_or_init = [&](std::vector<float> &w, size_t sz, uint32_t seed) {
@@ -829,33 +829,20 @@ std::string QwenTextModel::decode(const std::vector<int32_t> &ids) {
 }
 
 size_t QwenTextModel::getVocabSize() const {
-  // Prefer aligning with loaded output weights to ensure logits match
-  size_t vocab_weights = 0;
-  if (options_.hiddenSize != 0 && !outputWeights_.empty()) {
-    vocab_weights = outputWeights_.size() / options_.hiddenSize;
-  }
-
+  // Prefer tokenizer vocabulary to align expectations across the pipeline
   if (tokenizer_) {
-    size_t vocab_tokenizer = tokenizer_->getVocabSize();
-    if (vocab_weights > 0) {
-      // Return the intersection size to keep logits and embedding indices valid
-      return std::min(vocab_tokenizer, vocab_weights);
-    }
-    return vocab_tokenizer;
+    return tokenizer_->getVocabSize();
   }
-
   if (vocabulary_) {
-    size_t vocab_tokenizer = vocabulary_->size();
-    if (vocab_weights > 0) {
-      return std::min(vocab_tokenizer, vocab_weights);
-    }
-    return vocab_tokenizer;
+    return vocabulary_->size();
   }
 
-  // Fallback: if weights provide a size, use it; else use known default
-  if (vocab_weights > 0) {
-    return vocab_weights;
+  // If tokenizer is not available, fall back to output weights if present
+  if (options_.hiddenSize != 0 && !outputWeights_.empty()) {
+    return outputWeights_.size() / options_.hiddenSize;
   }
+
+  // Final fallback: known default for Qwen
   return 151936; // Default Qwen vocab size
 }
 
@@ -1349,10 +1336,10 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   logger.debug("[QwenTextModel::forward] Final logits: " +
                formatVectorStats(logits_stats, "logits"));
 
-  // Check expected vocab size from metadata
+  // Check expected vocab size from tokenizer/vocabulary to avoid mismatch warnings
   size_t expected_vocab_size = getVocabSize();
   if (logits.size() != expected_vocab_size) {
-    logger.warning("Logits size mismatch! Expected: " +
+    logger.warning("Logits size mismatch! Expected(weights): " +
                    std::to_string(expected_vocab_size) +
                    ", Got: " + std::to_string(logits.size()));
   }
@@ -1651,9 +1638,8 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
       ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
       ", Vocab size (weights): " + std::to_string(vocab_weights));
 
-  // Return logits sized to the actual weights vocab size to avoid mismatch
-  // This ensures compatibility with inference engine expectations
-  std::vector<float> logits(vocab_weights, 0.0f);
+  // Return logits sized to tokenizer vocab to ensure downstream alignment
+  std::vector<float> logits(vocab_tokenizer, 0.0f);
 
   if (vocab_weights == 0) {
     logger.error("[computeLogitsFromHidden] No output weights available!");
@@ -1674,8 +1660,9 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
   logger.debug("[computeLogitsFromHidden] Output weights: " +
                formatVectorStats(weights_stats, "output_weights"));
 
-  // Compute logits: logits[v] = hidden dot outputWeights[v]
-  for (size_t v = 0; v < vocab_weights && v < vocab_tokenizer; ++v) {
+  // Compute logits for entries that exist in weights; pad the rest with 0
+  // logits[v] = hidden dot outputWeights[v]
+  for (size_t v = 0; v < std::min(vocab_weights, vocab_tokenizer); ++v) {
     float sum = 0.0f;
     size_t woff = v * hidden_size;
     for (size_t i = 0; i < hidden_size; ++i) {

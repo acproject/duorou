@@ -112,6 +112,8 @@ struct ModelArchitecture {
   uint32_t feed_forward_length;        // Feed forward network dimension
   uint32_t attention_head_count;       // Number of attention heads
   uint32_t attention_head_count_kv;    // Number of KV attention heads
+  uint32_t attention_head_dim;         // Per-head dimension for Q
+  uint32_t attention_head_dim_k;       // Per-head dimension for K/V (GQA)
   float layer_norm_rms_epsilon;        // RMS normalization epsilon
   uint32_t rope_dimension_count;       // RoPE dimension count
   float rope_freq_base;                // RoPE frequency base
@@ -158,6 +160,8 @@ public:
    * @return Key-value pair pointer, returns nullptr if not found
    */
   const GGUFKeyValue* getMetadata(const std::string &key) const;
+  // Enumerate all metadata keys for diagnostics
+  std::vector<std::string> listMetadataKeys() const;
 
   /**
    * Get tensor information

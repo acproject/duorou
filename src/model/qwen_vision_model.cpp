@@ -129,30 +129,49 @@ std::vector<float> VisionTransformerLayer::layerNorm(
     const std::vector<float>& weights,
     const std::vector<float>& bias,
     float eps) {
-    
+    const size_t hidden = options_.hiddenSize;
+    if (hidden == 0) {
+        return input;
+    }
+    if (input.empty()) {
+        return {};
+    }
+    if (input.size() % hidden != 0) {
+        // Shape mismatch; avoid out-of-bounds and return input unchanged
+        std::cerr << "[WARN] VisionTransformerLayer::layerNorm input size " << input.size()
+                  << " not divisible by hidden " << hidden << std::endl;
+        return input;
+    }
+
+    const bool has_scale = (weights.size() == hidden);
+    const bool has_bias = (bias.size() == hidden);
     std::vector<float> output(input.size());
-    
-    // Calculate mean
-    float mean = 0.0f;
-    for (float val : input) {
-        mean += val;
+    const size_t seq_len = input.size() / hidden;
+
+    for (size_t t = 0; t < seq_len; ++t) {
+        const size_t base = t * hidden;
+        // mean
+        double mean = 0.0;
+        for (size_t i = 0; i < hidden; ++i) {
+            mean += static_cast<double>(input[base + i]);
+        }
+        mean /= static_cast<double>(hidden);
+        // variance
+        double var = 0.0;
+        for (size_t i = 0; i < hidden; ++i) {
+            double diff = static_cast<double>(input[base + i]) - mean;
+            var += diff * diff;
+        }
+        var /= static_cast<double>(hidden);
+        float invStd = 1.0f / std::sqrt(static_cast<float>(var) + eps);
+        for (size_t i = 0; i < hidden; ++i) {
+            float scaled = (input[base + i] - static_cast<float>(mean)) * invStd;
+            if (has_scale) scaled *= weights[i];
+            if (has_bias) scaled += bias[i];
+            output[base + i] = scaled;
+        }
     }
-    mean /= input.size();
-    
-    // Calculate variance
-    float variance = 0.0f;
-    for (float val : input) {
-        float diff = val - mean;
-        variance += diff * diff;
-    }
-    variance /= input.size();
-    
-    // Normalize
-    float invStd = 1.0f / std::sqrt(variance + eps);
-    for (size_t i = 0; i < input.size(); ++i) {
-        output[i] = (input[i] - mean) * invStd * weights[i] + bias[i];
-    }
-    
+
     return output;
 }
 
@@ -271,13 +290,42 @@ std::vector<float> QwenVisionModel::processImage(const std::vector<uint8_t>& ima
         std::cerr << "Model not initialized" << std::endl;
         return {};
     }
-    
+    if (imageData.empty()) {
+        std::cerr << "[WARN] Empty image data" << std::endl;
+        return {};
+    }
     // Preprocess image data
     auto pixelValues = preprocessImage(imageData);
-    
+    if (pixelValues.empty()) {
+        std::cerr << "[WARN] Preprocess produced empty pixel values" << std::endl;
+        return {};
+    }
+    if (options_.numChannels == 0) {
+        std::cerr << "[ERROR] numChannels is 0 in VisionModelOptions" << std::endl;
+        return {};
+    }
+    if (pixelValues.size() % options_.numChannels != 0) {
+        std::cerr << "[WARN] Pixel values size " << pixelValues.size()
+                  << " not divisible by numChannels " << options_.numChannels << std::endl;
+        // Fallback to configured image size to proceed
+        size_t imageSize = options_.imageSize;
+        if (imageSize == 0) {
+            std::cerr << "[ERROR] Configured imageSize is 0" << std::endl;
+            return {};
+        }
+        auto grid = calculateGrid(imageSize, imageSize);
+        return forward(pixelValues, grid);
+    }
     // Calculate grid based on image dimensions
     // For now, assume square image
-    size_t imageSize = static_cast<size_t>(std::sqrt(pixelValues.size() / options_.numChannels));
+    const size_t pixels = pixelValues.size() / options_.numChannels;
+    size_t imageSize = static_cast<size_t>(std::sqrt(static_cast<double>(pixels)));
+    if (imageSize * imageSize != pixels) {
+        std::cerr << "[WARN] Inferred image is not square: pixels=" << pixels
+                  << ", sqrt=" << imageSize << "; falling back to configured imageSize="
+                  << options_.imageSize << std::endl;
+        imageSize = options_.imageSize;
+    }
     auto grid = calculateGrid(imageSize, imageSize);
     
     return forward(pixelValues, grid);
@@ -347,28 +395,48 @@ std::vector<float> QwenVisionModel::layerNorm(
     const std::vector<float>& weights,
     const std::vector<float>& bias,
     float eps) {
-    
-    // Same implementation as in VisionTransformerLayer
+    const size_t hidden = options_.hiddenSize;
+    if (hidden == 0) {
+        return input;
+    }
+    if (input.empty()) {
+        return {};
+    }
+    if (input.size() % hidden != 0) {
+        std::cerr << "[WARN] QwenVisionModel::layerNorm input size " << input.size()
+                  << " not divisible by hidden " << hidden << std::endl;
+        return input;
+    }
+
+    const bool has_scale = (weights.size() == hidden);
+    const bool has_bias = (bias.size() == hidden);
     std::vector<float> output(input.size());
-    
-    float mean = 0.0f;
-    for (float val : input) {
-        mean += val;
+    const size_t seq_len = input.size() / hidden;
+
+    for (size_t t = 0; t < seq_len; ++t) {
+        const size_t base = t * hidden;
+        // mean
+        double mean = 0.0;
+        for (size_t i = 0; i < hidden; ++i) {
+            mean += static_cast<double>(input[base + i]);
+        }
+        mean /= static_cast<double>(hidden);
+        // variance
+        double var = 0.0;
+        for (size_t i = 0; i < hidden; ++i) {
+            double diff = static_cast<double>(input[base + i]) - mean;
+            var += diff * diff;
+        }
+        var /= static_cast<double>(hidden);
+        float invStd = 1.0f / std::sqrt(static_cast<float>(var) + eps);
+        for (size_t i = 0; i < hidden; ++i) {
+            float scaled = (input[base + i] - static_cast<float>(mean)) * invStd;
+            if (has_scale) scaled *= weights[i];
+            if (has_bias) scaled += bias[i];
+            output[base + i] = scaled;
+        }
     }
-    mean /= input.size();
-    
-    float variance = 0.0f;
-    for (float val : input) {
-        float diff = val - mean;
-        variance += diff * diff;
-    }
-    variance /= input.size();
-    
-    float invStd = 1.0f / std::sqrt(variance + eps);
-    for (size_t i = 0; i < input.size(); ++i) {
-        output[i] = (input[i] - mean) * invStd * weights[i] + bias[i];
-    }
-    
+
     return output;
 }
 

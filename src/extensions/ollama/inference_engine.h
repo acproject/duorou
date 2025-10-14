@@ -94,6 +94,10 @@ private:
   uint32_t n_embd_;
   uint32_t n_ctx_;
 
+  // 注意力每头维度（来自GGUF）：Q的head_dim与K/V的head_dim_k（GQA场景）
+  uint32_t head_dim_q_;
+  uint32_t head_dim_k_;
+
   // RoPE参数
   std::vector<float> rope_freqs_;
   bool rope_initialized_;

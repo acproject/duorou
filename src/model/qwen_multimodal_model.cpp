@@ -565,6 +565,37 @@ bool QwenMultimodalModel::loadConfig(const std::string& configPath) {
         return true;
     }
 
+    // First: detect GGUF model path and short-circuit JSON parsing.
+    auto isGGUFPath = [&]() -> bool {
+        // Extension check (handles typical .gguf files)
+        size_t dot = configPath.find_last_of('.');
+        if (dot != std::string::npos) {
+            std::string ext = configPath.substr(dot + 1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == "gguf") {
+                return true;
+            }
+        }
+        // Magic check using GGUFParser (covers blob paths without extension)
+        try {
+            duorou::extensions::ollama::GGUFParser parser(/*verbose=*/false);
+            if (parser.parseFile(configPath)) {
+                return true;
+            }
+        } catch (...) {
+            // Swallow and fall through to JSON path
+        }
+        return false;
+    }();
+
+    if (isGGUFPath) {
+        // Treat configPath as the GGUF weights file and skip JSON
+        config_.textModelPath = configPath;
+        std::cout << "[DEBUG] Detected GGUF model path; using GGUF fallback for Qwen multimodal config: "
+                  << configPath << std::endl;
+        return true;
+    }
+
     std::ifstream in(configPath);
     if (!in.is_open()) {
         std::cerr << "[ERROR] Failed to open Qwen multimodal config: " << configPath << std::endl;
@@ -579,6 +610,18 @@ bool QwenMultimodalModel::loadConfig(const std::string& configPath) {
 
     nlohmann::json j = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false, /*ignore_comments=*/false);
     if (j.is_discarded()) {
+        // As a final fallback, try GGUF detection on malformed content
+        try {
+            duorou::extensions::ollama::GGUFParser parser(/*verbose=*/false);
+            if (parser.parseFile(configPath)) {
+                config_.textModelPath = configPath;
+                std::cout << "[WARN] Config JSON malformed; detected GGUF. Falling back to GGUF: "
+                          << configPath << std::endl;
+                return true;
+            }
+        } catch (...) {
+            // Ignore and report JSON error below
+        }
         std::cerr << "[ERROR] Failed to parse Qwen multimodal config (malformed JSON): " << configPath << std::endl;
         return false;
     }
