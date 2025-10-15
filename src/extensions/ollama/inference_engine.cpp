@@ -376,10 +376,6 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
     if (use_llama_backend_) {
       return generateWithLlama(prompt, max_tokens, temperature, top_p);
     }
-    // // 内部前向优先用于 Qwen 架构
-    if (checkInternalForwardSupport()) {
-      return generateWithInternalForward(prompt, max_tokens, temperature, top_p);
-    }
     // 兜底：尝试 GGLM 简化路径
     return generateWithGGLM(prompt, max_tokens, temperature, top_p);
 
