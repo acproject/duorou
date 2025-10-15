@@ -1,13 +1,13 @@
 #include "attention.h"
 #include "../backend/backend.h"
 #include "core/logger.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
-#include <algorithm>
-#include <sstream>
 #include <random>
+#include <sstream>
+#include <stdexcept>
 
 namespace duorou {
 namespace ml {
@@ -57,12 +57,13 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
   if (kvHeads_ != numHeads_) {
     // 支持 GQA：要求 numHeads 是 kvHeads 的整数倍
     if (numHeads_ % kvHeads_ != 0) {
-      throw std::runtime_error(
-          "MultiHeadAttention::forward: numHeads must be a multiple of kvHeads for GQA");
+      throw std::runtime_error("MultiHeadAttention::forward: numHeads must be "
+                               "a multiple of kvHeads for GQA");
     }
-    logger.info(std::string("[MHA] Using GQA: numHeads=") + std::to_string(numHeads_) +
-                ", kvHeads=" + std::to_string(kvHeads_) +
-                ", group=" + std::to_string(numHeads_ / kvHeads_));
+    // logger.info(std::string("[MHA] Using GQA: numHeads=") +
+    //             std::to_string(numHeads_) +
+    //             ", kvHeads=" + std::to_string(kvHeads_) +
+    //             ", group=" + std::to_string(numHeads_ / kvHeads_));
   }
   // Determine input shape
   auto qShape = query.shape();
@@ -118,36 +119,39 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
     long double var = 0.0L;
     for (size_t i = 0; i < host.size(); ++i) {
       float x = host[i];
-      if (!std::isfinite(x)) continue;
+      if (!std::isfinite(x))
+        continue;
       long double d = static_cast<long double>(x) - mean;
       var += d * d;
     }
-    long double stdv = (n > 1) ? std::sqrt(var / static_cast<long double>(n)) : 0.0L;
+    long double stdv =
+        (n > 1) ? std::sqrt(var / static_cast<long double>(n)) : 0.0L;
     std::ostringstream oss;
-    oss.setf(std::ios::fixed); oss.precision(6);
+    oss.setf(std::ios::fixed);
+    oss.precision(6);
     oss << "min=" << static_cast<double>(minv)
         << ", max=" << static_cast<double>(maxv)
         << ", mean=" << static_cast<double>(mean)
-        << ", std=" << static_cast<double>(stdv)
-        << ", nonfinite=" << nonfinite
+        << ", std=" << static_cast<double>(stdv) << ", nonfinite=" << nonfinite
         << ", numel=" << t.numel();
     return oss.str();
   };
-  logger.debug(std::string("[MHA] qProj stats: ") + tensor_stats(qProj));
-  logger.debug(std::string("[MHA] kProj stats: ") + tensor_stats(kProj));
-  logger.debug(std::string("[MHA] vProj stats: ") + tensor_stats(vProj));
+  // logger.debug(std::string("[MHA] qProj stats: ") + tensor_stats(qProj));
+  // logger.debug(std::string("[MHA] kProj stats: ") + tensor_stats(kProj));
+  // logger.debug(std::string("[MHA] vProj stats: ") + tensor_stats(vProj));
 
   // Reshape到4D：Q使用所有头，K/V使用 kvHeads
   Tensor q4 = qProj.reshape({B, Sq, numHeads_, headDim_});
   Tensor k4 = kProj.reshape({B, Sk, kvHeads_, headDim_});
   Tensor v4 = vProj.reshape({B, Sk, kvHeads_, headDim_});
-  logger.debug("[MHA] Shapes after projection: q4=[" + std::to_string(B) + "," +
-               std::to_string(Sq) + "," + std::to_string(numHeads_) + "," +
-               std::to_string(headDim_) + "] k4=[" + std::to_string(B) + "," +
-               std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
-               std::to_string(headDim_) + "] v4=[" + std::to_string(B) + "," +
-               std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
-               std::to_string(headDim_) + "]");
+  // logger.debug("[MHA] Shapes after projection: q4=[" + std::to_string(B) +
+  // "," +
+  //              std::to_string(Sq) + "," + std::to_string(numHeads_) + "," +
+  //              std::to_string(headDim_) + "] k4=[" + std::to_string(B) + ","
+  //              + std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
+  //              std::to_string(headDim_) + "] v4=[" + std::to_string(B) + ","
+  //              + std::to_string(Sk) + "," + std::to_string(kvHeads_) + "," +
+  //              std::to_string(headDim_) + "]");
 
   // Prepare KV Cache integration: fetch previous K/V and concatenate
   int64_t prevLen = 0;
@@ -221,11 +225,11 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
 
         // Sanity checks to avoid out-of-bounds copies
         if (prevBytes > kvPrevBytes) {
-          logger.debug("[MHA] KV concat prevBytes exceeds previous cache "
-                       "tensor bytes; skipping concat to prevent OOB");
+          // logger.debug("[MHA] KV concat prevBytes exceeds previous cache "
+          //              "tensor bytes; skipping concat to prevent OOB");
         } else if (newBytes > k4Bytes || newBytes > v4Bytes) {
-          logger.debug("[MHA] KV concat newBytes exceeds current K/V tensor "
-                       "bytes; skipping concat to prevent OOB");
+          // logger.debug("[MHA] KV concat newBytes exceeds current K/V tensor "
+          //              "bytes; skipping concat to prevent OOB");
         } else {
           // Copy previous part directly from cache tensors
           adapter.copy(kFull.data(), kPrevKV.data(), prevBytes);
@@ -242,13 +246,14 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
           k4 = kFull;
           v4 = vFull;
           Sk = totalSk;
-          logger.debug(
-              "[MHA] KV concat done: B=" + std::to_string(B) +
-              ", prevLen=" + std::to_string(prevLen) + ", newSk=" +
-              std::to_string((kIs3D ? keyRef.shape()[1] : keyRef.shape()[0])) +
-              ", totalSk=" + std::to_string(Sk) + ", bytes(prev,new)=" +
-              std::to_string(prevBytes) + "," + std::to_string(newBytes) +
-              ", kvHeads=" + std::to_string(kvHeads_));
+          // logger.debug(
+          //     "[MHA] KV concat done: B=" + std::to_string(B) +
+          //     ", prevLen=" + std::to_string(prevLen) + ", newSk=" +
+          //     std::to_string((kIs3D ? keyRef.shape()[1] : keyRef.shape()[0]))
+          //     +
+          //     ", totalSk=" + std::to_string(Sk) + ", bytes(prev,new)=" +
+          //     std::to_string(prevBytes) + "," + std::to_string(newBytes) +
+          //     ", kvHeads=" + std::to_string(kvHeads_));
         }
       } else {
         // No valid previous shape, apply default RoPE for K
@@ -265,9 +270,9 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
 
   // Apply RoPE to Q with offset equal to number of previous tokens
   q4 = applyRotaryPositionEmbedding(ctx, q4, Sq, /*offset=*/prevLen);
-  logger.debug("[MHA] RoPE applied: prevLen=" + std::to_string(prevLen) +
-               ", q4(seqLen)=" + std::to_string(Sq) +
-               ", k4(seqLen)=" + std::to_string(Sk));
+  // logger.debug("[MHA] RoPE applied: prevLen=" + std::to_string(prevLen) +
+  //              ", q4(seqLen)=" + std::to_string(Sq) +
+  //              ", k4(seqLen)=" + std::to_string(Sk));
 
   // If cache exists, store K, V using backend adapter bridging
   if (cache && k4.data() && v4.data()) {
@@ -326,23 +331,23 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
                          static_cast<const char *>(v4.data()) + prevBytes)
                    : nullptr);
     if (kNewSrc == nullptr || vNewSrc == nullptr) {
-      logger.debug("[MHA] KV put skipped: null kNewSrc/vNewSrc");
+      // logger.debug("[MHA] KV put skipped: null kNewSrc/vNewSrc");
     } else if (prevBytes + newBytes > static_cast<size_t>(k4.nbytes()) ||
                prevBytes + newBytes > static_cast<size_t>(v4.nbytes())) {
-      logger.debug(
-          "[MHA] KV put skipped: (prevBytes + newBytes) exceeds k4/v4 bytes; "
-          "prevBytes=" +
-          std::to_string(prevBytes) + ", newBytes=" + std::to_string(newBytes) +
-          ", k4Bytes=" + std::to_string(static_cast<size_t>(k4.nbytes())) +
-          ", v4Bytes=" + std::to_string(static_cast<size_t>(v4.nbytes())));
+      // logger.debug(
+      //     "[MHA] KV put skipped: (prevBytes + newBytes) exceeds k4/v4 bytes;
+      //     " "prevBytes=" + std::to_string(prevBytes) + ", newBytes=" +
+      //     std::to_string(newBytes) +
+      //     ", k4Bytes=" + std::to_string(static_cast<size_t>(k4.nbytes())) +
+      //     ", v4Bytes=" + std::to_string(static_cast<size_t>(v4.nbytes())));
     } else {
       adapter.copy(kKV.data(), kNewSrc, newBytes);
       adapter.copy(vKV.data(), vNewSrc, newBytes);
-      logger.debug("[MHA] KV put new segment: B=" + std::to_string(B) +
-                   ", newSk=" + std::to_string(newSk) +
-                   ", bytes=" + std::to_string(newBytes) +
-                   ", prevOffsetBytes=" + std::to_string(prevBytes) +
-                   ", kvHeads=" + std::to_string(kvHeads_));
+      // logger.debug("[MHA] KV put new segment: B=" + std::to_string(B) +
+      //              ", newSk=" + std::to_string(newSk) +
+      //              ", bytes=" + std::to_string(newBytes) +
+      //              ", prevOffsetBytes=" + std::to_string(prevBytes) +
+      //              ", kvHeads=" + std::to_string(kvHeads_));
     }
 
     // Store into cache
@@ -384,7 +389,10 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
     int64_t group = numHeads_ / kvHeads_;
     k4_exp = Tensor({B, Sk, numHeads_, headDim_}, DataType::FLOAT32);
     v4_exp = Tensor({B, Sk, numHeads_, headDim_}, DataType::FLOAT32);
-    if (auto *b = ctx.getBackend()) { k4_exp.setBackend(b); v4_exp.setBackend(b); }
+    if (auto *b = ctx.getBackend()) {
+      k4_exp.setBackend(b);
+      v4_exp.setBackend(b);
+    }
     k4_exp.allocate();
     v4_exp.allocate();
 
@@ -399,7 +407,9 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
       return (((b * Sk + s) * numHeads_ + h) * headDim_ + d);
     };
     for (int64_t b = 0; b < B; ++b) {
-      for (int64_t s = 0; s < Sq /* expand uses Sk; Sq==Sk only for self */; ++s) {}
+      for (int64_t s = 0; s < Sq /* expand uses Sk; Sq==Sk only for self */;
+           ++s) {
+      }
     }
     // 使用 Sk 作为序列长度进行复制
     for (int64_t b = 0; b < B; ++b) {
@@ -415,22 +425,23 @@ Tensor MultiHeadAttention::forward(Context &ctx, const Tensor &query,
         }
       }
     }
-    logger.debug(std::string("[MHA] Expanded KV heads for GQA: kvHeads=") +
-                 std::to_string(kvHeads_) + ", numHeads=" + std::to_string(numHeads_) +
-                 ", group=" + std::to_string(group));
+    // logger.debug(std::string("[MHA] Expanded KV heads for GQA: kvHeads=") +
+    //              std::to_string(kvHeads_) + ", numHeads=" +
+    //              std::to_string(numHeads_) +
+    //              ", group=" + std::to_string(group));
   }
 
   // 执行注意力计算（现 q/k/v 的头维一致）
-  logger.debug("[MHA] Calling scaledDotProductAttention with q4=[" +
-               std::to_string(B) + "," + std::to_string(Sq) + "," +
-               std::to_string(numHeads_) + "," + std::to_string(headDim_) +
-               "] k4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," +
-               std::to_string(numHeads_) + "," + std::to_string(headDim_) +
-               "] v4=[" + std::to_string(B) + "," + std::to_string(Sk) + "," +
-               std::to_string(numHeads_) + "," + std::to_string(headDim_) +
-               "]");
-  Tensor attnOut4 =
-      scaledDotProductAttention(ctx, q4, k4_exp, v4_exp, usedMask); // [B,Sq,H,D]
+  // logger.debug("[MHA] Calling scaledDotProductAttention with q4=[" +
+  //              std::to_string(B) + "," + std::to_string(Sq) + "," +
+  //              std::to_string(numHeads_) + "," + std::to_string(headDim_) +
+  //              "] k4=[" + std::to_string(B) + "," + std::to_string(Sk) + ","
+  //              + std::to_string(numHeads_) + "," + std::to_string(headDim_) +
+  //              "] v4=[" + std::to_string(B) + "," + std::to_string(Sk) + ","
+  //              + std::to_string(numHeads_) + "," + std::to_string(headDim_) +
+  //              "]");
+  Tensor attnOut4 = scaledDotProductAttention(ctx, q4, k4_exp, v4_exp,
+                                              usedMask); // [B,Sq,H,D]
 
   // Merge heads: [B,Sq,H,D] -> [B*Sq, H*D]
   Tensor merged = attnOut4.reshape({B * Sq, numHeads_ * headDim_});
@@ -499,15 +510,16 @@ void MultiHeadAttention::initializeWeights(Context &ctx,
     std::uniform_real_distribution<float> dist(-bound, bound);
     std::vector<float> host;
     host.resize(static_cast<size_t>(t.numel()));
-    for (size_t i = 0; i < host.size(); ++i) host[i] = dist(gen);
+    for (size_t i = 0; i < host.size(); ++i)
+      host[i] = dist(gen);
     t.copyFromHost(host.data(), host.size() * sizeof(float));
   };
 
   // Use fixed seeds for reproducibility
   xavier_uniform_fill(queryWeight_, 0xA1B2C3D4u);
-  xavier_uniform_fill(keyWeight_,   0xB2C3D4E5u);
+  xavier_uniform_fill(keyWeight_, 0xB2C3D4E5u);
   xavier_uniform_fill(valueWeight_, 0xC3D4E5F6u);
-  xavier_uniform_fill(outputWeight_,0xD4E5F607u);
+  xavier_uniform_fill(outputWeight_, 0xD4E5F607u);
 
   // Biases: zero-initialize if enabled
   if (hasBias_) {
@@ -721,21 +733,13 @@ Tensor MultiHeadAttention::scaledDotProductAttention(Context &ctx,
           scores[static_cast<size_t>(t)] = dot;
         }
 
-        // Diagnostics: pre-softmax stats (log for the first token/head only)
-        if (b == 0 && h == 0 && s == 0) {
-          float preMin = std::numeric_limits<float>::infinity();
-          float preMax = -std::numeric_limits<float>::infinity();
-          for (float sc : scores) {
-            if (std::isfinite(sc)) {
-              preMin = std::min(preMin, sc);
-              preMax = std::max(preMax, sc);
-            }
-          }
-          alogger.info("[Attention] pre-softmax scores: min=" +
-                       std::to_string(preMin) + " max=" +
-                       std::to_string(preMax) + " (B=" +
-                       std::to_string(b) + ", H=" + std::to_string(h) +
-                       ", S=" + std::to_string(s) + ")");
+        // Batch-level summary (log once per batch)
+        if (h == 0 && s == 0) {
+          // alogger.info("[Attention] batch=" + std::to_string(b) +
+          //              " Sk=" + std::to_string(Sk) +
+          //              " heads=" + std::to_string(numHeads_) +
+          //              " kv_heads=" + std::to_string(kvHeads_) +
+          //              " head_dim=" + std::to_string(headDim_));
         }
 
         // 2) stable softmax over scores
@@ -745,14 +749,6 @@ Tensor MultiHeadAttention::scaledDotProductAttention(Context &ctx,
         float sumExp = 0.0f;
         for (float sc : scores)
           sumExp += std::exp(sc - maxScore);
-        if (!std::isfinite(sumExp) || sumExp == 0.0f) {
-          alogger.warning("[Attention] softmax anomaly: sumExp=" +
-                       std::to_string(sumExp) + " maxScore=" +
-                       std::to_string(maxScore));
-        } else if (b == 0 && h == 0 && s == 0) {
-          alogger.info("[Attention] softmax sumExp=" + std::to_string(sumExp) +
-                       " maxScore=" + std::to_string(maxScore));
-        }
         // 3) weighted sum of V
         for (int64_t d = 0; d < D; ++d) {
           float acc = 0.0f;
@@ -799,7 +795,8 @@ Tensor MultiHeadAttention::applyRotaryPositionEmbedding(Context &ctx,
   int64_t rotateDims = D;
   float theta = 10000.0f;
   if (ropeCfgSet_) {
-    if (ropeCfg_.dimension > 0) rotateDims = std::min<int64_t>(D, ropeCfg_.dimension);
+    if (ropeCfg_.dimension > 0)
+      rotateDims = std::min<int64_t>(D, ropeCfg_.dimension);
     theta = ropeCfg_.theta > 0.0f ? ropeCfg_.theta : 10000.0f;
   }
   int64_t half = rotateDims / 2;
@@ -842,7 +839,8 @@ Tensor MultiHeadAttention::applyRotaryPositionEmbedding(Context &ctx,
     for (int64_t sPos = 0; sPos < S; ++sPos) {
       for (int64_t h = 0; h < H; ++h) {
         // If sections are provided, we still rotate the first rotateDims dims
-        // contiguously as an approximation. Full section-specific scaling is a TODO.
+        // contiguously as an approximation. Full section-specific scaling is a
+        // TODO.
         rotateSegment(b, sPos, h);
         copyRemainder(b, sPos, h);
       }

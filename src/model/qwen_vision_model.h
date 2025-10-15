@@ -1,10 +1,18 @@
 #pragma once
 
+// Strong include guard to assist indexers and mixed-language builds
+#ifndef DUOROU_MODEL_QWEN_VISION_MODEL_H
+#define DUOROU_MODEL_QWEN_VISION_MODEL_H
+
+// Ensure this header is only parsed by a C++ compiler
+#if defined(__cplusplus)
+
 #include "base_model.h"
 #include <vector>
 #include <string>
 #include <memory>
 #include <cstdint>
+#include <cstddef>
 
 namespace duorou {
 namespace model {
@@ -23,9 +31,9 @@ struct Grid {
 
 // Vision model configuration
 struct VisionModelOptions {
-    size_t hiddenSize = 1024;
-    size_t numHeads = 16;
-    size_t numLayers = 24;
+    size_t hiddenSize = 1280;
+    size_t numHeads = 20; // Qwen2.5VL常见视觉头数接近 hiddenSize/64，后续可从GGUF覆盖
+    size_t numLayers = 32;
     size_t patchSize = 14;
     size_t imageSize = 224;
     size_t numChannels = 3;
@@ -39,6 +47,102 @@ struct VisionModelOptions {
     }
     size_t numPatches() const { 
         return (imageSize / patchSize) * (imageSize / patchSize); 
+    }
+};
+
+// Vision patch merger: merges 2x2 patches -> concat 4*hidden (5120),
+// then RMSNorm + MLP 5120 -> 5120 -> GELU -> 3584
+class VisionPatchMerger {
+public:
+    VisionPatchMerger() = default;
+    ~VisionPatchMerger() = default;
+
+    // Configure dimensions; textHidden should match text embed dim (e.g., 3584)
+    void configure(size_t visionHidden, size_t textHidden) {
+        visionHidden_ = visionHidden;
+        textHidden_ = textHidden;
+        mergedDim_ = visionHidden_ * 4; // 2x2 spatial merge
+        // Init RMSNorm scale
+        lnScale_.assign(mergedDim_, 1.0f);
+        // Init MLP weights (placeholders; real weights should be loaded via GGUF)
+        mlpW1_.assign(mergedDim_ * mergedDim_, 0.0f);
+        mlpB1_.assign(mergedDim_, 0.0f);
+        mlpW2_.assign(mergedDim_ * textHidden_, 0.0f);
+        mlpB2_.assign(textHidden_, 0.0f);
+    }
+
+    // Merge per 2x2 blocks in sequence order
+    std::vector<float> forward(const std::vector<float>& visionSeq) const {
+        if (visionHidden_ == 0 || textHidden_ == 0 || mergedDim_ == 0) return {};
+        if (visionSeq.empty() || (visionSeq.size() % visionHidden_) != 0) return {};
+        const size_t seq = visionSeq.size() / visionHidden_;
+        const size_t group = 4; // 2x2 merge
+        const size_t outSeq = seq / group;
+        if (outSeq == 0) return {};
+        std::vector<float> out(outSeq * textHidden_, 0.0f);
+        // 1) concat 4 tokens -> 5120
+        std::vector<float> merged(mergedDim_, 0.0f);
+        for (size_t t = 0; t < outSeq; ++t) {
+            // concat tokens [t*4 + i], i=0..3
+            for (size_t i = 0; i < group; ++i) {
+                const float* src = &visionSeq[(t*group + i) * visionHidden_];
+                float* dst = &merged[i * visionHidden_];
+                std::copy(src, src + visionHidden_, dst);
+            }
+            // 2) RMSNorm
+            rmsNormInPlace(merged, lnScale_, 1e-6f);
+            // 3) MLP: 5120->5120->GELU->3584
+            std::vector<float> h1 = matmulVec(merged, mlpW1_, mergedDim_, mergedDim_);
+            addBiasInPlace(h1, mlpB1_);
+            geluInPlace(h1);
+            std::vector<float> h2 = matmulVec(h1, mlpW2_, mergedDim_, textHidden_);
+            addBiasInPlace(h2, mlpB2_);
+            std::copy(h2.begin(), h2.end(), &out[t * textHidden_]);
+        }
+        return out;
+    }
+
+private:
+    size_t visionHidden_ = 0;
+    size_t textHidden_ = 0;
+    size_t mergedDim_ = 0; // 4 * visionHidden
+    // RMSNorm scale
+    std::vector<float> lnScale_;
+    // MLP 5120->5120->3584
+    std::vector<float> mlpW1_;
+    std::vector<float> mlpB1_;
+    std::vector<float> mlpW2_;
+    std::vector<float> mlpB2_;
+
+    static void rmsNormInPlace(std::vector<float>& x, const std::vector<float>& scale, float eps) {
+        const size_t n = x.size();
+        double msq = 0.0;
+        for (size_t i = 0; i < n; ++i) { msq += double(x[i]) * double(x[i]); }
+        msq /= double(n);
+        float inv = 1.0f / std::sqrt(float(msq) + eps);
+        for (size_t i = 0; i < n; ++i) { x[i] = x[i] * inv * (i < scale.size() ? scale[i] : 1.0f); }
+    }
+    static void addBiasInPlace(std::vector<float>& x, const std::vector<float>& b) {
+        const size_t n = std::min(x.size(), b.size());
+        for (size_t i = 0; i < n; ++i) x[i] += b[i];
+    }
+    static void geluInPlace(std::vector<float>& x) {
+        for (auto& v : x) {
+            float t = v;
+            v = 0.5f * t * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (t + 0.044715f * t * t * t)));
+        }
+    }
+    static std::vector<float> matmulVec(const std::vector<float>& a, const std::vector<float>& w,
+                                        size_t inDim, size_t outDim) {
+        std::vector<float> y(outDim, 0.0f);
+        if (w.size() != inDim * outDim) return y;
+        for (size_t o = 0; o < outDim; ++o) {
+            double acc = 0.0;
+            const float* wp = &w[o * inDim];
+            for (size_t i = 0; i < inDim; ++i) acc += double(a[i]) * double(wp[i]);
+            y[o] = float(acc);
+        }
+        return y;
     }
 };
 
@@ -239,3 +343,13 @@ std::unique_ptr<VisionModel> createQwenVisionModel(const std::string& configPath
 
 } // namespace model
 } // namespace duorou
+
+#else
+
+// Fallback for C compilation units: provide a harmless typedef so the file
+// remains syntactically valid without exposing any C++ constructs.
+typedef int duorou_qwen_vision_model_requires_cplusplus;
+
+#endif // defined(__cplusplus)
+
+#endif // DUOROU_MODEL_QWEN_VISION_MODEL_H

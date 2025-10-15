@@ -40,8 +40,6 @@ public:
   }
 
   bool load(const std::string &model_path) override {
-    std::cout << "[DEBUG] OllamaModelImpl::load called with path: "
-              << model_path << std::endl;
     duorou::core::Logger logger;
   logger.info("[OLLAMA] Loading model: " + model_path);
 
@@ -49,8 +47,6 @@ public:
     // First register the model by name (supports Ollama model names), then load it
     // Store the original model name, not the converted ID
     model_id_ = model_path;  // Keep original model name
-    std::cout << "[DEBUG] OllamaModelImpl: Using original model name as ID: " << model_id_
-              << " from path: " << model_path << std::endl;
 
     // Get global OllamaModelManager instance
     auto& global_manager = duorou::extensions::ollama::GlobalModelManager::getInstance();
@@ -64,7 +60,6 @@ public:
 
     // Use the same normalization logic as registerModelByName
     std::string normalized_id = global_manager.normalizeModelId(model_path);
-    std::cout << "[DEBUG] OllamaModelImpl: Normalized ID for loading: " << normalized_id << std::endl;
     
     bool success = global_manager.loadModel(normalized_id);
     if (!success) {
@@ -73,8 +68,6 @@ public:
       return false;
     }
 
-    std::cout << "[DEBUG] OllamaModelImpl: Setting loaded status to true"
-              << std::endl;
     loaded_ = true;
     memory_usage_ = 1024 * 1024 * 1024; // 1GB estimate
     model_info_.status = duorou::core::ModelStatus::LOADED;
@@ -88,12 +81,7 @@ public:
          });
      text_generator_ = std::make_unique<duorou::core::TextGenerator>(
          shared_manager, model_id_);
-    std::cout
-        << "[DEBUG] OllamaModelImpl: Created TextGenerator with Ollama backend"
-        << std::endl;
 
-    std::cout << "[DEBUG] OllamaModelImpl::load completed successfully"
-              << std::endl;
     return true;
   }
 
@@ -289,13 +277,8 @@ ModelManager::ModelManager()
       ,
       initialized_(false), auto_memory_management_(false) {
   // Initialize model downloader
-  std::cout << "[DEBUG] Creating ModelDownloader..." << std::endl;
   model_downloader_ = ModelDownloaderFactory::create();
-  if (model_downloader_) {
-    std::cout << "[DEBUG] ModelDownloader created successfully" << std::endl;
-  } else {
-    std::cout << "[DEBUG] Failed to create ModelDownloader!" << std::endl;
-  }
+  // ModelDownloader creation handled without verbose logging
 }
 
 ModelManager::~ModelManager() {
@@ -394,8 +377,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
                                        model_id) != local_models.end();
 
       if (is_ollama_model) {
-        std::cout << "[DEBUG] Dynamically registering Ollama model: "
-                  << model_id << std::endl;
+        // Dynamically registering Ollama model
         // Dynamically register Ollama model
         duorou::core::ModelManagerInfo ollama_model;
         ollama_model.id = model_id;
@@ -425,17 +407,15 @@ bool ModelManager::loadModel(const std::string &model_id) {
   }
 
   // Check memory limits
-  std::cout << "[DEBUG] Checking memory availability for model: " << model_id
-            << std::endl;
+  // Checking memory availability for model
   if (!hasEnoughMemory(model_id)) {
     std::cerr << "Not enough memory to load model: " << model_id << std::endl;
     return false;
   }
-  std::cout << "[DEBUG] Memory check passed for model: " << model_id
-            << std::endl;
+  // Memory check passed for model
 
   // Create model instance
-  std::cout << "[DEBUG] Creating model instance for: " << model_id << std::endl;
+  // Creating model instance
   auto model = createModel(it->second);
   if (!model) {
     std::cerr << "[ERROR] Failed to create model instance: " << model_id
@@ -446,7 +426,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
   }
 
   // Update status to loading
-  std::cout << "[DEBUG] Starting model load for: " << model_id << std::endl;
+  // Starting model load
   updateModelStatus(model_id, duorou::core::ModelStatus::LOADING);
 
   // Record start time
@@ -502,10 +482,7 @@ bool ModelManager::loadModel(const std::string &model_id) {
     std::cerr << std::endl;
 
     // Log detailed error information
-    std::cerr << "[DEBUG] Model details - Path: " << it->second.path
-              << ", Type: " << static_cast<int>(it->second.type)
-              << ", Memory limit: " << memory_limit_ / (1024 * 1024) << "MB"
-              << std::endl;
+    // Model details logged at error above; suppress extra debug info
   }
 
   return success;
@@ -579,28 +556,23 @@ ModelManagerInfo ModelManager::getModelInfo(const std::string &model_id) const {
 std::vector<ModelManagerInfo> ModelManager::getAllModels() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  std::cout << "[DEBUG] ModelManager::getAllModels() called" << std::endl;
 
   std::vector<ModelManagerInfo> models;
 
   // Add registered models
-  std::cout << "[DEBUG] Registered models count: " << registered_models_.size()
-            << std::endl;
+  
   for (const auto &pair : registered_models_) {
     models.push_back(pair.second);
   }
 
   // Add ollama models
   if (model_downloader_) {
-    std::cout << "[DEBUG] ModelDownloader exists, getting local models..."
-              << std::endl;
+    
     try {
       auto local_models = model_downloader_->getLocalModels();
-      std::cout << "[DEBUG] Found " << local_models.size()
-                << " local ollama models" << std::endl;
+      
       for (const auto &model_name : local_models) {
-        std::cout << "[DEBUG] Processing ollama model: " << model_name
-                  << std::endl;
+        
         ModelManagerInfo ollama_model;
         ollama_model.id = model_name;
         ollama_model.name = model_name;
@@ -610,15 +582,14 @@ std::vector<ModelManagerInfo> ModelManager::getAllModels() const {
         ollama_model.status = duorou::core::ModelStatus::NOT_LOADED;
         ollama_model.description = "Ollama model: " + model_name;
         models.push_back(ollama_model);
-        std::cout << "[DEBUG] Added ollama model: " << model_name << std::endl;
+        
       }
-      std::cout << "[DEBUG] Finished processing all ollama models" << std::endl;
+      
     } catch (const std::exception &e) {
-      std::cout << "[DEBUG] Exception in getLocalModels: " << e.what()
-                << std::endl;
+      
     }
   } else {
-    std::cout << "[DEBUG] ModelDownloader is null!" << std::endl;
+    
   }
 
   // If no models exist, return some default example models
@@ -702,13 +673,8 @@ size_t ModelManager::getMemoryLimit() const {
 }
 
 bool ModelManager::hasEnoughMemory(const std::string &model_id) const {
-  std::cout << "[DEBUG] hasEnoughMemory: Checking for model " << model_id
-            << std::endl;
   auto it = registered_models_.find(model_id);
   if (it == registered_models_.end()) {
-    std::cout
-        << "[DEBUG] hasEnoughMemory: Model not found in registered_models_"
-        << std::endl;
     return false;
   }
 
@@ -717,22 +683,17 @@ bool ModelManager::hasEnoughMemory(const std::string &model_id) const {
   if (it->second.type == ModelType::DIFFUSION_MODEL) {
     estimated_usage = 1024 * 1024 * 1024; // Diffusion model 1GB
   }
-  std::cout << "[DEBUG] hasEnoughMemory: Estimated usage = " << estimated_usage
-            << " bytes" << std::endl;
+  
 
   // Calculate current memory usage directly to avoid deadlock (don't call getTotalMemoryUsage)
-  std::cout
-      << "[DEBUG] hasEnoughMemory: Calculating current memory usage directly..."
-      << std::endl;
+  
   size_t current_usage = 0;
   for (const auto &pair : loaded_models_) {
     current_usage += pair.second->getMemoryUsage();
   }
-  std::cout << "[DEBUG] hasEnoughMemory: Current usage = " << current_usage
-            << " bytes, limit = " << memory_limit_ << " bytes" << std::endl;
+  
   bool result = (current_usage + estimated_usage) <= memory_limit_;
-  std::cout << "[DEBUG] hasEnoughMemory: Result = "
-            << (result ? "true" : "false") << std::endl;
+  
   return result;
 }
 
@@ -744,33 +705,19 @@ void ModelManager::setLoadCallback(
 
 TextGenerator *
 ModelManager::getTextGenerator(const std::string &model_id) const {
-  std::cout << "[DEBUG] ModelManager::getTextGenerator called for: " << model_id
-            << std::endl;
   std::lock_guard<std::mutex> lock(mutex_);
 
   auto it = loaded_models_.find(model_id);
   if (it == loaded_models_.end()) {
-    std::cout << "[DEBUG] Model not found in loaded_models_: " << model_id
-              << std::endl;
     return nullptr;
   }
 
-  std::cout << "[DEBUG] Model found in loaded_models_, attempting cast to "
-               "OllamaModelImpl"
-            << std::endl;
   // Try to cast to OllamaModelImpl first
   auto ollama_model = std::dynamic_pointer_cast<OllamaModelImpl>(it->second);
   if (ollama_model) {
-    std::cout << "[DEBUG] Successfully cast to OllamaModelImpl, calling "
-                 "getTextGenerator()"
-              << std::endl;
     auto text_generator = ollama_model->getTextGenerator();
-    std::cout << "[DEBUG] OllamaModelImpl::getTextGenerator returned: "
-              << (text_generator ? "valid pointer" : "nullptr") << std::endl;
     return text_generator;
   }
-
-  std::cout << "[DEBUG] Failed to cast to OllamaModelImpl" << std::endl;
   return nullptr;
 }
 
@@ -948,55 +895,45 @@ void ModelManager::setMaxModelCacheSize(size_t max_size) {
 
 std::shared_ptr<BaseModel>
 ModelManager::createModel(const ModelManagerInfo &model_info) {
-  std::cout << "[DEBUG] ModelManager::createModel called for: "
-            << model_info.name
-            << ", type: " << static_cast<int>(model_info.type) << std::endl;
+  
 
   if (model_info.type == ModelType::LANGUAGE_MODEL) {
     // Check if it's an Ollama model
-    std::cout << "[DEBUG] Checking if model is Ollama model..." << std::endl;
-    std::cout << "[DEBUG] model_downloader_ exists: "
-              << (model_downloader_ ? "true" : "false") << std::endl;
+    
 
     bool isOllama = false;
     if (model_downloader_) {
       isOllama = model_downloader_->isOllamaModel(model_info.name);
-      std::cout << "[DEBUG] isOllamaModel result: "
-                << (isOllama ? "true" : "false") << std::endl;
+      
     }
 
     // Also check if model name contains ollama characteristics
     bool hasOllamaPattern =
         model_info.name.find("registry.ollama.ai") != std::string::npos ||
         model_info.name.find("ollama") != std::string::npos;
-    std::cout << "[DEBUG] hasOllamaPattern: "
-              << (hasOllamaPattern ? "true" : "false") << std::endl;
+    
 
     if ((model_downloader_ && isOllama) || hasOllamaPattern) {
-      std::cout << "[DEBUG] Creating OllamaModelImpl for: " << model_info.name
-                << std::endl;
+      
       duorou::core::Logger logger;
     logger.info("Creating Ollama model for: " + model_info.name);
       auto model = std::make_shared<OllamaModelImpl>(model_info.name);
-      std::cout << "[DEBUG] OllamaModelImpl created successfully" << std::endl;
+      
       return model;
     } else {
       // return std::make_shared<LlamaModel>(model_info.path);  // Disabled -
       // llama.h not found
-      std::cout << "[DEBUG] Not an Ollama model, LlamaModel creation disabled"
-                << std::endl;
+      
       duorou::core::Logger logger;
     logger.warning("LlamaModel creation disabled - llama.h not found");
       return nullptr;
     }
   } else if (model_info.type == ModelType::DIFFUSION_MODEL) {
-    std::cout << "[DEBUG] Creating StableDiffusionModel for: "
-              << model_info.name << std::endl;
+    
     return std::make_shared<StableDiffusionModel>(model_info.path);
   }
 
-  std::cout << "[DEBUG] Unknown model type: "
-            << static_cast<int>(model_info.type) << std::endl;
+  
   duorou::core::Logger logger;
     logger.error("Unknown model type");
   return nullptr;

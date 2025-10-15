@@ -190,6 +190,13 @@ public:
                              const duorou::ml::Tensor &inputIds,
                              duorou::kvcache::Cache *cache = nullptr);
 
+  // 新增：支持外部视觉嵌入融合的前向（按位置覆盖token嵌入）
+  std::vector<float> forwardWithExternalEmbeddings(
+      duorou::ml::Context &ctx, const std::vector<int32_t> &inputIds,
+      const std::vector<float> &externalEmbeds, // [seq * hidden]
+      const std::vector<bool> &extMask,         // 覆盖位置标记，长度为seq
+      duorou::kvcache::Cache *cache = nullptr);
+
   // Helper exposure
   size_t getHiddenSize() const;
   std::vector<float> computeLogitsFromHidden(const std::vector<float> &hidden);

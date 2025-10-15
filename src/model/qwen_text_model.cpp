@@ -528,10 +528,10 @@ std::vector<float> TransformerLayer::forward(
   bool doLog = ((s_logCounter++) % s_logStride) == 0;
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedInput);
-    tlogger.info(
-        "[TransformerLayer] normedInput stats mn=" + std::to_string(mn) +
-        " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-        " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+    // tlogger.info(
+    //     "[TransformerLayer] normedInput stats mn=" + std::to_string(mn) +
+    //     " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //     " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
   }
 
   // 2) Self-attention (KV cache handled inside)
@@ -555,10 +555,10 @@ std::vector<float> TransformerLayer::forward(
   }
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(attnOut);
-    tlogger.info("[TransformerLayer] attnOut stats mn=" + std::to_string(mn) +
-                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-                 " std=" + std::to_string(stdv) +
-                 " nonfinite=" + std::to_string(nf));
+    // tlogger.info("[TransformerLayer] attnOut stats mn=" + std::to_string(mn) +
+    //              " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //              " std=" + std::to_string(stdv) +
+    //              " nonfinite=" + std::to_string(nf));
   }
 
   // 3) Residual connection
@@ -567,7 +567,7 @@ std::vector<float> TransformerLayer::forward(
   static const bool kUseResidualScale = true; // toggle for diagnostic
   const float residScale = kUseResidualScale ? (1.0f / std::sqrt(2.0f)) : 1.0f;
   if (kUseResidualScale && doLog) {
-    tlogger.info("[TransformerLayer] Applying residual scale 1/sqrt(2) to resid1");
+    // tlogger.info("[TransformerLayer] Applying residual scale 1/sqrt(2) to resid1");
   }
   for (size_t i = 0; i < resid1.size(); ++i) {
     float a = input[i];
@@ -579,10 +579,10 @@ std::vector<float> TransformerLayer::forward(
   }
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(resid1);
-    tlogger.info("[TransformerLayer] resid1 stats mn=" + std::to_string(mn) +
-                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-                 " std=" + std::to_string(stdv) +
-                 " nonfinite=" + std::to_string(nf));
+    // tlogger.info("[TransformerLayer] resid1 stats mn=" + std::to_string(mn) +
+    //              " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //              " std=" + std::to_string(stdv) +
+    //              " nonfinite=" + std::to_string(nf));
   }
 
   // 4) Post-attention RMSNorm
@@ -590,10 +590,10 @@ std::vector<float> TransformerLayer::forward(
       rmsNormVec(resid1, postAttentionNormWeights_, options_.eps);
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(normedResid1);
-    tlogger.info(
-        "[TransformerLayer] normedResid1 stats mn=" + std::to_string(mn) +
-        " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-        " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
+    // tlogger.info(
+    //     "[TransformerLayer] normedResid1 stats mn=" + std::to_string(mn) +
+    //     " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //     " std=" + std::to_string(stdv) + " nonfinite=" + std::to_string(nf));
   }
 
   // 5) Feed-forward
@@ -617,16 +617,16 @@ std::vector<float> TransformerLayer::forward(
   }
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(ffnOut);
-    tlogger.info("[TransformerLayer] ffnOut stats mn=" + std::to_string(mn) +
-                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-                 " std=" + std::to_string(stdv) +
-                 " nonfinite=" + std::to_string(nf));
+    // tlogger.info("[TransformerLayer] ffnOut stats mn=" + std::to_string(mn) +
+    //              " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //              " std=" + std::to_string(stdv) +
+    //              " nonfinite=" + std::to_string(nf));
   }
 
   // 6) Final residual
   std::vector<float> output(ffnOut.size());
   if (kUseResidualScale && doLog) {
-    tlogger.info("[TransformerLayer] Applying residual scale 1/sqrt(2) to final output");
+    // tlogger.info("[TransformerLayer] Applying residual scale 1/sqrt(2) to final output");
   }
   for (size_t i = 0; i < output.size(); ++i) {
     float a = resid1[i];
@@ -636,10 +636,10 @@ std::vector<float> TransformerLayer::forward(
   }
   if (doLog) {
     auto [mn, mx, mean, stdv, nf] = stats(output);
-    tlogger.info("[TransformerLayer] output stats mn=" + std::to_string(mn) +
-                 " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
-                 " std=" + std::to_string(stdv) +
-                 " nonfinite=" + std::to_string(nf));
+    // tlogger.info("[TransformerLayer] output stats mn=" + std::to_string(mn) +
+    //              " mx=" + std::to_string(mx) + " mean=" + std::to_string(mean) +
+    //              " std=" + std::to_string(stdv) +
+    //              " nonfinite=" + std::to_string(nf));
   }
   return output;
 }
@@ -1210,6 +1210,78 @@ QwenTextModel::forward(const std::vector<int32_t> &inputIds) {
   return computeLogitsFromHidden(hiddenStates);
 }
 
+// 新增：支持外部视觉嵌入融合的前向（按位置覆盖token嵌入）
+std::vector<float> QwenTextModel::forwardWithExternalEmbeddings(
+    duorou::ml::Context &ctx, const std::vector<int32_t> &inputIds,
+    const std::vector<float> &externalEmbeds, const std::vector<bool> &extMask,
+    duorou::kvcache::Cache *cache) {
+  // 基本形状校验
+  if (inputIds.empty())
+    return {};
+  const size_t hidden = options_.hiddenSize;
+  const size_t seqLen = inputIds.size();
+  if (hidden == 0)
+    return {};
+  if (!extMask.empty() && extMask.size() != seqLen) {
+    std::cerr << "[WARN] forwardWithExternalEmbeddings: extMask size mismatch, "
+                 "expected seqLen="
+              << seqLen << ", got " << extMask.size() << std::endl;
+  }
+  if (!externalEmbeds.empty() && externalEmbeds.size() % hidden != 0) {
+    std::cerr << "[WARN] forwardWithExternalEmbeddings: externalEmbeds size "
+                 "not divisible by hidden; ignoring external embeddings"
+              << std::endl;
+  }
+
+  // 嵌入与位置编码（若RoPE不在注意力中应用）
+  auto hiddenStates = embedTokens(inputIds);
+  if (!applyRopeInAttention_) {
+    hiddenStates = applyPositionalEncoding(hiddenStates, seqLen);
+  }
+
+  // 覆盖指定位置的token嵌入
+  if (!externalEmbeds.empty() && hiddenStates.size() == seqLen * hidden) {
+    size_t extRows = externalEmbeds.size() / hidden; // 外部嵌入的可用序列数
+    size_t copied = 0;
+    for (size_t t = 0; t < seqLen; ++t) {
+      bool use_ext = (!extMask.empty() ? extMask[t] : false);
+      if (!use_ext)
+        continue;
+      if (copied >= extRows)
+        break;
+      const float *src = &externalEmbeds[copied * hidden];
+      float *dst = &hiddenStates[t * hidden];
+      std::copy(src, src + hidden, dst);
+      ++copied;
+    }
+  }
+
+  // KV Cache批次初始化（若提供）
+  if (cache) {
+    MLKVBackendAdapter kvAdapter(ctx.getBackend());
+    duorou::kvcache::Context kvCtx(&kvAdapter);
+    duorou::kvcache::Batch batch;
+    batch.seqs = {0};
+    batch.seqLens = {static_cast<int>(seqLen)};
+    batch.positions = {static_cast<int>(seqLen > 0 ? seqLen - 1 : 0)};
+    batch.batchSize = 1;
+    try {
+      cache->startForward(kvCtx, batch, false);
+    } catch (...) {
+    }
+  }
+
+  // Transformer 层
+  std::vector<float> attentionMask; // placeholder
+  for (auto &layer : layers_) {
+    hiddenStates = layer->forward(ctx, hiddenStates, attentionMask, cache);
+  }
+
+  // 输出归一化与logits
+  hiddenStates = layerNorm(hiddenStates, outputNormWeights_, options_.eps);
+  return computeLogitsFromHidden(hiddenStates);
+}
+
 // Forward overload with Context/Tensor and KV Cache support (returns hidden
 // states as Tensor)
 duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
@@ -1226,20 +1298,20 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
 
   size_t n = static_cast<size_t>(inputIds.numel());
   if (n == 0) {
-    logger.debug(
-        "[QwenTextModel::forward] Empty input tensor, returning empty result");
+    // logger.debug(
+    //     "[QwenTextModel::forward] Empty input tensor, returning empty result");
     return duorou::ml::Tensor();
   }
 
-  logger.debug(
-      "[QwenTextModel::forward] Starting forward pass with input size: " +
-      std::to_string(n));
+  // logger.debug(
+  //     "[QwenTextModel::forward] Starting forward pass with input size: " +
+  //     std::to_string(n));
 
   if (inputIds.dtype() != duorou::ml::DataType::INT32) {
     std::cerr << "[WARN] QwenTextModel::forward expected INT32 inputIds; "
                  "proceeding with reinterpretation"
               << std::endl;
-    logger.warning("Input tensor dtype mismatch, expected INT32");
+    // logger.warning("Input tensor dtype mismatch, expected INT32");
   }
 
   std::vector<int32_t> ids(n, 0);
@@ -1256,27 +1328,27 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   if (n > 10)
     token_stream << ", ...";
   token_stream << "]";
-  logger.debug(token_stream.str());
+  // logger.debug(token_stream.str());
 
   // Embedding + positional encoding
   auto hiddenStates = embedTokens(ids);
-  logger.debug(
-      "[QwenTextModel::forward] After embedTokens: " +
-      formatVectorStats(computeVectorStats(hiddenStates), "embeddings"));
+  // logger.debug(
+  //     "[QwenTextModel::forward] After embedTokens: " +
+  //     formatVectorStats(computeVectorStats(hiddenStates), "embeddings"));
 
   if (!applyRopeInAttention_) {
     hiddenStates = applyPositionalEncoding(hiddenStates, ids.size());
-    logger.debug(
-        "[QwenTextModel::forward] After positional encoding: " +
-        formatVectorStats(computeVectorStats(hiddenStates), "pos_encoded"));
+    // logger.debug(
+    //     "[QwenTextModel::forward] After positional encoding: " +
+    //     formatVectorStats(computeVectorStats(hiddenStates), "pos_encoded"));
   } else {
-    logger.debug("[QwenTextModel::forward] Skipping positional encoding at "
-                 "embeddings stage (RoPE in attention)");
+    // logger.debug("[QwenTextModel::forward] Skipping positional encoding at "
+    //              "embeddings stage (RoPE in attention)");
   }
 
   // If KV Cache is provided, start forward with batch metadata
   if (cache) {
-    logger.debug("[QwenTextModel::forward] Using KV cache");
+    // logger.debug("[QwenTextModel::forward] Using KV cache");
     MLKVBackendAdapter kvAdapter(ctx.getBackend());
     duorou::kvcache::Context kvCtx(&kvAdapter);
     duorou::kvcache::Batch batch;
@@ -1287,16 +1359,16 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
     try {
       cache->startForward(kvCtx, batch, false);
     } catch (...) {
-      logger.warning("KV cache startForward failed");
+      // logger.warning("KV cache startForward failed");
     }
   } else {
-    logger.debug("[QwenTextModel::forward] No KV cache provided");
+    // logger.debug("[QwenTextModel::forward] No KV cache provided");
   }
 
   // Transformer layers with potential KV Cache usage
   std::vector<float> attentionMask; // placeholder
-  logger.debug("[QwenTextModel::forward] Processing " +
-               std::to_string(layers_.size()) + " transformer layers");
+  // logger.debug("[QwenTextModel::forward] Processing " +
+  //              std::to_string(layers_.size()) + " transformer layers");
 
   for (size_t li = 0; li < layers_.size(); ++li) {
     if (cache)
@@ -1309,14 +1381,14 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
     // Log every 4th layer or if there are issues
     if (li % 4 == 0 || li == layers_.size() - 1) {
       auto stats = computeVectorStats(hiddenStates);
-      logger.debug("[QwenTextModel::forward] After layer " +
-                   std::to_string(li) + ": " +
-                   formatVectorStats(stats, "layer_" + std::to_string(li)));
+      // logger.debug("[QwenTextModel::forward] After layer " +
+      //              std::to_string(li) + ": " +
+      //              formatVectorStats(stats, "layer_" + std::to_string(li)));
 
       // Check for potential issues
       if (stats.nan_count > 0 || stats.inf_count > 0) {
-        logger.warning("Layer " + std::to_string(li) +
-                       " produced NaN or Inf values!");
+        // logger.warning("Layer " + std::to_string(li) +
+        //                " produced NaN or Inf values!");
       }
     }
   }
@@ -1324,24 +1396,24 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
   // Output normalization
   auto pre_norm_hidden = hiddenStates;
   hiddenStates = layerNorm(hiddenStates, outputNormWeights_, options_.eps);
-  logger.debug(
-      "[QwenTextModel::forward] After output normalization: " +
-      formatVectorStats(computeVectorStats(hiddenStates), "normalized"));
+  // logger.debug(
+  //     "[QwenTextModel::forward] After output normalization: " +
+  //     formatVectorStats(computeVectorStats(hiddenStates), "normalized"));
 
   // Compute logits from last token hidden and return as Tensor [vocab_size]
   std::vector<float> logits = computeLogitsFromHidden(hiddenStates);
 
   // Detailed logits analysis
   auto logits_stats = computeVectorStats(logits);
-  logger.debug("[QwenTextModel::forward] Final logits: " +
-               formatVectorStats(logits_stats, "logits"));
+  // logger.debug("[QwenTextModel::forward] Final logits: " +
+  //              formatVectorStats(logits_stats, "logits"));
 
   // Check expected vocab size from tokenizer/vocabulary to avoid mismatch warnings
   size_t expected_vocab_size = getVocabSize();
   if (logits.size() != expected_vocab_size) {
-    logger.warning("Logits size mismatch! Expected(weights): " +
-                   std::to_string(expected_vocab_size) +
-                   ", Got: " + std::to_string(logits.size()));
+    // logger.warning("Logits size mismatch! Expected(weights): " +
+    //                std::to_string(expected_vocab_size) +
+    //                ", Got: " + std::to_string(logits.size()));
   }
 
   // Log top-k logits for analysis
@@ -1359,20 +1431,20 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
     std::ostringstream top_logits_stream;
     top_logits_stream << "[QwenTextModel::forward] Top-5 logits: ";
     for (size_t i = 0; i < std::min(size_t(5), indexed_logits.size()); ++i) {
-      if (i > 0)
-        top_logits_stream << ", ";
-      top_logits_stream << "(" << indexed_logits[i].second << ":" << std::fixed
-                        << std::setprecision(4) << indexed_logits[i].first
-                        << ")";
+      // if (i > 0)
+      //   top_logits_stream << ", ";
+      // top_logits_stream << "(" << indexed_logits[i].second << ":" << std::fixed
+      //                   << std::setprecision(4) << indexed_logits[i].first
+      //                   << ")";
     }
-    logger.debug(top_logits_stream.str());
+    // logger.debug(top_logits_stream.str());
   }
 
   // Check for reasonable logits range (should typically be in [-50, 50] range)
   if (logits_stats.min_val < -100.0f || logits_stats.max_val > 100.0f) {
-    logger.warning("Logits values seem extreme! Min: " +
-                   std::to_string(logits_stats.min_val) +
-                   ", Max: " + std::to_string(logits_stats.max_val));
+    // logger.warning("Logits values seem extreme! Min: " +
+    //                std::to_string(logits_stats.min_val) +
+    //                ", Max: " + std::to_string(logits_stats.max_val));
   }
 
   std::vector<int64_t> shape = {static_cast<int64_t>(logits.size())};
@@ -1383,7 +1455,7 @@ duorou::ml::Tensor QwenTextModel::forward(duorou::ml::Context &ctx,
     std::copy(logits.begin(), logits.end(), outData);
   }
 
-  logger.debug("[QwenTextModel::forward] Forward pass completed successfully");
+  // logger.debug("[QwenTextModel::forward] Forward pass completed successfully");
   return out;
 }
 
@@ -1587,15 +1659,15 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
 
   // hidden is [seq_len * hidden_size]
   size_t hidden_size = options_.hiddenSize;
-  logger.debug(
-      "[computeLogitsFromHidden] Hidden size: " + std::to_string(hidden_size) +
-      ", Input hidden vector size: " + std::to_string(hidden.size()));
+  // logger.debug(
+  //     "[computeLogitsFromHidden] Hidden size: " + std::to_string(hidden_size) +
+  //     ", Input hidden vector size: " + std::to_string(hidden.size()));
 
   if (hidden.size() < hidden_size) {
-    logger.warning("[computeLogitsFromHidden] Hidden vector too small! "
-                   "Expected at least: " +
-                   std::to_string(hidden_size) +
-                   ", Got: " + std::to_string(hidden.size()));
+    // logger.warning("[computeLogitsFromHidden] Hidden vector too small! "
+    //                "Expected at least: " +
+    //                std::to_string(hidden_size) +
+    //                ", Got: " + std::to_string(hidden.size()));
     return {};
   }
 
@@ -1628,21 +1700,21 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
     }
   }
   if (hidden_size != 0 && (outputWeights_.size() % hidden_size) != 0) {
-    logger.warning("[computeLogitsFromHidden] Output weights length is not a "
-                   "multiple of hidden size! hidden*?=" +
-                   std::to_string(hidden_size) +
-                   ", weights.size=" + std::to_string(outputWeights_.size()));
+    // logger.warning("[computeLogitsFromHidden] Output weights length is not a "
+    //                "multiple of hidden size! hidden*?=" +
+    //                std::to_string(hidden_size) +
+    //                ", weights.size=" + std::to_string(outputWeights_.size()));
   }
-  logger.debug(
-      "[computeLogitsFromHidden] Sequence length: " + std::to_string(seq_len) +
-      ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
-      ", Vocab size (weights): " + std::to_string(vocab_weights));
+  // logger.debug(
+  //     "[computeLogitsFromHidden] Sequence length: " + std::to_string(seq_len) +
+  //     ", Vocab size (tokenizer): " + std::to_string(vocab_tokenizer) +
+  //     ", Vocab size (weights): " + std::to_string(vocab_weights));
 
   // Return logits sized to tokenizer vocab to ensure downstream alignment
   std::vector<float> logits(vocab_tokenizer, 0.0f);
 
   if (vocab_weights == 0) {
-    logger.error("[computeLogitsFromHidden] No output weights available!");
+    // logger.error("[computeLogitsFromHidden] No output weights available!");
     return logits;
   }
 
@@ -1652,13 +1724,13 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
   // Log statistics of the last token hidden state
   std::vector<float> last_hidden(hptr, hptr + hidden_size);
   auto hidden_stats = computeVectorStats(last_hidden);
-  logger.debug("[computeLogitsFromHidden] Last token hidden state: " +
-               formatVectorStats(hidden_stats, "last_hidden"));
+  // logger.debug("[computeLogitsFromHidden] Last token hidden state: " +
+  //              formatVectorStats(hidden_stats, "last_hidden"));
 
   // Check output weights statistics
   auto weights_stats = computeVectorStats(outputWeights_);
-  logger.debug("[computeLogitsFromHidden] Output weights: " +
-               formatVectorStats(weights_stats, "output_weights"));
+  // logger.debug("[computeLogitsFromHidden] Output weights: " +
+  //              formatVectorStats(weights_stats, "output_weights"));
 
   // Compute logits for entries that exist in weights; pad the rest with 0
   // logits[v] = hidden dot outputWeights[v]
@@ -1686,11 +1758,11 @@ QwenTextModel::computeLogitsFromHidden(const std::vector<float> &hidden) {
       sample_stream << "vocab[" << v << "]=" << std::fixed
                     << std::setprecision(4) << logits[v] << " ";
     }
-    logger.debug(sample_stream.str());
+    // logger.debug(sample_stream.str());
   }
 
-  logger.debug("[computeLogitsFromHidden] Computed logits for " +
-               std::to_string(vocab_weights) + " tokens (weights vocab size)");
+  // logger.debug("[computeLogitsFromHidden] Computed logits for " +
+  //              std::to_string(vocab_weights) + " tokens (weights vocab size)");
   return logits;
 }
 

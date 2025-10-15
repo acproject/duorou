@@ -46,16 +46,11 @@ bool OllamaModelManager::registerModel(const std::string &model_id,
   model_info.model_id = model_id;
   model_info.file_path = gguf_file_path;
 
-  std::cout << "[DEBUG] OllamaModelManager: About to call parseModelInfo for: "
-            << gguf_file_path << std::endl;
+  // Parse model info without verbose std::cout logs
   if (!parseModelInfo(gguf_file_path, model_info)) {
-    std::cout << "[DEBUG] OllamaModelManager: parseModelInfo returned false"
-              << std::endl;
     log("ERROR", "Failed to parse model info for: " + gguf_file_path);
     return false;
   }
-  std::cout << "[DEBUG] OllamaModelManager: parseModelInfo succeeded"
-            << std::endl;
 
   // 注册模型
   registered_models_[model_id] = model_info;
@@ -67,14 +62,10 @@ bool OllamaModelManager::registerModel(const std::string &model_id,
 }
 
 bool OllamaModelManager::registerModelByName(const std::string &model_name) {
-  std::cout << "[DEBUG] OllamaModelManager::registerModelByName called with: "
-            << model_name << std::endl;
   log("INFO", "Registering model by name: " + model_name);
 
   // 使用 OllamaPathResolver 解析模型路径
   auto gguf_path = path_resolver_.resolveModelPath(model_name);
-  std::cout << "[DEBUG] OllamaModelManager: Resolved GGUF path result: "
-            << (gguf_path ? *gguf_path : "(null)") << std::endl;
   if (!gguf_path) {
     log("ERROR", "Failed to resolve model path for: " + model_name);
     return false;
@@ -83,14 +74,10 @@ bool OllamaModelManager::registerModelByName(const std::string &model_name) {
   // 生成有效的模型 ID（使用统一的转换函数）
   std::string model_id = normalizeModelId(model_name);
 
-  std::cout << "[DEBUG] OllamaModelManager: Generated model ID: " << model_id
-            << " for model: " << model_name << std::endl;
   log("DEBUG", "Generated model ID: " + model_id + " for model: " + model_name);
 
   // 调用原有的 registerModel 方法
   bool result = registerModel(model_id, *gguf_path);
-  std::cout << "[DEBUG] OllamaModelManager: registerModel returned: "
-            << (result ? "true" : "false") << std::endl;
   return result;
 }
 
@@ -291,7 +278,7 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
         static_cast<int>(generated_text.length() / 4); // 粗略估算
     response.inference_time_ms = static_cast<float>(duration.count());
 
-    std::cout << "[DEBUG] Text generation completed successfully" << std::endl;
+    // Text generation completed successfully
 
   } catch (const std::exception &e) {
     response.error_message = "Inference error: " + std::string(e.what());
@@ -341,6 +328,22 @@ std::vector<InferenceResponse> OllamaModelManager::generateTextBatch(
       responses.push_back(generateTextWithImages(request));
     }
   }
+
+  // Batch-level summary logging only
+  int success_count = 0;
+  int total_tokens = 0;
+  double total_time_ms = 0.0;
+  for (const auto &resp : responses) {
+    if (resp.success) success_count++;
+    total_tokens += resp.tokens_generated;
+    total_time_ms += resp.inference_time_ms;
+  }
+  std::ostringstream oss;
+  oss << "[BATCH] size=" << requests.size()
+      << " success=" << success_count
+      << " tokens=" << total_tokens
+      << " time_ms=" << static_cast<int>(total_time_ms);
+  log("INFO", oss.str());
 
   return responses;
 }

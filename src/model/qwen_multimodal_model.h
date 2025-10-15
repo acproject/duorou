@@ -1,5 +1,8 @@
 #pragma once
 
+// Ensure this header is only parsed by a C++ compiler
+#ifdef __cplusplus
+
 #include "base_model.h"
 #include "qwen_text_model.h"
 #include "qwen_vision_model.h"
@@ -258,3 +261,5 @@ namespace MultimodalUtils {
 
 } // namespace model
 } // namespace duorou
+
+#endif // __cplusplus

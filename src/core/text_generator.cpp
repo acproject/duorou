@@ -39,15 +39,11 @@ TextGenerator::~TextGenerator() {
 // Generate text
 GenerationResult TextGenerator::generate(const std::string &prompt,
                                          const GenerationParams &params) {
-  std::cout << "[DEBUG] TextGenerator::generate() called with prompt: "
-            << prompt.substr(0, 50) << "..." << std::endl;
 
   std::lock_guard<std::mutex> lock(mutex_);
   GenerationResult result;
 
   if (use_ollama_ && model_manager_) {
-    std::cout << "[DEBUG] Using Ollama model manager for inference"
-              << std::endl;
 
     try {
       // Create inference request
@@ -72,11 +68,9 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
         result.generation_time =
             std::chrono::duration<double>(end_time - start_time).count();
 
-        std::cout << "[DEBUG] Ollama inference successful: "
-                  << result.text.substr(0, 50) << "..." << std::endl;
+        // Inference successful; returning result
       } else {
-        std::cout << "[DEBUG] Ollama inference failed: "
-                  << response.error_message << std::endl;
+        // Inference failed; populate error result
         result.text = "Sorry, an error occurred during inference: " +
                       response.error_message;
         result.finished = true;
@@ -86,8 +80,7 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
         result.generation_time = 0.0;
       }
     } catch (const std::exception &e) {
-      std::cout << "[DEBUG] Exception during Ollama inference: " << e.what()
-                << std::endl;
+      // Exception during inference; populate error result
       result.text = "Sorry, an exception occurred during inference: " +
                     std::string(e.what());
       result.finished = true;
@@ -97,7 +90,7 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
       result.generation_time = 0.0;
     }
   } else {
-    std::cout << "[DEBUG] Using fallback mock implementation" << std::endl;
+    // Using fallback mock implementation
 
     // Simple mock response
     if (prompt.find("你好") != std::string::npos ||
@@ -118,8 +111,6 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
     result.generation_time = 0.5; // Simulated generation time
   }
 
-  std::cout << "[DEBUG] TextGenerator returning result: "
-            << result.text.substr(0, 30) << "..." << std::endl;
   return result;
 }
 
@@ -127,8 +118,6 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
 GenerationResult TextGenerator::generateStream(const std::string &prompt,
                                                StreamCallback callback,
                                                const GenerationParams &params) {
-  std::cout << "[DEBUG] TextGenerator::generateStream() called with prompt: "
-            << prompt.substr(0, 50) << "..." << std::endl;
 
   std::lock_guard<std::mutex> lock(mutex_);
   GenerationResult result;
@@ -144,8 +133,6 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
   }
 
   if (use_ollama_ && model_manager_) {
-    std::cout << "[DEBUG] Using Ollama model manager for streaming inference"
-              << std::endl;
 
     try {
       // Create streaming inference request
@@ -182,8 +169,7 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
         result.generation_time =
             std::chrono::duration<double>(end_time - start_time).count();
 
-        std::cout << "[DEBUG] Ollama streaming inference successful"
-                  << std::endl;
+        // Streaming inference successful
       } else {
         std::string error_msg =
             "Sorry, an error occurred during streaming inference: " +
@@ -211,8 +197,7 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
       result.generation_time = 0.0;
     }
   } else {
-    std::cout << "[DEBUG] Using fallback mock streaming implementation"
-              << std::endl;
+    // Using fallback mock streaming implementation
 
     // Simulate streaming generation
     std::string response_text;
@@ -247,7 +232,6 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
     result.generation_time = 0.5;
   }
 
-  std::cout << "[DEBUG] TextGenerator returning streaming result" << std::endl;
   return result;
 }
 
@@ -259,9 +243,6 @@ size_t TextGenerator::countTokens(const std::string &text) const {
 
 // Check if generation is possible
 bool TextGenerator::canGenerate() const {
-  std::cout << "[DEBUG] TextGenerator::canGenerate() called - returning true "
-               "(functionality enabled)"
-            << std::endl;
   // Enable text generation functionality
   return true;
 }

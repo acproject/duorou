@@ -34,12 +34,86 @@ std::vector<float> VisionAttention::forward(
         return input; // Return input unchanged if weights not loaded
     }
     
-    // Suppress unused parameter warning
-    (void)attentionMask;
-    
-    // TODO: Implement multi-head attention
-    // For now, return input unchanged
-    return input;
+    const size_t hidden = options_.hiddenSize;
+    if (input.empty() || hidden == 0 || (input.size() % hidden) != 0) return input;
+    const size_t seq = input.size() / hidden;
+    const size_t heads = options_.numHeads;
+    const size_t headDim = hidden / heads;
+    if (headDim == 0 || (hidden % heads) != 0) return input;
+
+    // 1) Linear projections Q, K, V (simple matmul, no bias for brevity)
+    auto matmul_seq = [&](const std::vector<float>& x, const std::vector<float>& W) {
+        std::vector<float> y(seq * hidden, 0.0f);
+        for (size_t t = 0; t < seq; ++t) {
+            const float* xi = &x[t * hidden];
+            float* yo = &y[t * hidden];
+            for (size_t o = 0; o < hidden; ++o) {
+                const float* wrow = &W[o * hidden];
+                double acc = 0.0;
+                for (size_t i = 0; i < hidden; ++i) acc += double(xi[i]) * double(wrow[i]);
+                yo[o] = float(acc);
+            }
+        }
+        return y;
+    };
+    std::vector<float> Q = matmul_seq(input, queryWeights_);
+    std::vector<float> K = matmul_seq(input, keyWeights_);
+    std::vector<float> V = matmul_seq(input, valueWeights_);
+
+    // 2) 应用视觉RoPE到Q/K（占位：未接入全局rotaryEmbedding缓存，此处略）
+    // TODO: 接入VisionRotaryEmbedding::apply并传递位置索引
+
+    // 3) 缩放点积注意力 per head
+    const float scale = 1.0f / std::sqrt(float(headDim));
+    std::vector<float> out(seq * hidden, 0.0f);
+    for (size_t h = 0; h < heads; ++h) {
+        // head slices
+        auto headSlice = [&](std::vector<float>& T) {
+            std::vector<float> r(seq * headDim);
+            for (size_t t = 0; t < seq; ++t) {
+                std::copy(&T[t * hidden + h * headDim], &T[t * hidden + (h+1) * headDim], &r[t * headDim]);
+            }
+            return r;
+        };
+        std::vector<float> Qh = headSlice(Q);
+        std::vector<float> Kh = headSlice(K);
+        std::vector<float> Vh = headSlice(V);
+        // attention weights: [seq, seq]
+        std::vector<float> att(seq * seq, 0.0f);
+        for (size_t t = 0; t < seq; ++t) {
+            for (size_t s = 0; s < seq; ++s) {
+                const float* qt = &Qh[t * headDim];
+                const float* ks = &Kh[s * headDim];
+                double dot = 0.0;
+                for (size_t i = 0; i < headDim; ++i) dot += double(qt[i]) * double(ks[i]);
+                att[t * seq + s] = float(dot) * scale;
+            }
+            // mask: 简化忽略; TODO: 使用attentionMask
+            // softmax over s
+            float maxv = -std::numeric_limits<float>::infinity();
+            for (size_t s = 0; s < seq; ++s) maxv = std::max(maxv, att[t * seq + s]);
+            double sum = 0.0;
+            for (size_t s = 0; s < seq; ++s) {
+                att[t * seq + s] = std::exp(att[t * seq + s] - maxv);
+                sum += att[t * seq + s];
+            }
+            for (size_t s = 0; s < seq; ++s) att[t * seq + s] = float(att[t * seq + s] / sum);
+        }
+        // output per head: [seq, headDim]
+        for (size_t t = 0; t < seq; ++t) {
+            float* dst = &out[t * hidden + h * headDim];
+            std::fill(dst, dst + headDim, 0.0f);
+            for (size_t s = 0; s < seq; ++s) {
+                const float a = att[t * seq + s];
+                const float* vs = &Vh[s * headDim];
+                for (size_t i = 0; i < headDim; ++i) dst[i] += a * vs[i];
+            }
+        }
+    }
+
+    // 4) 输出线性
+    auto outProj = matmul_seq(out, outputWeights_);
+    return outProj;
 }
 
 bool VisionAttention::loadWeights(const std::string& weightsPath, size_t layerIndex) {
@@ -65,9 +139,40 @@ std::vector<float> VisionMLP::forward(const std::vector<float>& input) {
         std::cerr << "Warning: VisionMLP weights not loaded" << std::endl;
         return input;
     }
-    
-    // TODO: Implement MLP forward pass
-    return input;
+    const size_t hidden = options_.hiddenSize;
+    if (hidden == 0 || input.empty() || (input.size() % hidden) != 0) return input;
+    const size_t seq = input.size() / hidden;
+    const size_t inter = hidden * 4; // 按图比例，常见为4倍
+    // 简化：权重存储为fc1Weights_[inter*hidden]行主、fc2Weights_[hidden*inter]行主
+    auto matmul_seq = [&](const std::vector<float>& x, const std::vector<float>& W, size_t outDim, size_t inDim) {
+        std::vector<float> y(seq * outDim, 0.0f);
+        for (size_t t = 0; t < seq; ++t) {
+            const float* xi = &x[t * inDim];
+            float* yo = &y[t * outDim];
+            for (size_t o = 0; o < outDim; ++o) {
+                const float* wrow = &W[o * inDim];
+                double acc = 0.0;
+                for (size_t i = 0; i < inDim; ++i) acc += double(xi[i]) * double(wrow[i]);
+                yo[o] = float(acc);
+            }
+        }
+        return y;
+    };
+    auto h1 = matmul_seq(input, fc1Weights_, inter, hidden);
+    // add bias + SiLU
+    for (size_t t = 0; t < seq; ++t) {
+        for (size_t i = 0; i < inter; ++i) {
+            float x = h1[t * inter + i] + (i < fc1Bias_.size() ? fc1Bias_[i] : 0.0f);
+            h1[t * inter + i] = 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
+        }
+    }
+    auto h2 = matmul_seq(h1, fc2Weights_, hidden, inter);
+    for (size_t t = 0; t < seq; ++t) {
+        for (size_t i = 0; i < hidden; ++i) {
+            h2[t * hidden + i] += (i < fc2Bias_.size() ? fc2Bias_[i] : 0.0f);
+        }
+    }
+    return h2;
 }
 
 std::vector<float> VisionMLP::gelu(const std::vector<float>& input) {
@@ -214,9 +319,23 @@ std::vector<float> VisionRotaryEmbedding::apply(
     const std::vector<size_t>& positions) {
     
     std::vector<float> output = input;
-    
-    // TODO: Implement rotary embedding application
-    
+    if (input.empty() || dim_ == 0) return output;
+    const size_t seq = input.size() / dim_;
+    if (seq == 0) return output;
+    // positions.size() 可小于等于seq
+    for (size_t t = 0; t < seq && t < positions.size(); ++t) {
+        size_t pos = positions[t];
+        const float* c = &cosCache_[pos * dim_];
+        const float* s = &sinCache_[pos * dim_];
+        for (size_t i = 0; i < dim_; i += 2) {
+            float x0 = output[t * dim_ + i];
+            float x1 = (i + 1 < dim_) ? output[t * dim_ + i + 1] : 0.0f;
+            float ro0 = x0 * c[i] - x1 * s[i];
+            float ro1 = x0 * s[i] + x1 * c[i];
+            output[t * dim_ + i] = ro0;
+            if (i + 1 < dim_) output[t * dim_ + i + 1] = ro1;
+        }
+    }
     return output;
 }
 
@@ -350,13 +469,34 @@ std::vector<float> QwenVisionModel::forward(
     // Final layer norm
     hidden = layerNorm(hidden, finalLayerNormWeights_, finalLayerNormBias_, options_.layerNormEps);
     
-    return hidden;
+    // Patch merger: 将2x2串联并映射到文本维度
+    VisionPatchMerger merger;
+    merger.configure(options_.hiddenSize, /*textHidden=*/3584);
+    auto merged = merger.forward(hidden);
+    return merged;
 }
 
 std::vector<float> QwenVisionModel::patchEmbedding(const std::vector<float>& pixelValues) {
-    // TODO: Implement patch embedding
-    // For now, return a placeholder
-    std::vector<float> embeddings(options_.hiddenSize * options_.numPatches(), 0.0f);
+    // 近似Conv3d(3->hidden, kernel=(2,14,14), stride=(2,14,14))：
+    // 这里采用每patch线性映射近似，忽略时间维度，按temporalPatchSize=2展开后取平均。
+    const size_t patchDim = options_.patchDim();
+    const size_t numPatches = options_.numPatches();
+    std::vector<float> embeddings(options_.hiddenSize * numPatches, 0.0f);
+    if (pixelValues.size() < patchDim * numPatches) return embeddings;
+    // 权重初始化占位：使用patchEmbeddingWeights_作为[hidden, patchDim]
+    if (patchEmbeddingWeights_.size() != options_.hiddenSize * patchDim) {
+        patchEmbeddingWeights_.assign(options_.hiddenSize * patchDim, 0.0f);
+    }
+    for (size_t p = 0; p < numPatches; ++p) {
+        const float* x = &pixelValues[p * patchDim];
+        float* y = &embeddings[p * options_.hiddenSize];
+        for (size_t o = 0; o < options_.hiddenSize; ++o) {
+            const float* w = &patchEmbeddingWeights_[o * patchDim];
+            double acc = 0.0;
+            for (size_t i = 0; i < patchDim; ++i) acc += double(x[i]) * double(w[i]);
+            y[o] = float(acc) + (o < patchEmbeddingBias_.size() ? patchEmbeddingBias_[o] : 0.0f);
+        }
+    }
     return embeddings;
 }
 
@@ -364,8 +504,17 @@ std::vector<float> QwenVisionModel::positionEmbedding(
     const std::vector<float>& embeddings,
     const Grid& grid) {
     
-    // TODO: Implement position embedding
-    return embeddings;
+    // 简单位置加性嵌入
+    std::vector<float> out = embeddings;
+    const size_t numPatches = options_.numPatches();
+    if (positionEmbeddingWeights_.size() == numPatches * options_.hiddenSize) {
+        for (size_t p = 0; p < numPatches; ++p) {
+            for (size_t i = 0; i < options_.hiddenSize; ++i) {
+                out[p * options_.hiddenSize + i] += positionEmbeddingWeights_[p * options_.hiddenSize + i];
+            }
+        }
+    }
+    return out;
 }
 
 std::pair<size_t, size_t> QwenVisionModel::getImageFeatureDims() const {

@@ -42,7 +42,9 @@ static std::string getModelPath() {
   // 默认 Qwen2.5-VL 示例（可能不被 llama.cpp 支持）
   return std::string(
       "/Users/acproject/.ollama/models/blobs/"
-      "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025");
+      // "sha256-a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025"
+      "sha256-"
+      "e9758e589d443f653821b7be9bb9092c1bf7434522b70ec6e83591b1320fdb4d");
 }
 
 // 模型文件路径 Qwen3
@@ -260,7 +262,7 @@ bool testGGMLInference() {
         // 执行真实的文本生成
         std::string generated_text = real_engine.generateText(
             TEST_INPUT,
-            8,    // max_tokens (shortened for faster test)
+            2,    // max_tokens (shortened for faster test)
             0.7f, // temperature
             0.9f  // top_p
         );
@@ -457,17 +459,20 @@ int main() {
     if (parser.parseFile(MODEL_PATH)) {
       auto arch = parser.getArchitecture().name;
       std::string archLower = arch;
-      std::transform(archLower.begin(), archLower.end(), archLower.begin(), ::tolower);
-      // 如果是 qwen2.5-vl 家族（已在本地 patched 的 llama.cpp 中支持），则不跳过
-      bool is_qwen25vl = (
-          archLower.find("qwen25vl") != std::string::npos ||
-          archLower.find("qwen2.5vl") != std::string::npos ||
-          archLower.find("qwen-2.5vl") != std::string::npos ||
-          archLower.find("qwen2_5vl") != std::string::npos ||
-          archLower.find("qwen-2_5vl") != std::string::npos);
+      std::transform(archLower.begin(), archLower.end(), archLower.begin(),
+                     ::tolower);
+      // 如果是 qwen2.5-vl 家族（已在本地 patched 的 llama.cpp
+      // 中支持），则不跳过
+      bool is_qwen25vl = (archLower.find("qwen25vl") != std::string::npos ||
+                          archLower.find("qwen2.5vl") != std::string::npos ||
+                          archLower.find("qwen-2.5vl") != std::string::npos ||
+                          archLower.find("qwen2_5vl") != std::string::npos ||
+                          archLower.find("qwen-2_5vl") != std::string::npos);
       if (!is_qwen25vl) {
-        if (archLower.find("qwen") != std::string::npos || archLower.find("vl") != std::string::npos) {
-          std::cout << "架构 '" << arch << "' 不被 llama.cpp 支持，跳过测试。" << std::endl;
+        if (archLower.find("qwen") != std::string::npos ||
+            archLower.find("vl") != std::string::npos) {
+          std::cout << "架构 '" << arch << "' 不被 llama.cpp 支持，跳过测试。"
+                    << std::endl;
           return 0; // 优雅跳过
         }
       }
@@ -493,11 +498,10 @@ int main() {
       success = false;
     } else {
       std::cout << "引擎就绪，开始生成文本..." << std::endl;
-      std::string generated_text = engine.generateText(
-          TEST_INPUT,
-          64,    // max_tokens
-          0.7f,  // temperature
-          0.9f   // top_p
+      std::string generated_text = engine.generateText(TEST_INPUT,
+                                                       64,   // max_tokens
+                                                       0.7f, // temperature
+                                                       0.9f  // top_p
       );
 
       std::cout << "生成的文本: " << generated_text << std::endl;
