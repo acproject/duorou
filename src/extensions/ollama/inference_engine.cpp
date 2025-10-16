@@ -376,8 +376,7 @@ std::string MLInferenceEngine::generateText(const std::string &prompt,
     if (use_llama_backend_) {
       return generateWithLlama(prompt, max_tokens, temperature, top_p);
     }
-    // 兜底：尝试 GGLM 简化路径
-    return generateWithGGLM(prompt, max_tokens, temperature, top_p);
+  
 
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] Exception in generateText: " << e.what() << std::endl;
