@@ -142,10 +142,6 @@ private:
 
   std::string generateWithGGLM(const std::string &prompt, uint32_t max_tokens,
                                float temperature, float top_p);
-  // 内部 Forward 模式的文本生成
-  std::string generateWithInternalForward(const std::string &prompt,
-                                          uint32_t max_tokens,
-                                          float temperature, float top_p);
   void cleanupResources();
 
   // 权重加载映射辅助方法
