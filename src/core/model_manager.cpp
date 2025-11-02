@@ -161,9 +161,7 @@ public:
     params.n_threads = std::thread::hardware_concurrency();
     params.wtype = SD_TYPE_F16; // Use FP16 for efficiency
     params.rng_type = STD_DEFAULT_RNG;
-    params.schedule = DEFAULT;
     params.vae_decode_only = false;
-    params.vae_tiling = false;
     params.free_params_immediately = false;
     params.keep_clip_on_cpu = false;
     params.keep_control_net_on_cpu = false;

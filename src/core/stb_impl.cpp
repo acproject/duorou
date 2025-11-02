@@ -6,6 +6,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
 
 #include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image.h"
 #include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_write.h"
+#include "../../third_party/stable-diffusion.cpp/thirdparty/stb_image_resize.h"
