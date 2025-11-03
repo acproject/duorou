@@ -67,8 +67,32 @@ bool OllamaModelManager::registerModelByName(const std::string &model_name) {
   // 使用 OllamaPathResolver 解析模型路径
   auto gguf_path = path_resolver_.resolveModelPath(model_name);
   if (!gguf_path) {
-    log("ERROR", "Failed to resolve model path for: " + model_name);
-    return false;
+    // 未能解析路径时，注册一个 Stub，以便列表与 CLI 可见
+    std::string model_id = normalizeModelId(model_name);
+    if (!isValidModelId(model_id)) {
+      log("ERROR", "Invalid model ID when resolving stub: " + model_id);
+      return false;
+    }
+
+    // 如果已注册则直接返回
+    if (registered_models_.find(model_id) != registered_models_.end()) {
+      log("WARNING", "Model already registered (stub): " + model_id);
+      return true;
+    }
+
+    ModelInfo stub_info;
+    stub_info.model_id = model_id;
+    stub_info.file_path = ""; // 未下载，无本地路径
+    stub_info.architecture = "unknown";
+    stub_info.context_length = 0;
+    stub_info.vocab_size = 0;
+    stub_info.has_vision = false;
+    stub_info.is_loaded = false;
+
+    registered_models_[model_id] = stub_info;
+    model_states_[model_id] = ModelLoadState::UNLOADED;
+    log("WARNING", "Registered stub model (not downloaded): " + model_id);
+    return true;
   }
 
   // 生成有效的模型 ID（使用统一的转换函数）
@@ -266,9 +290,9 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     }
 
     // // 执行文本生成
-    // std::string generated_text = inference_engine->generateText(
-    //     request.prompt, request.max_tokens, request.temperature,
-    //     request.top_p);
+    std::string generated_text = inference_engine->generateText(
+        request.prompt, request.max_tokens, request.temperature,
+        request.top_p);
 
     // 计算推理时间
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -277,9 +301,8 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
 
     // 设置响应
     response.success = true;
-    // response.generated_text = generated_text;
-    // response.tokens_generated =
-    //     static_cast<int>(generated_text.length() / 4); // 粗略估算
+    response.generated_text = generated_text;
+    response.tokens_generated = static_cast<unsigned int>(generated_text.length() / 4 + 1); // 简单估算
     response.inference_time_ms = static_cast<float>(duration.count());
 
     // Text generation completed successfully
@@ -531,7 +554,7 @@ OllamaModelManager::createInferenceEngine(const std::string &model_id) {
   }
 
   try {
-    auto engine = std::make_unique<MLInferenceEngine>(model_id);
+    auto engine = std::make_unique<MLInferenceEngine>(model_id, model_info->file_path);
     if (!engine->initialize()) {
       log("ERROR", "Failed to initialize inference engine for: " + model_id);
       return nullptr;

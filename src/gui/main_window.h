@@ -1,7 +1,22 @@
 #ifndef DUOROU_GUI_MAIN_WINDOW_H
 #define DUOROU_GUI_MAIN_WINDOW_H
 
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
+#else
+#define DUOROU_HAS_GTK 0
+// GTK 占位类型，便于在未安装 GTK 头文件的环境下编译通过
+typedef void* GtkWidget;
+typedef void* GtkWindow;
+typedef void* GtkDialog;
+typedef void* GtkGestureClick;
+typedef void* gpointer;
+typedef int gint;
+typedef double gdouble;
+typedef int gboolean;
+typedef unsigned int guint;
+#endif
 #include <memory>
 #include <string>
 #include <vector>

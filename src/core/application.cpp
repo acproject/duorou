@@ -30,11 +30,13 @@
 #define DUOROU_VERSION "1.0.0"
 #endif
 
-// Conditional compilation for GTK support
-#ifdef HAVE_GTK
+// Conditional compilation for GTK support with header presence check
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
 #else
-// Placeholder definitions for GTK types
+#define DUOROU_HAS_GTK 0
+// Placeholder definitions for GTK-related types/macros/functions
 typedef void *GApplication;
 #define G_APPLICATION(x) ((GApplication)(x))
 #define G_APPLICATION_FLAGS_NONE 0
@@ -50,6 +52,13 @@ typedef void *GApplication;
   do {                                                                         \
   } while (0)
 #define gtk_application_new(id, flags) nullptr
+// Missing hold/release helpers when GTK isn't available
+#define g_application_hold(app)                                                \
+  do {                                                                         \
+  } while (0)
+#define g_application_release(app)                                             \
+  do {                                                                         \
+  } while (0)
 #endif
 
 namespace duorou {
@@ -139,8 +148,91 @@ int Application::run() {
   }
 
   if (service_mode_) {
-    // Service mode: run service loop
+    // Service mode: optional one-shot CLI text generation, otherwise run service loop
     std::cout << "Service mode started. Press Ctrl+C to stop." << std::endl;
+
+    // Parse one-shot CLI generation params
+    std::string cli_prompt;
+    std::string cli_model;
+    unsigned int cli_max_tokens = 128;
+    float cli_temperature = 0.7f;
+    float cli_top_p = 0.9f;
+
+    auto getValue = [&](const std::string &arg, const std::string &prefix) -> std::optional<std::string> {
+      if (arg.rfind(prefix, 0) == 0) {
+        return arg.substr(prefix.size());
+      }
+      return std::nullopt;
+    };
+
+    for (size_t i = 0; i < args_.size(); ++i) {
+      const auto &arg = args_[i];
+      if (auto v = getValue(arg, "--prompt="); v) {
+        cli_prompt = *v;
+      } else if (arg == "--prompt" && i + 1 < args_.size()) {
+        cli_prompt = args_[++i];
+      } else if (auto v2 = getValue(arg, "--model="); v2) {
+        cli_model = *v2;
+      } else if (arg == "--model" && i + 1 < args_.size()) {
+        cli_model = args_[++i];
+      } else if (auto v3 = getValue(arg, "--max-tokens="); v3) {
+        try { cli_max_tokens = static_cast<unsigned int>(std::stoul(*v3)); } catch (...) {}
+      } else if (auto v4 = getValue(arg, "--temperature="); v4) {
+        try { cli_temperature = std::stof(*v4); } catch (...) {}
+      } else if (auto v5 = getValue(arg, "--top-p="); v5) {
+        try { cli_top_p = std::stof(*v5); } catch (...) {}
+      }
+    }
+
+    if (!cli_prompt.empty()) {
+      // Require model for deterministic behavior
+      if (cli_model.empty()) {
+        std::cerr << "Missing --model for CLI generation. Usage: --service --model <name> --prompt <text> [--max-tokens N --temperature T --top-p P]" << std::endl;
+        status_ = Status::Stopped;
+        return 2;
+      }
+
+      try {
+        auto &global_manager = extensions::ollama::GlobalModelManager::getInstance();
+        // Register by name (will stub if not downloaded)
+        bool registered = global_manager.registerModelByName(cli_model);
+        if (!registered) {
+          std::cerr << "Failed to register model: " << cli_model << std::endl;
+          status_ = Status::Stopped;
+          return 3;
+        }
+
+        std::string normalized_id = global_manager.normalizeModelId(cli_model);
+        bool loaded = global_manager.loadModel(normalized_id);
+        if (!loaded) {
+          std::cerr << "Failed to load model: " << normalized_id << std::endl;
+          status_ = Status::Stopped;
+          return 4;
+        }
+
+        extensions::ollama::InferenceRequest req;
+        req.model_id = normalized_id;
+        req.prompt = cli_prompt;
+        req.max_tokens = cli_max_tokens;
+        req.temperature = cli_temperature;
+        req.top_p = cli_top_p;
+
+        auto resp = global_manager.generateText(req);
+        if (resp.success) {
+          std::cout << resp.generated_text << std::endl;
+          status_ = Status::Stopped;
+          return 0;
+        } else {
+          std::cerr << "Generation error: " << resp.error_message << std::endl;
+          status_ = Status::Stopped;
+          return 5;
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "Exception during CLI generation: " << e.what() << std::endl;
+        status_ = Status::Stopped;
+        return 6;
+      }
+    }
 
     // Log startup information
     if (logger_) {
@@ -621,15 +713,18 @@ bool Application::startMiniMemoryServer() {
 }
 
 void Application::stopMiniMemoryServer() {
-  if (!minimemory_running_.load()) {
-    return;
-  }
+  // Always attempt to clean up thread even if not running
+  bool currently_running = minimemory_running_.load();
 
   if (logger_) {
-    logger_->info("Stopping MiniMemory server...");
+    if (currently_running) {
+      logger_->info("Stopping MiniMemory server...");
+    } else {
+      logger_->info("MiniMemory not running; cleaning up thread if needed...");
+    }
   }
 
-  // Set stop flag
+  // Set stop flag to signal thread exit
   minimemory_running_.store(false);
 
   // Avoid using system calls, directly set stop flag to let thread exit naturally
@@ -703,81 +798,83 @@ void Application::stopMiniMemoryServer() {
 #else
   // Unix/Linux platform: Use original fork/exec approach
   // First check if process exists
-  pid_t check_pid = fork();
-  if (check_pid == 0) {
-    // Child process: check if process exists
-    execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
-    _exit(1);
-  } else if (check_pid > 0) {
-    int status;
-    waitpid(check_pid, &status, 0);
-    
-    if (WEXITSTATUS(status) == 0) {
-      // Process exists, try sending SIGINT signal
-      if (logger_) {
-        logger_->info("Found MiniMemory process, sending SIGINT...");
-      }
+  if (currently_running) {
+    pid_t check_pid = fork();
+    if (check_pid == 0) {
+      // Child process: check if process exists
+      execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+      _exit(1);
+    } else if (check_pid > 0) {
+      int status;
+      waitpid(check_pid, &status, 0);
       
-      pid_t kill_pid = fork();
-      if (kill_pid == 0) {
-        execl("/usr/bin/pkill", "pkill", "-INT", "-f", "mini_cache_server", (char*)NULL);
-        _exit(1);
-      } else if (kill_pid > 0) {
-        waitpid(kill_pid, &status, 0);
+      if (WEXITSTATUS(status) == 0) {
+        // Process exists, try sending SIGINT signal
+        if (logger_) {
+          logger_->info("Found MiniMemory process, sending SIGINT...");
+        }
         
-        // Wait 2 seconds for graceful process exit
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        // Check again if process still exists
-        pid_t recheck_pid = fork();
-        if (recheck_pid == 0) {
-          execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+        pid_t kill_pid = fork();
+        if (kill_pid == 0) {
+          execl("/usr/bin/pkill", "pkill", "-INT", "-f", "mini_cache_server", (char*)NULL);
           _exit(1);
-        } else if (recheck_pid > 0) {
-          waitpid(recheck_pid, &status, 0);
+        } else if (kill_pid > 0) {
+          waitpid(kill_pid, &status, 0);
           
-          if (WEXITSTATUS(status) == 0) {
-            // Process still exists, use SIGKILL to force terminate
-            if (logger_) {
-              logger_->warning("MiniMemory process still running, sending SIGKILL...");
-            }
+          // Wait 2 seconds for graceful process exit
+          std::this_thread::sleep_for(std::chrono::seconds(2));
+          
+          // Check again if process still exists
+          pid_t recheck_pid = fork();
+          if (recheck_pid == 0) {
+            execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+            _exit(1);
+          } else if (recheck_pid > 0) {
+            waitpid(recheck_pid, &status, 0);
             
-            pid_t force_kill_pid = fork();
-            if (force_kill_pid == 0) {
-              execl("/usr/bin/pkill", "pkill", "-9", "-f", "mini_cache_server", (char*)NULL);
-              _exit(1);
-            } else if (force_kill_pid > 0) {
-              waitpid(force_kill_pid, &status, 0);
+            if (WEXITSTATUS(status) == 0) {
+              // Process still exists, use SIGKILL to force terminate
+              if (logger_) {
+                logger_->warning("MiniMemory process still running, sending SIGKILL...");
+              }
               
-              // Final confirmation
-              std::this_thread::sleep_for(std::chrono::milliseconds(500));
-              pid_t final_check_pid = fork();
-              if (final_check_pid == 0) {
-                execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+              pid_t force_kill_pid = fork();
+              if (force_kill_pid == 0) {
+                execl("/usr/bin/pkill", "pkill", "-9", "-f", "mini_cache_server", (char*)NULL);
                 _exit(1);
-              } else if (final_check_pid > 0) {
-                waitpid(final_check_pid, &status, 0);
-                if (WEXITSTATUS(status) == 0) {
-                  if (logger_) {
-                    logger_->error("Failed to terminate MiniMemory process");
-                  }
-                } else {
-                  if (logger_) {
-                    logger_->info("MiniMemory process terminated successfully");
+              } else if (force_kill_pid > 0) {
+                waitpid(force_kill_pid, &status, 0);
+                
+                // Final confirmation
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                pid_t final_check_pid = fork();
+                if (final_check_pid == 0) {
+                  execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+                  _exit(1);
+                } else if (final_check_pid > 0) {
+                  waitpid(final_check_pid, &status, 0);
+                  if (WEXITSTATUS(status) == 0) {
+                    if (logger_) {
+                      logger_->error("Failed to terminate MiniMemory process");
+                    }
+                  } else {
+                    if (logger_) {
+                      logger_->info("MiniMemory process terminated successfully");
+                    }
                   }
                 }
               }
-            }
-          } else {
-            if (logger_) {
-              logger_->info("MiniMemory process exited gracefully");
+            } else {
+              if (logger_) {
+                logger_->info("MiniMemory process exited gracefully");
+              }
             }
           }
         }
-      }
-    } else {
-      if (logger_) {
-        logger_->info("MiniMemory process not found");
+      } else {
+        if (logger_) {
+          logger_->info("MiniMemory process not found");
+        }
       }
     }
   }

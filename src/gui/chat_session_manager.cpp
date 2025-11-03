@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 namespace duorou {
 namespace gui {
@@ -118,11 +119,23 @@ bool ChatSessionManager::add_message_to_current_session(
 
   current->add_message(message, is_user);
 
-  // 保存更新的会话到存储
-  storage_adapter_->saveSession(*current);
-  storage_adapter_->saveToFile();
+  // 立即通知 UI（更新会话标题等）；持久化改为后台线程，避免阻塞主线程
+  notify_session_list_change();
 
-  notify_session_list_change(); // 可能会更新会话标题
+  // 将持久化移至后台线程，保护存储操作避免并发竞争
+  std::string sid = current->get_id();
+  std::thread([this, sid]() {
+    try {
+      std::lock_guard<std::mutex> lock(storage_mutex_);
+      ChatSession *session = get_session(sid);
+      if (!session) return;
+      storage_adapter_->saveSession(*session);
+      storage_adapter_->saveToFile();
+    } catch (const std::exception &e) {
+      std::cerr << "Async save session error: " << e.what() << std::endl;
+    }
+  }).detach();
+
   return true;
 }
 

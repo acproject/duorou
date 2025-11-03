@@ -5,10 +5,12 @@
 #include <string>
 #include <vector>
 
-#ifdef HAVE_GTK
+#if (defined(HAVE_GTK) && __has_include(<gtk/gtk.h>)) || __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
 #else
-// GTK类型的占位符定义
+#define DUOROU_HAS_GTK 0
+// GTK 类型占位符定义（无 GTK 开发头文件时避免诊断与编译错误）
 typedef void* GtkWidget;
 typedef void* GtkMenu;
 typedef void* GtkPopoverMenu;
@@ -16,11 +18,20 @@ typedef void* GdkPixbuf;
 typedef void* gpointer;
 typedef unsigned int guint;
 typedef int gboolean;
+typedef int gint;
+typedef double gdouble;
+#ifndef TRUE
 #define TRUE 1
+#endif
+#ifndef FALSE
 #define FALSE 0
+#endif
+#ifndef G_CALLBACK
 #define G_CALLBACK(f) ((void(*)(void))(f))
-#define g_signal_connect(instance, detailed_signal, c_handler, data) \
-    ((void)0)
+#endif
+#ifndef g_signal_connect
+#define g_signal_connect(instance, detailed_signal, c_handler, data) ((void)0)
+#endif
 #endif
 
 namespace duorou {

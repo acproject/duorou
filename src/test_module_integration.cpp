@@ -145,7 +145,8 @@ int main() {
     n_pos += batch.n_tokens;
 
     // 采样下一个 token
-    llama_token new_token_id = llama_sampler_sample(smpl, ctx, -1);
+    // 使用默认序列 ID 0；传入 -1 会触发断言
+    llama_token new_token_id = llama_sampler_sample(smpl, ctx, 0);
     if (llama_vocab_is_eog(vocab, new_token_id)) {
       break;
     }

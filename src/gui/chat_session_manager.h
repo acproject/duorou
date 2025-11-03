@@ -1,11 +1,14 @@
 #ifndef DUOROU_GUI_CHAT_SESSION_MANAGER_H
 #define DUOROU_GUI_CHAT_SESSION_MANAGER_H
 
+// 仅在 C++ 环境下暴露类与命名空间，避免在 C 解析模式下产生诊断错误
+#ifdef __cplusplus
 #include "chat_session.h"
 #include "session_storage_adapter.h"
 #include <functional>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 namespace duorou {
 namespace gui {
@@ -156,6 +159,7 @@ private:
   SessionChangeCallback session_change_callback_;          // 会话变更回调
   SessionListChangeCallback session_list_change_callback_; // 会话列表变更回调
   std::unique_ptr<SessionStorageAdapter> storage_adapter_; // 存储适配器
+  std::mutex storage_mutex_;                               // 存储操作互斥锁，避免并发阻塞/竞争
 
   /**
    * 查找会话索引
@@ -177,5 +181,7 @@ private:
 
 } // namespace gui
 } // namespace duorou
+
+#endif // __cplusplus
 
 #endif // DUOROU_GUI_CHAT_SESSION_MANAGER_H
