@@ -1,22 +1,93 @@
-* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=2, address=0x9c1c00000)
-    frame #0: 0x0000000192b1a3c0 libsystem_platform.dylib`_platform_memmove + 96
-libsystem_platform.dylib`_platform_memmove:
-->  0x192b1a3c0 <+96>:  ldnp   q0, q1, [x1]
-    0x192b1a3c4 <+100>: add    x1, x1, #0x20
-    0x192b1a3c8 <+104>: subs   x2, x2, #0x20
-    0x192b1a3cc <+108>: b.hi   0x192b1a3b8    ; <+88>
-Target 2: (module_integration_test) stopped.
-(lldb) bt
-* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=2, address=0x9c1c00000)
-  * frame #0: 0x0000000192b1a3c0 libsystem_platform.dylib`_platform_memmove + 96
-    frame #1: 0x000000010017ea48 module_integration_test`duorou::ml::nn::MultiHeadAttention::forward(this=0x00000009b5123a00, ctx=0x00000009b4c08100, query=0x000000016fdfbbf0, key=0x000000016fdfbb00, value=0x000000016fdfbac8, cache=0x00000009b4c18d80, mask=0x000000016fdfba90) at attention.cpp:140:17
-    frame #2: 0x0000000100051e74 module_integration_test`duorou::model::SelfAttention::forward(this=0x00000009b511d960, ctx=0x00000009b4c08100, input=size=65536, attentionMask=size=0, cache=0x00000009b4c18d80) at qwen_text_model.cpp:208:34
-    frame #3: 0x0000000100053434 module_integration_test`duorou::model::TransformerLayer::forward(this=0x00000009b5012440, ctx=0x00000009b4c08100, input=size=65536, attentionMask=size=0, cache=0x00000009b4c18d80) at qwen_text_model.cpp:348:24
-    frame #4: 0x0000000100057edc module_integration_test`duorou::model::QwenTextModel::forward(this=0x0000000101ab8200, ctx=0x00000009b4c08100, inputIds=0x000000016fdfcfc8, cache=0x00000009b4c18d80) at qwen_text_model.cpp:879:33
-    frame #5: 0x0000000100074184 module_integration_test`duorou::model::QwenMultimodalModel::forward(this=0x0000000101ab7700, ctx=0x00000009b4c08100, inputIds=0x000000016fdfcfc8, pixelValues=size=0, cache=0x00000009b4c18d80) at qwen_multimodal_model.cpp:351:37
-    frame #6: 0x00000001000ef4a0 module_integration_test`duorou::extensions::ollama::MLInferenceEngine::generateWithInternalForward(this=0x000000016fdfd210, prompt="你好，马上是中秋节了，帮我写一首诗，并翻译为英文。", max_tokens=256, temperature=0.699999988, top_p=0.899999976) at inference_engine.cpp:1311:36
-    frame #7: 0x00000001000ee094 module_integration_test`duorou::extensions::ollama::MLInferenceEngine::generateText(this=0x000000016fdfd210, prompt="你好，马上是中秋节了，帮我写一首诗，并翻译为英文。", max_tokens=256, temperature=0.699999988, top_p=0.899999976) at inference_engine.cpp:359:14
-    frame #8: 0x000000010000449c module_integration_test`testGGMLInference() at test_module_integration.cpp:244:58 [opt]
-    frame #9: 0x0000000100005f18 module_integration_test`main at test_module_integration.cpp:428:10 [opt]
-    frame #10: 0x0000000192751d54 dyld`start + 7184
-(lldb) quit
+Builder with MCP
+
+思考过程
+
+我先扫描仓库里多模态相关实现与结构体。
+
+在工作区搜索 'Find MLInferenceEngine class and any multimodal methods (e.g., generateTextWithImages, image embeddings path). Identify where llama_batch/ubatch are built and how images flow into text generation.'
+
+Thought
+
+我打开 ollama_model_manager.cpp 以确认请求与结构体定义。
+
+src/extensions/ollama/ollama_model_manager.cpp 1 - 250
+
+Thought
+
+我打开头文件以查看 InferenceRequest 和 ModelInfo 定义。
+
+src/extensions/ollama/ollama_model_manager.h 1 - 250
+
+Thought
+
+我打开 inference_engine.h 以确认当前文本路径和可扩展点。
+
+src/extensions/ollama/inference_engine.h 1 - 199
+
+Thought
+
+我查看 parseModelInfo，确认 has_vision 等字段来源。
+
+src/extensions/ollama/ollama_model_manager.cpp 512 - 585
+
+在工作区搜索 'Find API to get model embedding dimension (e.g., llama_model_n_embd or similar) to validate image feature size when constructing batch.embd.'
+
+在工作区搜索 'llama_.*n_embd'
+
+Thought
+
+在工作区搜索 'llama_kv_cache_clear'
+
+在工作区搜索 'llama_.*kv.*cache'
+
+Thought
+
+在工作区搜索 'kv_.*cache.*clear|kv_.*cache.*seq|llama_kv_cache_'
+
+我将把这条“多模态现状与集成计划”任务标记完成。
+
+1/1 已完成
+
+任务完成
+
+总结多模态支持现状与后续集成计划
+
+当前状态
+
+- InferenceEngine / MLInferenceEngine 已有稳定文本路径：加载 gguf ，初始化 llama_model / llama_context ，提示词经 llama_batch_get_one 进入 llama_decode 逐步采样生成。
+- OllamaModelManager::generateTextWithImages 目前仅做校验后返回 “未实现”。
+- InferenceRequest 已包含图像通道： image_features 为 std::vector<std::vector<float>> ，表示按“每个特征向量=一个嵌入 token”的输入。
+- 模型元信息通过 GGUFParser 解析： ModelInfo.has_vision 标记视觉能力，并用于管控选择文本或多模态路径。
+关键发现
+
+- llama_batch 支持两种输入模式： token （词 ID）或 embd （直接嵌入向量）。在 build_inp_embd 中，若提供 ubatch.embd 将直接作为 GGML_TYPE_F32 输入。
+- llama_model_n_embd(model) 可获取模型隐层维度（例如 Qwen2.5-VL 为 3584），用来校验每个 image_features[i].size() 。
+- 位置编码 pos 由 hparams.n_pos_per_embd() 控制维度：常规模型为 1，MROPE/IMROPE 为 4（Qwen3-VL 属于 iMROPE）。 llama_batch_allocr 可在缺省时自动生成 pos ，但对于图像补丁理想做法是显式构造多维 pos 。
+- 具有编码器的多模态模型：先调用 llama_encode(ctx_, batch) 处理视觉嵌入，再以 decoder_start_token 或 BOS 启动 llama_decode 走文本解码路径。
+集成方案
+
+- 在 MLInferenceEngine 中新增多模态方法： generateTextWithImages(prompt, image_features, max_tokens, temperature, top_p) 。
+  - 校验 isReady() 与 llama_model_n_embd(model_) 一致性。
+  - 构造仅包含 embd 的 llama_batch （长度为图像嵌入数），避免设置 token ；先 llama_encode 注入视觉上下文。
+  - 获取 decoder_start_token （ llama_model_decoder_start_token(model_) ，若为 LLAMA_TOKEN_NULL 使用 llama_vocab_bos ）。
+  - 将 prompt 正常分词，先用“提示词 batch”跑一次 llama_decode 以“预热上下文”，随后进入逐步采样循环（沿用现有文本生成路径的采样器链）。
+- 在 OllamaModelManager::generateTextWithImages 中：
+  - 使用现有模型加载/校验逻辑。
+  - 从 inference_engines_ 中取出引擎， dynamic_cast<MLInferenceEngine*> 并调用新增的 generateTextWithImages 。
+  - 统计耗时等元数据并返回 InferenceResponse 。
+位置编码处理
+
+- 第一阶段（快速可用）：不显式提供 pos ，由 llama_batch_allocr 自动生成，保证基本流程可跑。
+- 第二阶段（精确匹配视觉布局，Qwen3-VL 推荐）：为图像“补丁序列”构造 4D pos （如 [t, h, w, ds] ），与 VisionRotaryEmbedding / positionEmbedding 预期一致，提升对长图与多图的对齐效果。
+里程碑与步骤
+
+- 里程碑 1：实现基本多模态通路（视觉嵌入 + 文本解码）
+  - 引擎方法新增并接线到 OllamaModelManager::generateTextWithImages
+  - 校验 image_features 每向量长度与 llama_model_n_embd 一致
+  - llama_encode 注入视觉嵌入， llama_decode 处理提示词与采样
+- 里程碑 2：完善位置编码与多图支持
+  - 显式构造 IMROPE 4D pos ，按补丁网格映射
+  - 支持多图顺序与分隔策略（可用特殊图像分隔嵌入或 seq_id 分段）
+- 里程碑 3：鲁棒性与性能
+  - KV 管理与序列隔离（必要时使用不同 seq_id ）
+  - 大图与批量请求的内存与吞吐优化（ n_batch /后端选择）

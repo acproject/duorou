@@ -317,27 +317,116 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
 
 InferenceResponse
 OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
+  std::cout << "[DEBUG] OllamaModelManager::generateTextWithImages called with model: "
+            << request.model_id << std::endl;
   InferenceResponse response;
+  auto start_time = std::chrono::high_resolution_clock::now();
 
-  // 检查模型是否加载
-  if (!isModelLoaded(request.model_id)) {
-    response.error_message = "Model not loaded: " + request.model_id;
+  // 转换模型ID以匹配注册时的格式
+  std::string normalized_model_id = normalizeModelId(request.model_id);
+  std::cout << "[DEBUG] Normalized model ID: " << normalized_model_id
+            << std::endl;
+
+  // 打印当前注册的所有模型
+  std::cout << "[DEBUG] Currently registered models:" << std::endl;
+  auto registered_models = getRegisteredModels();
+  for (const auto &model : registered_models) {
+    std::cout << "[DEBUG]   - " << model << std::endl;
+  }
+
+  // 先检查模型是否已注册
+  if (registered_models_.find(normalized_model_id) ==
+      registered_models_.end()) {
+    std::cout << "[ERROR] Model not registered: " << normalized_model_id
+              << std::endl;
+    response.error_message = "Model not registered: " + normalized_model_id;
+    response.success = false;
     return response;
   }
 
-  // 检查模型是否支持视觉
-  const ModelInfo *model_info = getModelInfo(request.model_id);
-  if (!model_info || !model_info->has_vision) {
-    response.error_message =
-        "Model does not support vision: " + request.model_id;
+  // 检查模型加载状态并在 ERROR 场景下返回更明确错误
+  auto load_state = getModelLoadState(normalized_model_id);
+  std::cout << "[DEBUG] Model load state for " << normalized_model_id << ": "
+            << static_cast<int>(load_state) << std::endl;
+
+  if (load_state != ModelLoadState::LOADED) {
+    if (load_state == ModelLoadState::LOAD_ERROR) {
+      std::cout << "[ERROR] Model initialization failed previously: "
+                << normalized_model_id << std::endl;
+      response.error_message =
+          "Model initialization failed: " + normalized_model_id;
+    } else {
+      std::cout << "[DEBUG] Model not loaded: " << normalized_model_id
+                << std::endl;
+      response.error_message = "Model not loaded: " + normalized_model_id;
+    }
+    response.success = false;
     return response;
   }
 
-  // TODO: 重新实现多模态推理引擎集成
-  response.error_message = "Multimodal inference engine not implemented yet";
-  response.success = false;
-  response.tokens_generated = 0;
-  response.inference_time_ms = 0.0f;
+  try {
+    // 获取模型信息
+    const ModelInfo *model_info = getModelInfo(normalized_model_id);
+    if (!model_info) {
+      response.error_message = "Model info not found: " + normalized_model_id;
+      response.success = false;
+      return response;
+    }
+
+    if (!model_info->has_vision) {
+      response.error_message = "Model does not support vision: " +
+                               normalized_model_id;
+      response.success = false;
+      return response;
+    }
+
+    // 获取已加载的推理引擎
+    auto engine_it = inference_engines_.find(normalized_model_id);
+    if (engine_it == inference_engines_.end()) {
+      response.error_message =
+          "Inference engine not found for: " + normalized_model_id;
+      response.success = false;
+      return response;
+    }
+
+    InferenceEngine *inference_engine = engine_it->second.get();
+
+    if (!inference_engine || !inference_engine->isReady()) {
+      std::cout << "[ERROR] Inference engine not ready: "
+                << normalized_model_id << std::endl;
+      response.error_message =
+          "Inference engine not ready: " + normalized_model_id;
+      response.success = false;
+      return response;
+    }
+
+    if (request.image_features.empty()) {
+      response.error_message = "No image features provided";
+      response.success = false;
+      return response;
+    }
+
+    // 执行多模态文本生成
+    std::string generated_text = inference_engine->generateTextWithImages(
+        request.prompt, request.image_features, request.max_tokens,
+        request.temperature, request.top_p);
+
+    // 计算推理时间
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time - start_time);
+
+    // 设置响应
+    response.success = true;
+    response.generated_text = generated_text;
+    response.tokens_generated =
+        static_cast<unsigned int>(generated_text.length() / 4 + 1);
+    response.inference_time_ms = static_cast<float>(duration.count());
+
+  } catch (const std::exception &e) {
+    response.error_message = "Inference error: " + std::string(e.what());
+    response.success = false;
+  }
 
   return response;
 }
@@ -394,6 +483,20 @@ bool OllamaModelManager::validateModel(const std::string &gguf_file_path,
     if (!GGUFParser::isSupportedArchitecture(architecture.name)) {
       error_message = "Unsupported architecture: " + architecture.name;
       return false;
+    }
+
+    // 额外检查：qwen2vl/qwen3vl 必须包含 rope.dimension_sections
+    const std::string arch_name = architecture.name;
+    if (arch_name == "qwen2vl" || arch_name == "qwen3vl") {
+      const std::string dim_sections_key = arch_name + ".rope.dimension_sections";
+      if (parser.getMetadata(dim_sections_key) == nullptr) {
+        // 提供明确的诊断信息与修复建议
+        error_message =
+            "Missing required GGUF metadata key: '" + dim_sections_key +
+            "'. This model file is likely converted with an older script that did not emit RoPE dimension sections. "
+            "Please re-download or re-convert the model to GGUF with the latest tools so that '" + dim_sections_key + "' exists.";
+        return false;
+      }
     }
 
     return true;
@@ -461,6 +564,19 @@ bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
   model_states_[model_id] = ModelLoadState::LOADING;
 
   try {
+    // 在创建推理引擎之前先验证 GGUF 文件的关键元数据是否齐全
+    const std::string & gguf_path = model_it->second.file_path;
+    if (!gguf_path.empty()) {
+      std::string validate_error;
+      if (!validateModel(gguf_path, validate_error)) {
+        log("ERROR", "GGUF validation failed for '" + gguf_path + "': " + validate_error);
+        model_states_[model_id] = ModelLoadState::LOAD_ERROR;
+        return false;
+      }
+    } else {
+      log("WARNING", "Model has no GGUF path recorded (stub registration): " + model_id);
+    }
+
     // 创建推理引擎
     auto engine = createInferenceEngine(model_id);
     if (!engine) {
@@ -521,6 +637,9 @@ bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
       return false;
     }
 
+    // 触发验证以打印可用的元数据键（便于调试缺失键问题）
+    (void)parser.validateFile();
+
     log("DEBUG", "Getting architecture...");
     const auto &architecture = parser.getArchitecture();
     log("DEBUG", "Architecture name: " + architecture.name);
@@ -535,6 +654,16 @@ bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
 
     // 获取词汇表大小（简化实现）
     model_info.vocab_size = 151936; // Qwen2.5VL默认值
+
+    // 针对 qwen2vl/qwen3vl，额外记录并提示 rope.dimension_sections 键的存在情况
+    if (model_info.architecture == "qwen2vl" || model_info.architecture == "qwen3vl") {
+      const std::string dim_sections_key = model_info.architecture + ".rope.dimension_sections";
+      if (parser.getMetadata(dim_sections_key) == nullptr) {
+        log("WARNING", "GGUF missing key: '" + dim_sections_key + "'. Inference with llama.cpp will fail to load. Please re-download or re-convert this model.");
+      } else {
+        log("DEBUG", "GGUF contains required key: '" + dim_sections_key + "'");
+      }
+    }
 
     log("DEBUG", "Model info parsed successfully");
     return true;
@@ -551,6 +680,14 @@ OllamaModelManager::createInferenceEngine(const std::string &model_id) {
   if (!model_info) {
     log("ERROR", "Model info not found for: " + model_id);
     return nullptr;
+  }
+
+  // 如果模型包含视觉能力，允许创建文本推理引擎，并给出提示：
+  // 文本生成路径可用；多模态推理需走 generateTextWithImages 的实现。
+  if (model_info->has_vision) {
+    log("INFO",
+        "Model has vision capabilities; proceeding with text inference engine. "
+        "Use generateTextWithImages for multimodal when implemented.");
   }
 
   try {
