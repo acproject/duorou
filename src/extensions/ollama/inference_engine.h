@@ -115,7 +115,10 @@ public:
       if (decoder_start_token_id == LLAMA_TOKEN_NULL) {
         decoder_start_token_id = llama_vocab_bos(vocab);
       }
-      batch = llama_batch_get_one(&decoder_start_token_id, 1);
+      // 使用持久 token 缓冲避免悬空指针
+      std::vector<llama_token> token_buf(1);
+      token_buf[0] = decoder_start_token_id;
+      batch = llama_batch_get_one(token_buf.data(), 1);
     }
 
     // Initialize sampler chain per call so temperature/top_p can vary
@@ -150,8 +153,9 @@ public:
       }
       // position advance is implicit; not used for output here
 
-      // 使用默认序列 ID 0；传入 -1 会触发内部断言失败
-      llama_token new_token_id = llama_sampler_sample(sampler, ctx_, 0);
+      // 首次从提示词采样应使用最后一个被标记输出的位置（n_tokens-1）
+      // 后续单 token batch 的采样索引恒为 0
+      llama_token new_token_id = llama_sampler_sample(sampler, ctx_, batch.n_tokens - 1);
       if (llama_vocab_is_eog(vocab, new_token_id)) {
         break;
       }
@@ -164,8 +168,11 @@ public:
         output.append(buf, (size_t)n);
       }
 
-      // Next step batch uses the sampled token
-      batch = llama_batch_get_one(&new_token_id, 1);
+      // Next step batch uses the sampled token（持久缓冲）
+      // 复用或创建持久缓冲以避免传入局部地址
+      static thread_local std::vector<llama_token> next_token_buf(1);
+      next_token_buf[0] = new_token_id;
+      batch = llama_batch_get_one(next_token_buf.data(), 1);
       produced += 1;
     }
 

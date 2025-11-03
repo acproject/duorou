@@ -18,7 +18,7 @@
 using namespace duorou::extensions::ollama;
 
 // 测试输入文本
-const std::string TEST_INPUT = "你好，马上是中秋节了，帮我写一首诗。";
+const std::string TEST_INPUT = "你好，你有名字吗？";
 
 // 模型文件路径
 static std::string getModelPath() {
@@ -114,6 +114,9 @@ int main() {
   llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int)prompt_tokens.size());
 
   // 如果模型包含编码器，先进行 encode，然后从解码器开始符号继续
+  // 使用持久 token 缓冲，避免传入局部变量地址导致悬空指针
+  std::vector<llama_token> token_buf(1);
+
   if (llama_model_has_encoder(model)) {
     if (llama_encode(ctx, batch)) {
       std::cerr << "llama_encode failed" << std::endl;
@@ -127,7 +130,8 @@ int main() {
     if (decoder_start_token_id == LLAMA_TOKEN_NULL) {
       decoder_start_token_id = llama_vocab_bos(vocab);
     }
-    batch = llama_batch_get_one(&decoder_start_token_id, 1);
+    token_buf[0] = decoder_start_token_id;
+    batch = llama_batch_get_one(token_buf.data(), 1);
   }
 
   // 主生成循环
@@ -144,9 +148,9 @@ int main() {
 
     n_pos += batch.n_tokens;
 
-    // 采样下一个 token
-    // 使用默认序列 ID 0；传入 -1 会触发断言
-    llama_token new_token_id = llama_sampler_sample(smpl, ctx, 0);
+    // 采样下一个 token：取当前 batch 中被标记输出的最后一个位置
+    // 初次解码（提示词）仅为最后一个token计算logits，因此需要使用 n_tokens-1
+    llama_token new_token_id = llama_sampler_sample(smpl, ctx, batch.n_tokens - 1);
     if (llama_vocab_is_eog(vocab, new_token_id)) {
       break;
     }
@@ -154,8 +158,9 @@ int main() {
     print_piece(vocab, new_token_id);
     std::fflush(stdout);
 
-    // 为下一个循环构造 batch
-    batch = llama_batch_get_one(&new_token_id, 1);
+    // 为下一个循环构造 batch（使用持久缓冲）
+    token_buf[0] = new_token_id;
+    batch = llama_batch_get_one(token_buf.data(), 1);
     n_decode += 1;
   }
 
