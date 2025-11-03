@@ -31,11 +31,13 @@ target_include_directories(module_integration_test PRIVATE
     ${DUOROU_SRC_DIR}/kvcache
     ${DUOROU_SRC_DIR}/extensions/ollama
     ${DUOROU_SRC_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/llama.cpp/include
 )
 
 # 链接库
 target_link_libraries(module_integration_test
     duorou_model
+    llama
 )
 
 # 编译器标志

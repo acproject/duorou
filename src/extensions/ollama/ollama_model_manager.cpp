@@ -143,8 +143,8 @@ bool OllamaModelManager::isModelLoaded(const std::string &model_id) const {
   // model_id should already be normalized when passed to this method
   auto state_it = model_states_.find(model_id);
   auto engine_it = inference_engines_.find(model_id);
-  
-  return state_it != model_states_.end() && 
+
+  return state_it != model_states_.end() &&
          state_it->second == ModelLoadState::LOADED &&
          engine_it != inference_engines_.end();
 }
@@ -206,8 +206,10 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
   }
 
   // 先检查模型是否已注册
-  if (registered_models_.find(normalized_model_id) == registered_models_.end()) {
-    std::cout << "[ERROR] Model not registered: " << normalized_model_id << std::endl;
+  if (registered_models_.find(normalized_model_id) ==
+      registered_models_.end()) {
+    std::cout << "[ERROR] Model not registered: " << normalized_model_id
+              << std::endl;
     response.error_message = "Model not registered: " + normalized_model_id;
     response.success = false;
     return response;
@@ -225,7 +227,8 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
       response.error_message =
           "Model initialization failed: " + normalized_model_id;
     } else {
-      std::cout << "[DEBUG] Model not loaded: " << normalized_model_id << std::endl;
+      std::cout << "[DEBUG] Model not loaded: " << normalized_model_id
+                << std::endl;
       response.error_message = "Model not loaded: " + normalized_model_id;
     }
     response.success = false;
@@ -250,21 +253,22 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
       return response;
     }
 
-    InferenceEngine* inference_engine = engine_it->second.get();
+    InferenceEngine *inference_engine = engine_it->second.get();
 
     // 双重校验：引擎存在但未就绪（理论上不应发生，但为了更好错误提示）
     if (!inference_engine || !inference_engine->isReady()) {
-      std::cout << "[ERROR] Inference engine not ready: "
-                << normalized_model_id << std::endl;
+      std::cout << "[ERROR] Inference engine not ready: " << normalized_model_id
+                << std::endl;
       response.error_message =
           "Inference engine not ready: " + normalized_model_id;
       response.success = false;
       return response;
     }
 
-    // 执行文本生成
-    std::string generated_text = inference_engine->generateText(
-        request.prompt, request.max_tokens, request.temperature, request.top_p);
+    // // 执行文本生成
+    // std::string generated_text = inference_engine->generateText(
+    //     request.prompt, request.max_tokens, request.temperature,
+    //     request.top_p);
 
     // 计算推理时间
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -273,9 +277,9 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
 
     // 设置响应
     response.success = true;
-    response.generated_text = generated_text;
-    response.tokens_generated =
-        static_cast<int>(generated_text.length() / 4); // 粗略估算
+    // response.generated_text = generated_text;
+    // response.tokens_generated =
+    //     static_cast<int>(generated_text.length() / 4); // 粗略估算
     response.inference_time_ms = static_cast<float>(duration.count());
 
     // Text generation completed successfully
@@ -334,13 +338,13 @@ std::vector<InferenceResponse> OllamaModelManager::generateTextBatch(
   int total_tokens = 0;
   double total_time_ms = 0.0;
   for (const auto &resp : responses) {
-    if (resp.success) success_count++;
+    if (resp.success)
+      success_count++;
     total_tokens += resp.tokens_generated;
     total_time_ms += resp.inference_time_ms;
   }
   std::ostringstream oss;
-  oss << "[BATCH] size=" << requests.size()
-      << " success=" << success_count
+  oss << "[BATCH] size=" << requests.size() << " success=" << success_count
       << " tokens=" << total_tokens
       << " time_ms=" << static_cast<int>(total_time_ms);
   log("INFO", oss.str());
@@ -432,7 +436,7 @@ bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
 
   // 设置加载状态
   model_states_[model_id] = ModelLoadState::LOADING;
-  
+
   try {
     // 创建推理引擎
     auto engine = createInferenceEngine(model_id);
@@ -535,7 +539,8 @@ OllamaModelManager::createInferenceEngine(const std::string &model_id) {
 
     // 进一步校验引擎就绪状态
     if (!engine->isReady()) {
-      log("ERROR", "Inference engine not ready after initialization for: " + model_id);
+      log("ERROR",
+          "Inference engine not ready after initialization for: " + model_id);
       return nullptr;
     }
 
@@ -584,15 +589,20 @@ std::string
 OllamaModelManager::normalizeModelId(const std::string &model_name) const {
   // 修剪前后空白字符
   auto trim = [](const std::string &s) {
-    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
-    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base();
-    if (begin >= end) return std::string();
+    auto begin = std::find_if(
+        s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+                 return !std::isspace(ch);
+               }).base();
+    if (begin >= end)
+      return std::string();
     return std::string(begin, end);
   };
   std::string model_id = trim(model_name);
   // 仅替换不允许的字符，允许字符集: 字母数字、下划线、横杠、点、冒号、斜杠
   for (char &c : model_id) {
-    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' &&
+        c != '.' && c != ':' && c != '/') {
       c = '_';
     }
   }
@@ -606,7 +616,8 @@ bool OllamaModelManager::isValidModelId(const std::string &model_id) const {
 
   // 检查是否包含有效字符
   for (char c : model_id) {
-    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
+    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.' && c != ':' &&
+        c != '/') {
       return false;
     }
   }
