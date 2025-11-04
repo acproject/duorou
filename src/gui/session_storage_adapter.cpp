@@ -2,7 +2,14 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
-#include <nlohmann/json.hpp>
+#include <chrono>
+#if __has_include(<nlohmann/json.hpp>)
+#  include <nlohmann/json.hpp>
+#elif __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
+#  include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#else
+#  warning "nlohmann/json.hpp not found; JSON-dependent features may be disabled"
+#endif
 #include <sstream>
 #ifdef _WIN32
 #include <winsock2.h>
@@ -14,10 +21,13 @@ typedef int ssize_t;
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
+#if __has_include(<nlohmann/json.hpp>) || __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
 using json = nlohmann::json;
+#endif
 
 namespace duorou {
 namespace gui {
@@ -72,6 +82,19 @@ bool SessionStorageAdapter::connectToServer() {
     return false;
   }
 
+  // 设置收发超时，避免在服务器忙于持久化时阻塞
+#ifdef _WIN32
+  int timeout_ms = 500; // 500ms 超时
+  setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+  setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+#else
+  struct timeval tv;
+  tv.tv_sec = 0;
+  tv.tv_usec = 500000; // 500ms
+  setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+
   connected_ = true;
   std::cout << "Connected to MiniMemory server at " << server_host_ << ":"
             << server_port_ << std::endl;
@@ -93,8 +116,24 @@ bool SessionStorageAdapter::sendCommand(const std::string &command) {
     }
   }
 
-  ssize_t bytes_sent = send(socket_fd_, command.c_str(), command.length(), 0);
-  return bytes_sent == static_cast<ssize_t>(command.length());
+  // 保证完整发送，防止部分发送导致协议错误
+  const char *data = command.c_str();
+  size_t to_send = command.length();
+  size_t sent_total = 0;
+  while (sent_total < to_send) {
+#ifdef _WIN32
+    int n = send(socket_fd_, data + sent_total, static_cast<int>(to_send - sent_total), 0);
+#else
+    ssize_t n = send(socket_fd_, data + sent_total, to_send - sent_total, 0);
+#endif
+    if (n > 0) {
+      sent_total += static_cast<size_t>(n);
+      continue;
+    }
+    // 遇到超时或错误时停止，避免长时间阻塞
+    return false;
+  }
+  return true;
 }
 
 std::string SessionStorageAdapter::receiveResponse() {
@@ -103,7 +142,12 @@ std::string SessionStorageAdapter::receiveResponse() {
   }
 
   char buffer[4096];
+  // 有超时设置，recv 最多阻塞约 500ms
+#ifdef _WIN32
+  int bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0);
+#else
   ssize_t bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0);
+#endif
 
   if (bytes_received <= 0) {
     disconnectFromServer();
@@ -196,7 +240,7 @@ SessionStorageAdapter::loadSession(const std::string &session_id) {
 
     // Parse Redis response format
     if (response.empty() ||
-        response[0] == '$' && response.find("-1") != std::string::npos) {
+        (response[0] == '$' && response.find("-1") != std::string::npos)) {
       return nullptr; // Key does not exist
     }
 
@@ -269,7 +313,7 @@ std::vector<std::string> SessionStorageAdapter::getAllSessionIds() {
 
     // Parse Redis response
     if (response.empty() ||
-        response[0] == '$' && response.find("-1") != std::string::npos) {
+        (response[0] == '$' && response.find("-1") != std::string::npos)) {
       return {}; // Key does not exist, return empty list
     }
 
