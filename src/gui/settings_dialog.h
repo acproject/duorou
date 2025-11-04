@@ -1,7 +1,16 @@
 #ifndef DUOROU_GUI_SETTINGS_DIALOG_H
 #define DUOROU_GUI_SETTINGS_DIALOG_H
 
+#ifdef HAVE_GTK
 #include <gtk/gtk.h>
+#else
+// Minimal forward declarations to allow compilation without GTK
+struct _GtkWidget; using GtkWidget = _GtkWidget;
+struct _GtkDialog; using GtkDialog = _GtkDialog;
+struct _GtkNativeDialog; using GtkNativeDialog = _GtkNativeDialog;
+using gint = int;
+using gpointer = void*;
+#endif
 #include <string>
 
 namespace duorou {

@@ -1,5 +1,12 @@
 #include "modelfile_parser.h"
-#include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#if __has_include(<nlohmann/json.hpp>)
+#  include <nlohmann/json.hpp>
+#elif __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
+#  include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#else
+#  warning "nlohmann/json.hpp not found; ModelfileParser JSON features will be disabled"
+#  define DUOROU_NO_JSON 1
+#endif
 #include "logger.h"
 #include <algorithm>
 #include <filesystem>
@@ -52,6 +59,10 @@ bool ModelfileParser::parseFromManifest(const ModelManifest &manifest,
 
 bool ModelfileParser::parseFromJson(const std::string &json_str,
                                     ModelfileConfig &config) {
+#ifdef DUOROU_NO_JSON
+  (void)json_str; (void)config;
+  return false;
+#else
   try {
     nlohmann::json json_data = nlohmann::json::parse(json_str, nullptr, /*allow_exceptions=*/false);
     if (json_data.is_discarded()) {
@@ -106,6 +117,7 @@ bool ModelfileParser::parseFromJson(const std::string &json_str,
   } catch (const std::exception &e) {
     return false;
   }
+#endif
 }
 
 bool ModelfileParser::parseFromFile(const std::string &file_path,
@@ -205,6 +217,7 @@ bool ModelfileParser::parseParametersLayer(const std::string &layer_digest,
   }
 
   // Parse parameters (may be JSON format or key-value pair format)
+  #ifndef DUOROU_NO_JSON
   try {
     nlohmann::json params = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
     if (params.is_object()) {
@@ -216,6 +229,7 @@ bool ModelfileParser::parseParametersLayer(const std::string &layer_digest,
   } catch (const std::exception &) {
     // If not JSON, try to parse as key-value pairs
   }
+  #endif
 
   // Parse key-value pair format
   std::istringstream iss(content);
@@ -246,6 +260,7 @@ bool ModelfileParser::parseAdapterLayer(const std::string &layer_digest,
 
   // Parse adapter information (may be JSON format or Modelfile instruction
   // format)
+  #ifndef DUOROU_NO_JSON
   try {
     nlohmann::json adapter_json = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
     if (adapter_json.is_object()) {
@@ -266,6 +281,7 @@ bool ModelfileParser::parseAdapterLayer(const std::string &layer_digest,
   } catch (const std::exception &) {
     // If not JSON, try to parse as Modelfile instructions
   }
+  #endif
 
   // Parse Modelfile instruction format
   return parseModelfileInstructions(content, config);

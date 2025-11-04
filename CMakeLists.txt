@@ -107,14 +107,15 @@ if(DUOROU_BUILD_GUI)
             endif()
         endif()
     else()
-        # 非 Windows 平台使用 pkg-config
-        pkg_check_modules(GTK4 REQUIRED gtk4)
+        # 非 Windows 平台使用 pkg-config（非致命）
+        pkg_check_modules(GTK4 QUIET gtk4)
     endif()
     
     if(GTK4_FOUND)
         message(STATUS "Found GTK4: ${GTK4_VERSION}")
     else()
-        message(FATAL_ERROR "GTK4 not found. Please install GTK4 development packages or configure with -DDUOROU_BUILD_GUI=OFF to build non-GUI components.")
+        message(WARNING "GTK4 not found. Disabling GUI build. Set -DDUOROU_BUILD_GUI=OFF or install GTK4.")
+        set(DUOROU_BUILD_GUI OFF CACHE BOOL "Build GUI components and executable (requires GTK4)" FORCE)
     endif()
 else()
     message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GTK4 detection.")

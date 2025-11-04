@@ -111,9 +111,7 @@ static std::string getModelPath() {
   // 默认为当前硬编码的 Ollama 路径
   return std::string(
       "/Users/acproject/.ollama/models/blobs/"
-      "sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
-      // "sha256-9c60bdd691c1897bbfe5ddbc67336848e18c346b7ee2ab8541b135f208e5bb38"
-      // "sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f"
+      "sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f" /** qwen3:8b */
   );
 }
 

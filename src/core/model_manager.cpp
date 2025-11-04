@@ -891,6 +891,34 @@ void ModelManager::setMaxModelCacheSize(size_t max_size) {
   }
 }
 
+void ModelManager::setOllamaModelsPath(const std::string &path) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!model_downloader_) {
+    model_downloader_ = ModelDownloaderFactory::create();
+  }
+
+  try {
+    model_downloader_->setModelDirectory(path);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to set Ollama models path: " << e.what()
+              << std::endl;
+  }
+}
+
+void ModelManager::rescanModelDirectory(const std::string &directory) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  try {
+    if (std::filesystem::exists(directory)) {
+      scanModelDirectory(directory);
+    } else {
+      std::cerr << "Rescan skipped: directory not found: " << directory
+                << std::endl;
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "Error during rescan: " << e.what() << std::endl;
+  }
+}
+
 std::shared_ptr<BaseModel>
 ModelManager::createModel(const ModelManagerInfo &model_info) {
   

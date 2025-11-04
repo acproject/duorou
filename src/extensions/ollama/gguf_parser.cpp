@@ -15,8 +15,11 @@ static const uint32_t GGUF_VERSION = 3;
 
 // 支持的架构列表
 const std::vector<std::string> GGUFParser::SUPPORTED_ARCHITECTURES = {
+    // Qwen family (text + vision variants)
     "qwen25vl", "qwen2.5vl", "qwen-2.5vl", "qwen2vl",
-    "qwen2",    "llama",     "mistral"};
+    "qwen2",    "qwen3",     "qwen3vl",
+    // Common LLM families
+    "llama",     "mistral"};
 
 // GGUFKeyValue 数据提取函数实现
 std::string GGUFKeyValue::asString() const {

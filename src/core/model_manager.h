@@ -295,6 +295,18 @@ public:
      * @param max_size Maximum cache size (bytes)
      */
     void setMaxModelCacheSize(size_t max_size);
+
+    /**
+     * @brief 设置 Ollama 模型目录
+     * @param path 模型目录路径（可包含 ~）
+     */
+    void setOllamaModelsPath(const std::string& path);
+
+    /**
+     * @brief 重新扫描指定本地模型目录
+     * @param directory 目录路径
+     */
+    void rescanModelDirectory(const std::string& directory);
     
 private:
     /**

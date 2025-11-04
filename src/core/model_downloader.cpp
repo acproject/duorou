@@ -11,7 +11,14 @@ using namespace duorou::core;
 #include <regex>
 #include <algorithm>
 #include <curl/curl.h>
-#include <nlohmann/json.hpp>
+#if __has_include(<nlohmann/json.hpp>)
+#  include <nlohmann/json.hpp>
+#elif __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
+#  include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#else
+#  warning "nlohmann/json.hpp not found; JSON-dependent features will be disabled"
+#  define DUOROU_NO_JSON 1
+#endif
 #include <openssl/sha.h>
 
 // Ensure filesystem is available
@@ -27,7 +34,9 @@ namespace fs = std::experimental::filesystem;
 
 namespace duorou {
 
+#ifndef DUOROU_NO_JSON
 using json = nlohmann::json;
+#endif
 
 /**
  * @brief HTTP response data structure
@@ -250,6 +259,9 @@ public:
      * @brief Fetch model manifest
      */
     core::ModelManifest fetchModelManifest(const core::ModelPath& model_path) {
+#ifdef DUOROU_NO_JSON
+        throw std::runtime_error("nlohmann/json is not available; cannot parse manifest.");
+#else
         std::string url = base_url_ + "/v2/" + model_path.repository + "/manifests/" + model_path.tag;
         
         HttpResponse response = httpGet(url);
@@ -288,6 +300,7 @@ public:
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string("Failed to parse manifest JSON: ") + e.what());
         }
+#endif
     }
     
     /**
@@ -588,6 +601,29 @@ size_t ModelDownloader::getCacheSize() {
 
 void ModelDownloader::setMaxCacheSize(size_t max_size) {
     pImpl_->max_cache_size_ = max_size;
+}
+
+void ModelDownloader::setModelDirectory(const std::string& model_dir) {
+    // 展开 ~ 并更新内部路径
+    std::string expanded = pImpl_->expandPath(model_dir);
+    pImpl_->model_dir_ = expanded;
+
+    // 确保目录存在
+    try {
+        fs::create_directories(expanded);
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating model directory: " << e.what() << std::endl;
+    }
+
+    // 更新并重新初始化路径管理器
+    if (!pImpl_->path_manager_) {
+        pImpl_->path_manager_ = std::make_unique<ModelPathManager>(expanded);
+    } else {
+        pImpl_->path_manager_->setBasePath(expanded);
+    }
+
+    // 重新初始化以确保新的目录结构可用
+    pImpl_->path_manager_->initialize();
 }
 
 // ModelDownloaderFactory实现

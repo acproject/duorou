@@ -5,10 +5,14 @@
 #include "../core/model_manager.h"
 
 #include <iostream>
+#ifdef HAVE_GTK
 #include <gtk/gtk.h>
+#endif
 
 namespace duorou {
 namespace gui {
+
+#ifdef HAVE_GTK
 
 SettingsDialog::SettingsDialog()
     : dialog_(nullptr)
@@ -506,6 +510,18 @@ void SettingsDialog::load_settings() {
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_lora_entry_)), sd_lora_path.c_str(), sd_lora_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(model_path_entry_)), model_path.c_str(), model_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(ollama_path_entry_)), ollama_path.c_str(), ollama_path.length());
+
+    // 应用路径到 ModelManager 并刷新模型列表
+    auto model_manager = application_->getModelManager();
+    if (model_manager) {
+        if (!ollama_path.empty()) {
+            model_manager->setOllamaModelsPath(ollama_path);
+        }
+        if (!model_path.empty()) {
+            model_manager->rescanModelDirectory(model_path);
+        }
+        refresh_model_list();
+    }
     
     // If there's a saved model selection, try to set it in the dropdown
     if (!llama_selected.empty() && llama_model_combo_) {
@@ -607,9 +623,21 @@ void SettingsDialog::save_settings() {
     } else {
         std::cout << "Error: Failed to save settings" << std::endl;
     }
-    
+
     if (selected_model) {
         g_free(selected_model);
+    }
+
+    // 保存后立即应用路径到 ModelManager 并刷新列表
+    auto model_manager = application_->getModelManager();
+    if (model_manager) {
+        if (ollama_path && strlen(ollama_path) > 0) {
+            model_manager->setOllamaModelsPath(ollama_path);
+        }
+        if (model_path && strlen(model_path) > 0) {
+            model_manager->rescanModelDirectory(model_path);
+        }
+        refresh_model_list();
     }
 }
 
@@ -677,15 +705,28 @@ void SettingsDialog::refresh_model_list() {
     // Get real available model list from ModelManager
     auto model_manager = application_->getModelManager();
     if (model_manager) {
-        std::vector<std::string> local_models = model_manager->getLocalModels();
+        std::vector<duorou::core::ModelManagerInfo> models = model_manager->getAllModels();
         
-        if (local_models.empty()) {
+        // 筛选语言模型
+        std::vector<std::string> language_model_names;
+        for (const auto &info : models) {
+            if (info.type == duorou::core::ModelType::LANGUAGE_MODEL) {
+                // 优先展示 name，其次 id
+                if (!info.name.empty()) {
+                    language_model_names.push_back(info.name);
+                } else if (!info.id.empty()) {
+                    language_model_names.push_back(info.id);
+                }
+            }
+        }
+
+        if (language_model_names.empty()) {
             // If no local models, add hint information
             gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), "No models found");
         } else {
             // Add all local models
-            for (const auto& model : local_models) {
-                gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), model.c_str());
+            for (const auto& name : language_model_names) {
+                gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), name.c_str());
             }
         }
     } else {
@@ -836,6 +877,14 @@ void SettingsDialog::on_model_path_dialog_response(GtkNativeDialog* dialog, gint
             char* filename = g_file_get_path(file);
             if (filename) {
                 gtk_editable_set_text(GTK_EDITABLE(settings->model_path_entry_), filename);
+                // 立即触发重新扫描并刷新列表
+                if (settings->application_) {
+                    auto mm = settings->application_->getModelManager();
+                    if (mm) {
+                        mm->rescanModelDirectory(filename);
+                        settings->refresh_model_list();
+                    }
+                }
                 g_free(filename);
             }
             g_object_unref(file);
@@ -868,6 +917,14 @@ void SettingsDialog::on_ollama_path_dialog_response(GtkNativeDialog* dialog, gin
             char* filename = g_file_get_path(file);
             if (filename) {
                 gtk_editable_set_text(GTK_EDITABLE(settings->ollama_path_entry_), filename);
+                // 立即应用 Ollama 路径并刷新列表
+                if (settings->application_) {
+                    auto mm = settings->application_->getModelManager();
+                    if (mm) {
+                        mm->setOllamaModelsPath(filename);
+                        settings->refresh_model_list();
+                    }
+                }
                 g_free(filename);
             }
             g_object_unref(file);
@@ -909,6 +966,88 @@ void SettingsDialog::on_dialog_response(GtkDialog* dialog, gint response_id, gpo
             break;
     }
 }
+
+#else // HAVE_GTK
+
+SettingsDialog::SettingsDialog()
+    : dialog_(nullptr)
+    , notebook_(nullptr)
+    , general_page_(nullptr)
+    , theme_combo_(nullptr)
+    , language_combo_(nullptr)
+    , startup_check_(nullptr)
+    , model_page_(nullptr)
+    , llama_model_combo_(nullptr)
+    , sd_model_entry_(nullptr)
+    , sd_vae_entry_(nullptr)
+    , sd_controlnet_entry_(nullptr)
+    , sd_lora_entry_(nullptr)
+    , model_path_entry_(nullptr)
+    , ollama_path_entry_(nullptr)
+    , performance_page_(nullptr)
+    , threads_spin_(nullptr)
+    , gpu_check_(nullptr)
+    , memory_spin_(nullptr)
+    , application_(nullptr)
+{
+}
+
+SettingsDialog::SettingsDialog(core::Application* app)
+    : dialog_(nullptr)
+    , notebook_(nullptr)
+    , general_page_(nullptr)
+    , theme_combo_(nullptr)
+    , language_combo_(nullptr)
+    , startup_check_(nullptr)
+    , model_page_(nullptr)
+    , llama_model_combo_(nullptr)
+    , sd_model_entry_(nullptr)
+    , sd_vae_entry_(nullptr)
+    , sd_controlnet_entry_(nullptr)
+    , sd_lora_entry_(nullptr)
+    , model_path_entry_(nullptr)
+    , ollama_path_entry_(nullptr)
+    , performance_page_(nullptr)
+    , threads_spin_(nullptr)
+    , gpu_check_(nullptr)
+    , memory_spin_(nullptr)
+    , application_(app)
+{
+}
+
+SettingsDialog::~SettingsDialog() {}
+
+bool SettingsDialog::initialize() { return false; }
+void SettingsDialog::show(GtkWidget* /*parent*/) {}
+void SettingsDialog::hide() {}
+void SettingsDialog::create_general_page() {}
+void SettingsDialog::create_model_page() {}
+void SettingsDialog::create_performance_page() {}
+void SettingsDialog::connect_signals() {}
+void SettingsDialog::load_settings() {}
+void SettingsDialog::save_settings() {}
+void SettingsDialog::reset_to_defaults() {}
+void SettingsDialog::on_ok_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_cancel_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_apply_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_reset_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::set_application(core::Application* app) { application_ = app; }
+void SettingsDialog::refresh_model_list() {}
+void SettingsDialog::on_sd_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_vae_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_vae_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_controlnet_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_controlnet_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_lora_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_lora_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_model_path_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_model_path_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_ollama_path_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_ollama_path_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_dialog_response(GtkDialog* /*dialog*/, gint /*response_id*/, gpointer /*user_data*/) {}
+
+#endif // HAVE_GTK
 
 } // namespace gui
 } // namespace duorou
