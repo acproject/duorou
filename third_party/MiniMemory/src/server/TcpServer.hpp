@@ -63,12 +63,13 @@ public:
         char recvBuffer[4096];
         bool pendingRead;
 #endif
+        bool authenticated = false;
     };
 
     // 修改为 std::function 类型，以支持 lambda 表达式
     std::function<std::string(const std::vector<std::string>&)> command_handler;
 
-    TcpServer(const std::string& configFile = "conf/mcs.conf");
+    explicit TcpServer(const std::string& configFile = "conf/mcs.conf");
     ~TcpServer();
 
     void start();

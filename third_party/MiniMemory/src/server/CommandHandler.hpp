@@ -36,6 +36,7 @@ public:
         command_map["KEYS"] = keys_command;
         command_map["FLUSHDB"] = flushdb_command;
         command_map["FLUSHALL"] = flushall_command;
+        command_map["BGREWRITEAOF"] = bgrewriteaof_command;
     }
 
     // 将 handle_command 移到 public 部分
@@ -79,4 +80,5 @@ private:
     static std::string keys_command(DataStore& store, const std::vector<std::string>& args);
     static std::string flushdb_command(DataStore& store, const std::vector<std::string>& args);
     static std::string flushall_command(DataStore& store, const std::vector<std::string>& args);
+    static std::string bgrewriteaof_command(DataStore& store, const std::vector<std::string>& args);
 };

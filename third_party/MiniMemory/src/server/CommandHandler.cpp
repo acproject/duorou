@@ -1,5 +1,7 @@
 #include "CommandHandler.hpp"
 #include <string>
+#include <cstdio>
+#include "Aof.hpp"
 
 // 基础命令
 std::string CommandHandler::set_command(DataStore& store, const std::vector<std::string>& args) {
@@ -82,6 +84,30 @@ std::string CommandHandler::flushdb_command(DataStore& store, const std::vector<
 
 std::string CommandHandler::flushall_command(DataStore& store, const std::vector<std::string>& args) {
     store.flushall();
+    return "+OK\r\n";
+}
+
+// AOF 重写：BGREWRITEAOF [path]
+// 若未提供 path，默认使用 "appendonly.aof"
+std::string CommandHandler::bgrewriteaof_command(DataStore& store, const std::vector<std::string>& args) {
+    std::string target = "appendonly.aof";
+    if (args.size() > 2) {
+        return protocol_error("Wrong number of arguments");
+    }
+    if (args.size() == 2) {
+        target = args[1];
+    }
+
+    std::string tmp = target + ".tmp";
+    if (!AofWriter::rewritePlainResp(store, tmp)) {
+        return "-ERR AOF rewrite failed\r\n";
+    }
+
+    // 尝试替换目标文件
+    std::remove(target.c_str());
+    if (std::rename(tmp.c_str(), target.c_str()) != 0) {
+        return "-ERR failed to replace AOF file\r\n";
+    }
     return "+OK\r\n";
 }
 

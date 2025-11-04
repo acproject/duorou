@@ -1,14 +1,11 @@
-// 在文件开头添加条件编译
+// 在文件开头添加条件编译（DataStore 不依赖网络头文件）
 #ifdef _WIN32
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
     #include <windows.h>
     // Windows 特有的定义
     #define timegm _mkgmtime
 #else
-    #include <arpa/inet.h>
-    #include <sys/time.h>
-    // 其他 UNIX/Linux 特有的头文件
+    // 尽量避免引入与网络相关的系统头，保持最小依赖
+    // #include <sys/time.h> // 如无需 gettimeofday 等，可不引入
 #endif
 #include "DataStore.hpp"
 #include <iostream>
@@ -33,6 +30,20 @@ DataStore::DataStore(size_t max_dbs) : current_db(0), changeCount(0) {
     // 修复 std::min 调用，明确指定模板参数类型
     max_databases = std::min<size_t>(max_dbs, ABSOLUTE_MAX_DBS);
     databases.resize(DEFAULT_MAX_DBS);  // 初始只分配默认数量
+}
+
+void DataStore::setApplyCallback(const std::function<void(const std::vector<std::string>&)>& cb) {
+  std::lock_guard<std::mutex> lock(mutex);
+  on_apply = cb;
+}
+
+void DataStore::setLoading(bool l) {
+  std::lock_guard<std::mutex> lock(mutex);
+  loading = l;
+}
+
+bool DataStore::isLoading() const {
+  return loading;
 }
 
 bool DataStore::validateDbCount(uint32_t db_count) const {
@@ -127,12 +138,12 @@ bool DataStore::saveMCDB(const std::string& filename) {
               continue;
 
             uint32_t key_len = kv.key.length();
-            file.write(reinterpret_cast<char *>(&key_len), sizeof(key_len));
-            file.write(kv.key.c_str(), key_len);
+            file.write(reinterpret_cast<const char *>(&key_len), sizeof(key_len));
+            file.write(kv.key.data(), key_len);
 
             uint32_t value_len = kv.value.length();
-            file.write(reinterpret_cast<char *>(&value_len), sizeof(value_len));
-            file.write(kv.value.c_str(), value_len);
+            file.write(reinterpret_cast<const char *>(&value_len), sizeof(value_len));
+            file.write(kv.value.data(), value_len);
 
             auto it = db.metadata.find(kv.key);
             long long expire_time =
@@ -154,8 +165,8 @@ bool DataStore::saveMCDB(const std::string& filename) {
 
             // 写入键
             uint32_t key_len = nv.key.length();
-            file.write(reinterpret_cast<char *>(&key_len), sizeof(key_len));
-            file.write(nv.key.c_str(), key_len);
+            file.write(reinterpret_cast<const char *>(&key_len), sizeof(key_len));
+            file.write(nv.key.data(), key_len);
 
             // 写入数值数组长度
             uint32_t values_len = nv.values.size();
@@ -287,6 +298,7 @@ bool DataStore::select(int index) {
   std::lock_guard<std::mutex> lock(mutex);
   if (index >= 0 && index < databases.size()) {
     current_db = index;
+    if (on_apply && !loading) on_apply({"SELECT", std::to_string(index)});
     return true;
   }
   return false;
@@ -300,6 +312,7 @@ void DataStore::pexpire(const std::string &key, long long milliseconds) {
                        expireTime.time_since_epoch())
                        .count();
   databases[current_db].metadata[key].expireTime = timestamp;
+  if (on_apply && !loading) on_apply({"PEXPIRE", key, std::to_string(milliseconds)});
 }
 
 // 事务相关方法实现
@@ -332,6 +345,7 @@ void DataStore::set(const std::string &key, const std::string &value) {
     if (kv.key == key && kv.valid) {
       kv.value = value;
       incrementChangeCount();  // 增加变更计数
+      if (on_apply && !loading) on_apply({"SET", key, value});
       return;
     }
   }
@@ -339,6 +353,7 @@ void DataStore::set(const std::string &key, const std::string &value) {
   KeyValue newKv{key, value, true};
   db.data_array.push_back(newKv);
   incrementChangeCount();  // 增加变更计数
+  if (on_apply && !loading) on_apply({"SET", key, value});
 }
 
 // 私有方法，用于内部调用，不加锁
@@ -398,6 +413,7 @@ bool DataStore::exec() {
 
     db.metadata[cmd.first].version++;
     incrementChangeCount();  // 增加变更计数
+    if (on_apply && !loading) on_apply({"SET", cmd.first, cmd.second});
   }
 
   std::cout << "Transaction executed successfully." << std::endl;
@@ -415,6 +431,7 @@ int DataStore::del(const std::string &key) {
       kv.valid = false;
       db.metadata.erase(key);
       incrementChangeCount();  
+      if (on_apply && !loading) on_apply({"DEL", key});
       return 1;
     }
   }
@@ -433,12 +450,14 @@ int DataStore::exists(const std::string &key) {
 void DataStore::flushdb() {
   std::lock_guard<std::mutex> lock(mutex);
   databases[current_db] = Database();
+  if (on_apply && !loading) on_apply({"FLUSHDB"});
 }
 
 void DataStore::flushall() {
   std::lock_guard<std::mutex> lock(mutex);
   databases.clear();
   databases.resize(16);
+  if (on_apply && !loading) on_apply({"FLUSHALL"});
 }
 
 std::vector<std::string> DataStore::keys(const std::string &pattern) {
@@ -472,6 +491,14 @@ bool DataStore::set_numeric(const std::string &key,
       // 更新现有值 - 需要重新分配空间
       nv.values.clear();
       nv.values.assign(values.begin(), values.end());
+      if (on_apply && !loading) {
+        std::vector<std::string> args;
+        args.reserve(2 + values.size());
+        args.push_back("SETNX");
+        args.push_back(key);
+        for (float f : values) args.push_back(std::to_string(f));
+        on_apply(args);
+      }
       return true;
     }
   }
@@ -481,7 +508,15 @@ bool DataStore::set_numeric(const std::string &key,
   nv.key = key; // 设置键名
   nv.values.assign(values.begin(), values.end());
   db.numeric_array.push_back(nv);
-
+  if (on_apply && !loading) {
+    std::vector<std::string> args;
+    args.reserve(2 + values.size());
+    args.push_back("SETNX");
+    args.push_back(key);
+    for (float f : values) args.push_back(std::to_string(f));
+    on_apply(args);
+  }
+  
   // std::cout << "Set new numeric values for key: " << key
   //           << " [" << values[0] << ", " << values[1] << ", "
   //           << values[2] << ", " << values[3] << "]" << std::endl;
@@ -555,6 +590,7 @@ bool DataStore::rename(const std::string &oldKey, const std::string &newKey) {
   db.metadata.erase(oldKey);
 
   std::cout << "Rename completed successfully" << std::endl;
+  if (on_apply && !loading) on_apply({"RENAME", oldKey, newKey});
   return true;
 }
 
@@ -755,7 +791,7 @@ bool DataStore::loadMCDB(const std::string &filename) {
       size_t db_index;
       file.read(reinterpret_cast<char *>(&db_index), sizeof(db_index));
       
-      if (db_index >= db_count) {
+      if (db_index >= tempDatabases.size()) {
         std::cerr << "Database index out of range: " << db_index << std::endl;
         continue;
       }
