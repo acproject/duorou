@@ -100,4 +100,117 @@ Thought
 - 如果你更喜欢按钮放在右上角（靠近最小化/关闭按钮），我也可以改为另一种摆放方式（例如用 gtk_header_bar_pack_end 或改造 title_widget 布局）。
 是否需要我给按钮加图标（例如“≡”或“⟷”）或快捷键，或者把“上次宽度”持久化到配置文件以便重启后也记忆？
 
-继续测试MiniMemory的AOP等功能，等待markdown的功能完成后开始。
+根因与修复
+
+- 问题定位
+  - 第二轮对话保存不全的主因是客户端只调用了一次 recv，未按 RESP 协议完整接收大响应（特别是 GET 返回的大 JSON）。
+  - 服务端发送也只写了一次 write/send，存在内核短写导致的响应截断风险。
+- 修复内容
+  - 客户端 SessionStorageAdapter::receiveResponse 改为循环接收，按 RESP 解析判断完整性（支持简单字符串、错误、整数、bulk string、扁平数组），直到完整响应或超时，避免大 JSON 被截断。
+  - 服务端 TcpServer::send_response 改为循环写入，处理 EINTR / EAGAIN ，避免短写截断响应。
+- 直接收益
+  - 会话 JSON、会话列表 JSON 等大体量值读取完整，第二轮及后续各轮对话数据都能完整持久化并可靠读取。
+  - 在服务器忙于保存或返回大 key 时，读写更稳健。
+新增能力
+
+- 向量存取（别名更直观）
+  - 新命令： VSET key f1 f2 ... , VGET key
+  - 说明：复用已有 SETNX/GETNX 的数值向量存储能力，命名更符合“向量化”的语义。
+- 元数据与冷热管理
+  - 新命令：
+    - METASET key field value （例如 hot , hot_score , tags ）
+    - METAGET key [field] （不带 field 返回 RESP 数组形如 [field, value, ...] ）
+    - TAGADD key tag1 tag2 ... （去重追加标签，保存在 __meta:key:tags ）
+    - HOTSET key score （保存 hot_score ，并用阈值 >=5 置 hot=1 否则 0 ）
+  - 实现策略：采用“前缀键”存储（如 __meta:<key>:<field> ），无须修改 MCDB/AOF 格式，即插即用并可持久化。
+- 二进制对象化（视频/图片/音频）
+  - 新命令：
+    - OBJSET key mime payload （保存 __obj:<key>:data 和 __obj:<key>:mime ）
+    - OBJGET key （返回 RESP 数组 [mime, data] ， data 为原始字节）
+  - 说明：数据以原始字节持久化于 MCDB，支持任意二进制内容；元信息（ mime ）单独保存，便于对象化管理。
+- 图抽象（多跳推理基础）
+  - 新命令：
+    - GRAPH.ADDEDGE from relation to （邻接表保存在 __graph:adj:<from> ，以 relation:to 逗号分隔）
+    - GRAPH.NEIGHBORS node （返回相邻的 relation:to 列表）
+  - 说明：实现简单图抽象与邻接查询，能表达“引用”、“依赖”、“指代”等关系，支持上层做多跳检索与推理。
+如何使用
+
+- 保存/读取会话（原有）
+  - SET session_data:<id> <json> / GET session_data:<id>
+- 向量化存储（例如保存对话片段的 embedding）
+  - VSET vec:session:<id>:msg:<n> 0.12 0.98 ...
+  - VGET vec:session:<id>:msg:<n> → *d\r\n$...\r\n... （d 为维度数）
+- 元数据与冷热
+  - 标记热点与分数
+    - HOTSET session_data:<id> 9.7 （内部会保存 __meta:session_data:<id>:hot_score=9.7 与 :hot=1 ）
+  - 打标签
+    - TAGADD session_data:<id> persona important （去重追加标签）
+  - 查询 meta
+    - METAGET session_data:<id> → *6\r\n$3\r\nhot\r\n$1\r\n1\r\n$9\r\nhot_score\r\n$3\r\n9.7\r\n$4\r\ntags\r\n$17\r\npersona,important\r\n...
+    - METAGET session_data:<id> tags → $17\r\npersona,important\r\n
+- 二进制对象化
+  - 存图（原始字节作为第三个参数的 bulk）
+    - OBJSET img:123 image/png <PNG_RAW_BYTES> → +OK
+  - 取图
+    - OBJGET img:123 → *2\r\n$9\r\nimage/png\r\n$<n>\r\n<PNG_RAW_BYTES>\r\n
+- 图抽象
+  - 建边（“当前消息”引用“上一条消息”）
+    - GRAPH.ADDEDGE msg:2 refers msg:1 → +OK
+  - 查邻居
+    - GRAPH.NEIGHBORS msg:2 → *1\r\n$10\r\nrefers:msg:1\r\n
+建议的集成策略
+
+- 会话保存即热化
+  - 在你现有 add_message_to_current_session 逻辑保存后，同步调用 HOTSET session_data:<id> <score> （如以最近访问次数/时间衰减得分）。
+  - 对用户问题/系统设定/重要工具输出打标签： TAGADD session_data:<id> persona tool_result .
+- 向量化与检索
+  - 由上层应用计算 embedding（本库提供向量存储/检索，不内置模型推理），用 VSET/VGET 管理每条消息对应向量。
+  - 做近似检索可在客户端执行 KNN 或相似度排序；后续可扩展服务端 VSEARCH 。
+- 对象化多模态
+  - 对图片、音频、视频按对象存取， OBJSET/OBJGET 统一管理，结合 METASET/METAGET 记录时长/分辨率/采样率等附加字段。
+- 图与多跳
+  - 在保存消息时，结合引用/共指/工具调用形成关系边，后续对话做 GRAPH.NEIGHBORS 获取上下游节点，再结合 VGET 和标签筛选做多信号融合检索，提高回忆质量。
+兼容性与持久化
+
+- 未改动 MCDB/AOF 文件格式；新增的元数据、对象、图等均按普通键持久化（以 __meta: 、 __obj: 、 __graph: 前缀区分）。
+- VSET/VGET 是对现有数值数组命令的直观别名；原 SETNX/GETNX 依旧可用。
+- 客户端和服务端传输更稳健：客户端按 RESP 完整接收；服务端循环发送避免短写。
+排查与验证建议
+
+- 回归测试：连续保存 3 轮及以上对话， GET session_data:<id> 应返回完整 JSON，长度应随消息数增长。
+- 大 key 测试：保存 50KB+ 的会话 JSON、或 200KB+ 的 OBJSET ，读取应无截断。
+- 元数据/向量/图命令在同一数据库中混用，重启后应仍然存在（通过 METAGET 、 VGET 、 GRAPH.NEIGHBORS 验证）。
+后续可迭代点（可选）
+
+- 内置 VSEARCH （余弦/内积 topK）与 HNSW / IVF 索引支持，减少客户端负担。
+- 图查询增强（按关系过滤、限定深度 BFS/DFS、多跳路径返回）。
+- 热度动态化（访问计数/最近访问时间自动衰减），并按热度驱动冷热数据迁移策略。
+- 对象化元信息规范化（哈希校验、尺寸/时长等标准字段约定）。
+现在你可以直接重建并运行项目。现有使用 SessionStorageAdapter 的地方无需改动以修复 bug；如果要用到新增能力，在你现有网络命令发送层（或新建小工具）里直接发送上述命令即可。我也可以按你的调用场景，补充客户端封装方法（如 setVector/getVector 、 setObject/getObject 、 setHot/addTags/metaget 、 graphAddEdge/graphNeighbors ）来简化使用。
+
+
+
+建议的集成策略
+
+- 会话保存即热化
+  - 在你现有 add_message_to_current_session 逻辑保存后，同步调用 HOTSET session_data:<id> <score> （如以最近访问次数/时间衰减得分）。
+  - 对用户问题/系统设定/重要工具输出打标签： TAGADD session_data:<id> persona tool_result .
+- 向量化与检索
+  - 由上层应用计算 embedding（本库提供向量存储/检索，不内置模型推理），用 VSET/VGET 管理每条消息对应向量。
+  - 做近似检索可在客户端执行 KNN 或相似度排序；后续可扩展服务端 VSEARCH 。
+- 对象化多模态
+  - 对图片、音频、视频按对象存取， OBJSET/OBJGET 统一管理，结合 METASET/METAGET 记录时长/分辨率/采样率等附加字段。
+- 图与多跳
+  - 在保存消息时，结合引用/共指/工具调用形成关系边，后续对话做 GRAPH.NEIGHBORS 获取上下游节点，再结合 VGET 和标签筛选做多信号融合检索，提高回忆质量
+
+排查与验证建议
+
+- 回归测试：连续保存 3 轮及以上对话， GET session_data:<id> 应返回完整 JSON，长度应随消息数增长。
+- 大 key 测试：保存 50KB+ 的会话 JSON、或 200KB+ 的 OBJSET ，读取应无截断。
+- 元数据/向量/图命令在同一数据库中混用，重启后应仍然存在（通过 METAGET 、 VGET 、 GRAPH.NEIGHBORS 验证）。
+
+- 内置 VSEARCH （余弦/内积 topK）与 HNSW / IVF 索引支持，减少客户端负担。
+- 图查询增强（按关系过滤、限定深度 BFS/DFS、多跳路径返回）。
+- 热度动态化（访问计数/最近访问时间自动衰减），并按热度驱动冷热数据迁移策略。
+- 对象化元信息规范化（哈希校验、尺寸/时长等标准字段约定）。
+另外如何让冷热数据来辅助模型理解呢，是否需要在用户的提示词中增加一些系统的（通过上面的功能来实现）

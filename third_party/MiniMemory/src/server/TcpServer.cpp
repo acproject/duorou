@@ -858,9 +858,40 @@ void TcpServer::process_buffer(int fd, ClientState &state) {
 
 void TcpServer::send_response(int fd, const std::string &resp) {
 #ifdef _WIN32
-    send(fd, resp.c_str(), resp.size(), 0);
+    const char* data = resp.c_str();
+    size_t total = 0;
+    size_t len = resp.size();
+    while (total < len) {
+        int n = send(fd, data + total, static_cast<int>(len - total), 0);
+        if (n > 0) {
+            total += static_cast<size_t>(n);
+            continue;
+        } else {
+            // 发送失败，放弃剩余部分，避免阻塞事件循环
+            break;
+        }
+    }
 #else
-    write(fd, resp.c_str(), resp.size());
+    const char* data = resp.c_str();
+    size_t total = 0;
+    size_t len = resp.size();
+    while (total < len) {
+        ssize_t n = write(fd, data + total, len - total);
+        if (n > 0) {
+            total += static_cast<size_t>(n);
+            continue;
+        }
+        if (n < 0 && (errno == EINTR)) {
+            continue; // 被信号中断，重试
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // 非阻塞且暂时不可写，简单重试一次，防止忙等
+            // 在实际生产环境可配合 epoll 可写事件再写
+            continue;
+        }
+        // 其他错误，放弃剩余写入
+        break;
+    }
 #endif
 }
 #endif

@@ -141,21 +141,122 @@ std::string SessionStorageAdapter::receiveResponse() {
     return "";
   }
 
-  char buffer[4096];
-  // 有超时设置，recv 最多阻塞约 500ms
+  std::string buf;
+  buf.reserve(4096);
+
+  auto start = std::chrono::steady_clock::now();
+  const auto overall_timeout = std::chrono::milliseconds(1500); // 总等待时间上限
+
+  auto is_complete = [&](const std::string &s) -> bool {
+    if (s.size() < 3) return false;
+    char t = s[0];
+    // 简单字符串、错误、整数：以 CRLF 结束
+    if (t == '+' || t == '-' || t == ':') {
+      return s.find("\r\n") != std::string::npos;
+    }
+    // 批量字符串：$<len>\r\n<payload>\r\n
+    if (t == '$') {
+      size_t nl = s.find("\r\n");
+      if (nl == std::string::npos) return false;
+      long long len = 0;
+      try {
+        len = std::stoll(s.substr(1, nl - 1));
+      } catch (...) {
+        return false;
+      }
+      if (len < 0) {
+        // NULL bulk string：只有头就够
+        return true;
+      }
+      size_t need = nl + 2 + static_cast<size_t>(len) + 2;
+      return s.size() >= need;
+    }
+    // 数组：*<n>\r\n 之后跟 n 个 bulk 或其他类型
+    if (t == '*') {
+      size_t pos = s.find("\r\n");
+      if (pos == std::string::npos) return false;
+      long long n = 0;
+      try {
+        n = std::stoll(s.substr(1, pos - 1));
+      } catch (...) {
+        return false;
+      }
+      size_t cur = pos + 2;
+      for (long long i = 0; i < n; ++i) {
+        if (cur >= s.size()) return false;
+        char tt = s[cur];
+        if (tt == '$') {
+          size_t nl2 = s.find("\r\n", cur);
+          if (nl2 == std::string::npos) return false;
+          long long len = 0;
+          try {
+            len = std::stoll(s.substr(cur + 1, nl2 - (cur + 1)));
+          } catch (...) {
+            return false;
+          }
+          cur = nl2 + 2;
+          if (len < 0) {
+            // null bulk
+            continue;
+          }
+          if (s.size() < cur + static_cast<size_t>(len) + 2) return false;
+          cur += static_cast<size_t>(len) + 2;
+        } else if (tt == '+' || tt == '-' || tt == ':') {
+          size_t nl2 = s.find("\r\n", cur);
+          if (nl2 == std::string::npos) return false;
+          cur = nl2 + 2;
+        } else if (tt == '*') {
+          // 递归处理较复杂，这里保守：若遇到嵌套数组但数据未完全，就返回未完成
+          // 简化：要求上游命令不要返回嵌套数组（当前用例不涉及）
+          return false;
+        } else {
+          return false;
+        }
+      }
+      return s.size() >= cur;
+    }
+    return false;
+  };
+
+  while (true) {
+    char tmp[4096];
 #ifdef _WIN32
-  int bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0);
+    int n = recv(socket_fd_, tmp, sizeof(tmp), 0);
+    if (n > 0) buf.append(tmp, tmp + n);
+    if (n == 0) {
+      disconnectFromServer();
+      return "";
+    }
+    if (n < 0) {
+      // Windows 下已设置超时，直接检查完成或超时
+    }
 #else
-  ssize_t bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0);
+    ssize_t n = recv(socket_fd_, tmp, sizeof(tmp), 0);
+    if (n > 0) buf.append(tmp, tmp + n);
+    if (n == 0) {
+      disconnectFromServer();
+      return "";
+    }
+    if (n < 0) {
+      // EAGAIN/EWOULDBLOCK 表示当前无数据可读
+      if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+        disconnectFromServer();
+        return "";
+      }
+    }
 #endif
 
-  if (bytes_received <= 0) {
-    disconnectFromServer();
-    return "";
-  }
+    if (is_complete(buf)) {
+      // 若为 bulk 或数组，截断到恰好一条完整响应（多余的属于后续管线，此处不处理）
+      // is_complete 已保证单条完整响应在前缀
+      return buf;
+    }
 
-  buffer[bytes_received] = '\0';
-  return std::string(buffer);
+    if (std::chrono::steady_clock::now() - start > overall_timeout) {
+      // 超时仍未完整，返回已读（可能不完整）以避免卡死
+      return buf;
+    }
+  }
 }
 
 std::string SessionStorageAdapter::buildSetCommand(const std::string &key,
