@@ -9,10 +9,6 @@ set(MODEL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/vocabulary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sentence_piece.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/byte_pair_encoding.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_text_model.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_vision_model.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_image_processor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_multimodal_model.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_factory.cpp
 )
 
@@ -22,10 +18,6 @@ set(MODEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/sentence_piece.h
     ${CMAKE_CURRENT_SOURCE_DIR}/byte_pair_encoding.h
     ${CMAKE_CURRENT_SOURCE_DIR}/text_processor.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_text_model.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_vision_model.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_image_processor.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/qwen_multimodal_model.h
     ${CMAKE_CURRENT_SOURCE_DIR}/tokenizer_factory.h
 )
 

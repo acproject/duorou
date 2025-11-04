@@ -357,8 +357,8 @@ add_subdirectory(src/extensions)
 # 添加 kvcache 模块
 add_subdirectory(src/kvcache)
 
-# 添加 ml 模块
-add_subdirectory(src/ml)
+# 移除自研 ml 模块，仅保留 llama.cpp 作为推理引擎
+# add_subdirectory(src/ml)
 
 # 添加 Model 模块
 # (已在上方初始化 src/model；移除重复 add_subdirectory 以避免二次使用同一 binary 目录)

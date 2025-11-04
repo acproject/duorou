@@ -62,7 +62,6 @@ target_include_directories(${OLLAMA_EXTENSION_NAME}
 # 链接库
 target_link_libraries(${OLLAMA_EXTENSION_NAME}
     PUBLIC
-        duorou_ml
         duorou_kvcache
         llama
 )

@@ -474,9 +474,39 @@ bool ModelDownloader::isOllamaModel(const std::string& model_name) {
 std::vector<std::string> ModelDownloader::getLocalModels() {
     auto manifests = pImpl_->path_manager_->enumerateManifests();
     std::vector<std::string> model_names;
-    for (const auto& pair : manifests) {
+
+    // 过滤规则：仅保留文本模型，排除包含 "vl" 或明显视觉/多模态标记的仓库名
+    auto is_vision_like = [](const std::string &repository) {
+        std::string repo_lower = repository;
+        std::transform(repo_lower.begin(), repo_lower.end(), repo_lower.begin(), ::tolower);
+        // 常见视觉/多模态模型命名中包含 "-vl" 或 "vl"，以及 "vision"、"multimodal" 等
+        if (repo_lower.find("-vl") != std::string::npos) return true;
+        if (repo_lower.find("vl") != std::string::npos) return true;
+        if (repo_lower.find("vision") != std::string::npos) return true;
+        if (repo_lower.find("multimodal") != std::string::npos) return true;
+        return false;
+    };
+
+    for (const auto &pair : manifests) {
+        // pair.first 形如: registry.ollama.ai/library/qwen3:8b 或 registry.ollama.ai/library/qwen3-vl:8b
+        core::ModelPath path;
+        if (!path.parseFromString(pair.first)) {
+            // 不可解析则原样加入（保守）
+            model_names.push_back(pair.first);
+            continue;
+        }
+
+        if (is_vision_like(path.repository)) {
+            // 跳过视觉/多模态模型
+            continue;
+        }
+
         model_names.push_back(pair.first);
     }
+
+    // 排序并去重，保证稳定输出
+    std::sort(model_names.begin(), model_names.end());
+    model_names.erase(std::unique(model_names.begin(), model_names.end()), model_names.end());
     return model_names;
 }
 

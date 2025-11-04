@@ -96,6 +96,22 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
             std::string namespace_ = matches[2].str();
             std::string repository = matches[3].str();
             std::string tag = matches[4].str();
+
+            // 过滤视觉/多模态模型（例如 qwen3-vl、*.vision、*.multimodal 等）
+            auto is_vision_like = [](const std::string &repo) {
+                std::string s = repo;
+                std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                if (s.find("-vl") != std::string::npos) return true;
+                if (s.find("vl") != std::string::npos) return true;
+                if (s.find("vision") != std::string::npos) return true;
+                if (s.find("multimodal") != std::string::npos) return true;
+                return false;
+            };
+
+            if (is_vision_like(repository)) {
+                // Skip vision models to only expose text models compatible with llama.cpp
+                continue;
+            }
             
             // Build ollama-style model name
             std::string model_name;
