@@ -15,7 +15,7 @@ namespace gui {
 MainWindow::MainWindow()
     : window_(nullptr), header_bar_(nullptr), main_box_(nullptr),
       sidebar_(nullptr), content_stack_(nullptr), status_bar_(nullptr),
-      paned_(nullptr),
+      paned_(nullptr), toggle_sidebar_button_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
       current_view_("chat"), application_(nullptr)
@@ -29,7 +29,7 @@ MainWindow::MainWindow()
 MainWindow::MainWindow(core::Application *app)
     : window_(nullptr), header_bar_(nullptr), main_box_(nullptr),
       sidebar_(nullptr), content_stack_(nullptr), status_bar_(nullptr),
-      paned_(nullptr),
+      paned_(nullptr), toggle_sidebar_button_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
       current_view_("chat"), application_(app)
@@ -398,9 +398,16 @@ void MainWindow::on_session_list_changed() {
 void MainWindow::create_header_bar() {
   header_bar_ = gtk_header_bar_new();
   gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header_bar_), TRUE);
+  // Create title box with sidebar toggle button and title label
+  GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  toggle_sidebar_button_ = gtk_button_new_with_label("Hide Sidebar");
+  GtkWidget *title_label = gtk_label_new("Duorou - AI Desktop Assistant");
+  gtk_box_append(GTK_BOX(title_box), toggle_sidebar_button_);
+  gtk_box_append(GTK_BOX(title_box), title_label);
+
   gtk_header_bar_set_title_widget(
       GTK_HEADER_BAR(header_bar_),
-      gtk_label_new("Duorou - AI Desktop Assistant"));
+      title_box);
 
   gtk_window_set_titlebar(GTK_WINDOW(window_), header_bar_);
 }
@@ -408,8 +415,8 @@ void MainWindow::create_header_bar() {
 void MainWindow::create_sidebar() {
   // Create sidebar container
   sidebar_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  // Allow sidebar to shrink to 0 so users can collapse it by dragging
-  gtk_widget_set_size_request(sidebar_, 0, -1);
+  // Allow full collapse by not enforcing minimum width
+  gtk_widget_set_size_request(sidebar_, -1, -1);
   gtk_widget_add_css_class(sidebar_, "sidebar");
   gtk_widget_set_margin_start(sidebar_, 10);
   gtk_widget_set_margin_end(sidebar_, 10);
@@ -521,6 +528,18 @@ void MainWindow::connect_signals() {
                    G_CALLBACK(on_image_button_clicked), this);
   g_signal_connect(settings_button_, "clicked",
                    G_CALLBACK(on_settings_button_clicked), this);
+
+  // Toggle sidebar button
+  if (toggle_sidebar_button_) {
+    g_signal_connect(toggle_sidebar_button_, "clicked",
+                     G_CALLBACK(on_toggle_sidebar_button_clicked), this);
+  }
+
+  // Track paned position to remember last non-zero width
+  if (paned_) {
+    g_signal_connect(paned_, "notify::position",
+                     G_CALLBACK(on_paned_position_notify), this);
+  }
 }
 
 void MainWindow::update_sidebar_buttons(GtkWidget *active_button) {
@@ -746,6 +765,49 @@ void MainWindow::on_settings_button_clicked(GtkWidget *widget,
                                             gpointer user_data) {
   MainWindow *main_window = static_cast<MainWindow *>(user_data);
   main_window->show_settings();
+}
+
+void MainWindow::on_toggle_sidebar_button_clicked(GtkWidget *widget,
+                                                  gpointer user_data) {
+  MainWindow *self = static_cast<MainWindow *>(user_data);
+  if (!self || !self->paned_)
+    return;
+
+  int pos = gtk_paned_get_position(GTK_PANED(self->paned_));
+  if (pos > 0) {
+    // Remember current width and collapse to 0
+    self->last_sidebar_width_ = pos;
+    gtk_paned_set_position(GTK_PANED(self->paned_), 0);
+    if (self->toggle_sidebar_button_) {
+      gtk_button_set_label(GTK_BUTTON(self->toggle_sidebar_button_), "Show Sidebar");
+    }
+  } else {
+    // Restore to last width or default if invalid
+    int target = self->last_sidebar_width_ > 50 ? self->last_sidebar_width_ : 300;
+    gtk_paned_set_position(GTK_PANED(self->paned_), target);
+    if (self->toggle_sidebar_button_) {
+      gtk_button_set_label(GTK_BUTTON(self->toggle_sidebar_button_), "Hide Sidebar");
+    }
+  }
+}
+
+void MainWindow::on_paned_position_notify(GObject *object, GParamSpec *pspec,
+                                          gpointer user_data) {
+  MainWindow *self = static_cast<MainWindow *>(user_data);
+  if (!self || !self->paned_)
+    return;
+
+  int pos = gtk_paned_get_position(GTK_PANED(self->paned_));
+  if (pos > 0) {
+    self->last_sidebar_width_ = pos;
+    if (self->toggle_sidebar_button_) {
+      gtk_button_set_label(GTK_BUTTON(self->toggle_sidebar_button_), "Hide Sidebar");
+    }
+  } else {
+    if (self->toggle_sidebar_button_) {
+      gtk_button_set_label(GTK_BUTTON(self->toggle_sidebar_button_), "Show Sidebar");
+    }
+  }
 }
 
 gboolean MainWindow::on_window_delete_event(GtkWindow *window,

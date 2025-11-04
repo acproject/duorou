@@ -16,6 +16,9 @@ typedef int gint;
 typedef double gdouble;
 typedef int gboolean;
 typedef unsigned int guint;
+// 额外的占位类型以便信号回调声明
+typedef void* GObject;
+typedef void* GParamSpec;
 #endif
 #include <memory>
 #include <string>
@@ -136,6 +139,7 @@ private:
   GtkWidget *content_stack_; // Content stack
   GtkWidget *status_bar_;    // Status bar
   GtkWidget *paned_;         // Draggable paned container
+  GtkWidget *toggle_sidebar_button_; // Toggle sidebar button
 
   // Sidebar buttons
   GtkWidget *new_chat_button_;  // New chat button
@@ -159,6 +163,9 @@ private:
 
   // Application instance reference
   core::Application *application_;
+
+  // Remember last non-zero sidebar width for restore
+  int last_sidebar_width_ = 300;
 
   /**
    * Create header bar
@@ -231,6 +238,8 @@ private:
   static void on_settings_button_clicked(GtkWidget *widget, gpointer user_data);
   static gboolean on_window_delete_event(GtkWindow *window, gpointer user_data);
   static void on_window_destroy(GtkWidget *widget, gpointer user_data);
+  static void on_toggle_sidebar_button_clicked(GtkWidget *widget, gpointer user_data);
+  static void on_paned_position_notify(GObject *object, GParamSpec *pspec, gpointer user_data);
 };
 
 } // namespace gui
