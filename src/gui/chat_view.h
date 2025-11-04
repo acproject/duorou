@@ -27,6 +27,7 @@ namespace duorou {
   namespace gui {
 
 class ChatSessionManager;
+class MarkdownView;
 
 /**
  * Chat view class - handles text generation model interaction interface
@@ -120,7 +121,7 @@ private:
   /**
    * Create an assistant message bubble and return its label for streaming
    */
-  GtkWidget *add_assistant_placeholder(const std::string &text);
+  MarkdownView *add_assistant_placeholder(const std::string &text);
 
   /**
    * Append streamed text into the current assistant bubble
@@ -164,7 +165,7 @@ private:
   core::ConfigManager *config_manager_; // 新增：配置管理器指针
 
   // Streaming related
-  GtkWidget *streaming_label_ = nullptr; // Label of current streaming assistant bubble
+  MarkdownView *streaming_md_ = nullptr; // 当前流式助手气泡的 MarkdownView
   bool is_streaming_ = false;            // Streaming flag
   std::string streaming_buffer_;         // Accumulated streamed text
 

@@ -222,6 +222,37 @@ else()
     set(HAVE_OPENCV FALSE)
 endif()
 
+# WebKitGTK 和 MD4C 支持（Markdown 渲染增强）
+if(DUOROU_BUILD_GUI)
+    # WebKitGTK (GTK4 通常对应 webkit2gtk-4.1；部分环境仍为 4.0)
+    pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.1)
+    if(NOT WEBKIT2GTK_FOUND)
+        pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.0)
+    endif()
+    if(WEBKIT2GTK_FOUND)
+        message(STATUS "Found WebKitGTK: ${WEBKIT2GTK_VERSION}")
+        set(HAVE_WEBKIT2GTK TRUE)
+    else()
+        message(STATUS "WebKitGTK not found. MarkdownView will fall back to GtkTextView.")
+        set(HAVE_WEBKIT2GTK FALSE)
+    endif()
+
+    # MD4C for Markdown->HTML conversion (md4c-html provides md_html, depends on md4c)
+    pkg_check_modules(MD4C_HTML QUIET md4c-html)
+    pkg_check_modules(MD4C QUIET md4c)
+    if(MD4C_HTML_FOUND)
+        message(STATUS "Found MD4C-HTML: ${MD4C_HTML_VERSION}")
+        set(HAVE_MD4C TRUE)
+    elseif(MD4C_FOUND)
+        message(STATUS "Found MD4C (core) only: ${MD4C_VERSION}")
+        message(STATUS "Note: md4c-html not found; HTML conversion will be disabled.")
+        set(HAVE_MD4C FALSE)
+    else()
+        message(STATUS "MD4C not found. Using minimal fallback converter.")
+        set(HAVE_MD4C FALSE)
+    endif()
+endif()
+
 # 包含目录
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -247,6 +278,17 @@ if(OpenCV_FOUND)
     include_directories(${OpenCV_INCLUDE_DIRS})
 endif()
 
+# 添加 WebKitGTK/MD4C 的包含目录
+if(WEBKIT2GTK_FOUND)
+    include_directories(${WEBKIT2GTK_INCLUDE_DIRS})
+endif()
+if(MD4C_HTML_FOUND)
+    include_directories(${MD4C_HTML_INCLUDE_DIRS})
+endif()
+if(MD4C_FOUND)
+    include_directories(${MD4C_INCLUDE_DIRS})
+endif()
+
 # 链接目录（仅在启用 GUI 且找到 GTK4 时添加）
 if(DUOROU_BUILD_GUI AND GTK4_FOUND)
     link_directories(${GTK4_LIBRARY_DIRS})
@@ -263,6 +305,17 @@ endif()
 
 if(PORTAUDIO_FOUND)
     link_directories(${PORTAUDIO_LIBRARY_DIRS})
+endif()
+
+# 添加 WebKitGTK/MD4C 的链接目录
+if(WEBKIT2GTK_FOUND)
+    link_directories(${WEBKIT2GTK_LIBRARY_DIRS})
+endif()
+if(MD4C_HTML_FOUND)
+    link_directories(${MD4C_HTML_LIBRARY_DIRS})
+endif()
+if(MD4C_FOUND)
+    link_directories(${MD4C_LIBRARY_DIRS})
 endif()
 
 # 编译定义（基础定义 + 条件 GTK 定义）
@@ -290,6 +343,17 @@ endif()
 
 if(OpenCV_FOUND)
     add_definitions(-DHAVE_OPENCV)
+endif()
+
+# 编译定义：WebKitGTK / MD4C
+if(WEBKIT2GTK_FOUND)
+    add_definitions(-DHAVE_WEBKIT2GTK ${WEBKIT2GTK_CFLAGS_OTHER})
+endif()
+if(MD4C_HTML_FOUND)
+    add_definitions(-DHAVE_MD4C ${MD4C_HTML_CFLAGS_OTHER})
+elseif(MD4C_FOUND)
+    # Core md4c present but html helper missing; do not define HAVE_MD4C
+    add_definitions(${MD4C_CFLAGS_OTHER})
 endif()
 
 # llama.cpp 子项目配置
@@ -404,6 +468,7 @@ set(DUOROU_SOURCES_LIST
     src/gui/image_view.cpp
     src/gui/settings_dialog.cpp
     src/gui/system_tray.cpp
+    src/gui/markdown_view.cpp
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
     src/gui/session_storage_adapter.cpp
@@ -441,6 +506,7 @@ set(DUOROU_HEADERS_LIST
     src/gui/image_view.h
     src/gui/settings_dialog.h
     src/gui/system_tray.h
+    src/gui/markdown_view.h
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
     src/gui/session_storage_adapter.h
@@ -527,6 +593,17 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     )
     if(GTK4_FOUND)
         target_link_libraries(duorou ${GTK4_LIBRARIES})
+    endif()
+    if(WEBKIT2GTK_FOUND)
+        target_link_libraries(duorou ${WEBKIT2GTK_LIBRARIES})
+        message(STATUS "Linking WebKitGTK libraries: ${WEBKIT2GTK_LIBRARIES}")
+    endif()
+    if(MD4C_HTML_FOUND)
+        target_link_libraries(duorou ${MD4C_HTML_LIBRARIES})
+        message(STATUS "Linking MD4C-HTML libraries: ${MD4C_HTML_LIBRARIES}")
+    elseif(MD4C_FOUND)
+        target_link_libraries(duorou ${MD4C_LIBRARIES})
+        message(STATUS "Linking MD4C libraries: ${MD4C_LIBRARIES}")
     endif()
     
     # 链接视频音频处理库

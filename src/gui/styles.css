@@ -101,6 +101,8 @@
     border: none;
     padding: 12px 16px;
     font-size: 16px;
+    color: #000000; /* 强制输入文本为黑色 */
+    caret-color: #000000; /* 插入符号颜色 */
     outline: none;
 }
 
@@ -152,8 +154,9 @@
 
 /* 使用frame容器作为气泡 - GTK4兼容样式 */
 .user-bubble {
-    background: #48bb78; /* 绿色气泡 */
-    color: white;
+    background: #48bb78;
+    /* 绿色气泡 */
+    color: #000000; /* 文本使用黑色，提升可读性 */
     border-radius: 18px;
     padding: 12px 16px;
     margin: 4px;
@@ -161,7 +164,8 @@
 }
 
 .assistant-bubble {
-    background: #bee3f8; /* 浅蓝色气泡 */
+    background: #bee3f8;
+    /* 浅蓝色气泡 */
     color: #2d3748;
     border: 1px solid #90cdf4;
     border-radius: 18px;
@@ -171,7 +175,7 @@
 
 /* frame内的label样式 */
 .user-bubble label {
-    color: white;
+    color: #000000; /* 用户输入内容使用黑色 */
     background: transparent;
 }
 

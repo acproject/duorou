@@ -6,6 +6,7 @@
 #include "../extensions/ollama/ollama_model_manager.h"
 #include "../media/audio_capture.h"
 #include "../media/video_capture.h"
+#include "markdown_view.h"
 #include "chat_session_manager.h"
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
@@ -277,7 +278,7 @@ void ChatView::send_message(const std::string &message) {
   }
 
   // Create assistant placeholder for streaming
-  streaming_label_ = add_assistant_placeholder("AI is thinking...");
+  streaming_md_ = add_assistant_placeholder("AI is thinking...");
 
   // Disable send button and input during streaming
   if (send_button_) {
@@ -305,16 +306,17 @@ void ChatView::add_message(const std::string &message, bool is_user) {
   gtk_widget_set_margin_top(message_container, 4);
   gtk_widget_set_margin_bottom(message_container, 4);
 
-  // Create message label - display message content directly without prefix
-  GtkWidget *message_label = gtk_label_new(message.c_str());
-  gtk_label_set_wrap(GTK_LABEL(message_label), TRUE);
-  gtk_label_set_wrap_mode(GTK_LABEL(message_label), PANGO_WRAP_WORD_CHAR);
-  gtk_label_set_max_width_chars(GTK_LABEL(message_label), 50); // Limit maximum character count
-  gtk_label_set_xalign(GTK_LABEL(message_label), 0.0);         // Left align text
+// Create Markdown view for message content (selectable + copy/export)
+  auto *mv = new MarkdownView();
+  mv->set_markdown(message);
 
   // Create bubble frame container
   GtkWidget *bubble_frame = gtk_frame_new(NULL);
-  gtk_frame_set_child(GTK_FRAME(bubble_frame), message_label);
+  // Attach MarkdownView widget into the frame
+  gtk_frame_set_child(GTK_FRAME(bubble_frame), mv->widget());
+  // Ensure MarkdownView lifetime ties to GTK widget
+  g_object_set_data_full(G_OBJECT(bubble_frame), "markdown_view_ptr", mv,
+                         [](gpointer p) { delete static_cast<MarkdownView *>(p); });
 
   // Create bubble container
   GtkWidget *bubble_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -370,8 +372,7 @@ void ChatView::add_message(const std::string &message, bool is_user) {
   scroll_to_bottom();
 }
 
-GtkWidget *ChatView::add_assistant_placeholder(const std::string &text) {
-  if (!chat_box_) {
+  MarkdownView *ChatView::add_assistant_placeholder(const std::string &text) {  if (!chat_box_) {
     return nullptr;
   }
 
@@ -381,15 +382,14 @@ GtkWidget *ChatView::add_assistant_placeholder(const std::string &text) {
   gtk_widget_set_margin_top(message_container, 4);
   gtk_widget_set_margin_bottom(message_container, 4);
 
-  GtkWidget *message_label = gtk_label_new(text.c_str());
-  gtk_label_set_wrap(GTK_LABEL(message_label), TRUE);
-  gtk_label_set_wrap_mode(GTK_LABEL(message_label), PANGO_WRAP_WORD_CHAR);
-  gtk_label_set_max_width_chars(GTK_LABEL(message_label), 50);
-  gtk_label_set_xalign(GTK_LABEL(message_label), 0.0);
+// Create Markdown view placeholder
+  auto *mv = new MarkdownView();
+  mv->set_markdown(text);
 
   GtkWidget *bubble_frame = gtk_frame_new(NULL);
-  gtk_frame_set_child(GTK_FRAME(bubble_frame), message_label);
-
+gtk_frame_set_child(GTK_FRAME(bubble_frame), mv->widget());
+  g_object_set_data_full(G_OBJECT(bubble_frame), "markdown_view_ptr", mv,
+                         [](gpointer p) { delete static_cast<MarkdownView *>(p); });
   GtkCssProvider *provider = gtk_css_provider_new();
   gtk_css_provider_load_from_string(
       provider,
@@ -410,7 +410,7 @@ GtkWidget *ChatView::add_assistant_placeholder(const std::string &text) {
 
   gtk_box_append(GTK_BOX(chat_box_), message_container);
   scroll_to_bottom();
-  return message_label;
+  return mv;
 }
 
 void ChatView::clear_chat() {
@@ -2019,12 +2019,12 @@ std::string ChatView::generate_ai_response(const std::string &message) {
 
 void ChatView::append_stream_text(const std::string &delta, bool finished) {
   // Update assistant bubble text incrementally on main thread
-  if (streaming_label_) {
-    if (!delta.empty()) {
-      // Append delta into buffer and refresh label
-      streaming_buffer_ += delta;
-      gtk_label_set_text(GTK_LABEL(streaming_label_), streaming_buffer_.c_str());
-    }
+    if (streaming_md_) {
+      if (!delta.empty()) {
+        // Append delta into buffer and refresh markdown view
+        streaming_buffer_ += delta;
+        streaming_md_->set_markdown(streaming_buffer_);    
+  }
     // Keep view scrolled to bottom while streaming
     scroll_to_bottom();
   }
@@ -2044,7 +2044,7 @@ void ChatView::append_stream_text(const std::string &delta, bool finished) {
     }
 
     // Reset streaming state
-    streaming_label_ = nullptr;
+    streaming_md_ = nullptr;    
     streaming_buffer_.clear();
     is_streaming_ = false;
   }
