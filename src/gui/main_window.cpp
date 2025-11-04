@@ -15,6 +15,7 @@ namespace gui {
 MainWindow::MainWindow()
     : window_(nullptr), header_bar_(nullptr), main_box_(nullptr),
       sidebar_(nullptr), content_stack_(nullptr), status_bar_(nullptr),
+      paned_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
       current_view_("chat"), application_(nullptr)
@@ -28,6 +29,7 @@ MainWindow::MainWindow()
 MainWindow::MainWindow(core::Application *app)
     : window_(nullptr), header_bar_(nullptr), main_box_(nullptr),
       sidebar_(nullptr), content_stack_(nullptr), status_bar_(nullptr),
+      paned_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
       current_view_("chat"), application_(app)
@@ -406,7 +408,8 @@ void MainWindow::create_header_bar() {
 void MainWindow::create_sidebar() {
   // Create sidebar container
   sidebar_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  gtk_widget_set_size_request(sidebar_, 280, -1);
+  // Allow sidebar to shrink to 0 so users can collapse it by dragging
+  gtk_widget_set_size_request(sidebar_, 0, -1);
   gtk_widget_add_css_class(sidebar_, "sidebar");
   gtk_widget_set_margin_start(sidebar_, 10);
   gtk_widget_set_margin_end(sidebar_, 10);
@@ -460,17 +463,7 @@ void MainWindow::create_sidebar() {
 }
 
 void MainWindow::create_content_area() {
-  // Create horizontal container
-  GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-
-  // Add sidebar
-  gtk_box_append(GTK_BOX(content_box), sidebar_);
-
-  // Add separator
-  GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
-  gtk_box_append(GTK_BOX(content_box), separator);
-
-  // Create content stack
+  // Create content stack first
   content_stack_ = gtk_stack_new();
   gtk_stack_set_transition_type(GTK_STACK(content_stack_),
                                 GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
@@ -478,8 +471,16 @@ void MainWindow::create_content_area() {
   gtk_widget_set_hexpand(content_stack_, TRUE);
   gtk_widget_set_vexpand(content_stack_, TRUE);
 
-  gtk_box_append(GTK_BOX(content_box), content_stack_);
-  gtk_box_append(GTK_BOX(main_box_), content_box);
+  // Create a horizontal GtkPaned so the divider is draggable
+  paned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_paned_set_start_child(GTK_PANED(paned_), sidebar_);
+  gtk_paned_set_end_child(GTK_PANED(paned_), content_stack_);
+
+  // Set initial position similar to previous fixed width (≈280px)
+  gtk_paned_set_position(GTK_PANED(paned_), 300);
+
+  // Add to main container
+  gtk_box_append(GTK_BOX(main_box_), paned_);
 }
 
 void MainWindow::create_status_bar() {

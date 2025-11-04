@@ -111,6 +111,21 @@ private:
    * @return AI generated response
    */
   std::string generate_ai_response(const std::string &message);
+
+  /**
+   * Stream AI response chunk by chunk
+   */
+  void stream_ai_response(const std::string &message);
+
+  /**
+   * Create an assistant message bubble and return its label for streaming
+   */
+  GtkWidget *add_assistant_placeholder(const std::string &text);
+
+  /**
+   * Append streamed text into the current assistant bubble
+   */
+  void append_stream_text(const std::string &delta, bool finished);
   GtkWidget *main_widget_;         // Main container
   GtkWidget *chat_scrolled_;       // Scrolled window
   GtkWidget *chat_box_;            // Chat message container
@@ -147,6 +162,11 @@ private:
   ChatSessionManager *session_manager_; // Session manager pointer
   core::ModelManager *model_manager_;   // Model manager pointer
   core::ConfigManager *config_manager_; // 新增：配置管理器指针
+
+  // Streaming related
+  GtkWidget *streaming_label_ = nullptr; // Label of current streaming assistant bubble
+  bool is_streaming_ = false;            // Streaming flag
+  std::string streaming_buffer_;         // Accumulated streamed text
 
   // Video frame cache related
   std::shared_ptr<duorou::media::VideoFrame>

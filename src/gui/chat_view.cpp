@@ -276,10 +276,10 @@ void ChatView::send_message(const std::string &message) {
     session_manager_->add_message_to_current_session(message, true);
   }
 
-  // Show AI thinking indicator
-  add_message("AI is thinking...", false);
-  
-  // Disable send button to prevent duplicate sending
+  // Create assistant placeholder for streaming
+  streaming_label_ = add_assistant_placeholder("AI is thinking...");
+
+  // Disable send button and input during streaming
   if (send_button_) {
     gtk_widget_set_sensitive(send_button_, FALSE);
   }
@@ -287,50 +287,9 @@ void ChatView::send_message(const std::string &message) {
     gtk_widget_set_sensitive(input_entry_, FALSE);
   }
 
-  // Call AI model to process message in background thread
+  // Start streaming in background thread
   std::thread([this, message]() {
-    std::string ai_response = generate_ai_response(message);
-    
-    // Create data structure to pass to main thread
-    struct CallbackData {
-      ChatView* chat_view;
-      std::string* response;
-    };
-    
-    CallbackData* data = new CallbackData{this, new std::string(ai_response)};
-    
-    // Use g_idle_add to update UI in main thread
-    g_idle_add([](gpointer user_data) -> gboolean {
-      CallbackData* data = static_cast<CallbackData*>(user_data);
-      ChatView* chat_view = data->chat_view;
-      std::string* response = data->response;
-      
-      if (chat_view && response) {
-        // Remove "AI is thinking..." message
-        chat_view->remove_last_message();
-        
-        // Add AI response
-        chat_view->add_message(*response, false);
-        
-        // Save AI response to current session
-        if (chat_view->session_manager_) {
-          chat_view->session_manager_->add_message_to_current_session(*response, false);
-        }
-        
-        // Re-enable send button
-        if (chat_view->send_button_) {
-          gtk_widget_set_sensitive(chat_view->send_button_, TRUE);
-        }
-        if (chat_view->input_entry_) {
-          gtk_widget_set_sensitive(chat_view->input_entry_, TRUE);
-        }
-      }
-      
-      // Clean up memory
-      delete response;
-      delete data;
-      return G_SOURCE_REMOVE;
-    }, data);
+    stream_ai_response(message);
   }).detach();
 }
 
@@ -409,6 +368,49 @@ void ChatView::add_message(const std::string &message, bool is_user) {
 
   // Scroll to bottom
   scroll_to_bottom();
+}
+
+GtkWidget *ChatView::add_assistant_placeholder(const std::string &text) {
+  if (!chat_box_) {
+    return nullptr;
+  }
+
+  GtkWidget *message_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_margin_start(message_container, 10);
+  gtk_widget_set_margin_end(message_container, 10);
+  gtk_widget_set_margin_top(message_container, 4);
+  gtk_widget_set_margin_bottom(message_container, 4);
+
+  GtkWidget *message_label = gtk_label_new(text.c_str());
+  gtk_label_set_wrap(GTK_LABEL(message_label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(message_label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(GTK_LABEL(message_label), 50);
+  gtk_label_set_xalign(GTK_LABEL(message_label), 0.0);
+
+  GtkWidget *bubble_frame = gtk_frame_new(NULL);
+  gtk_frame_set_child(GTK_FRAME(bubble_frame), message_label);
+
+  GtkCssProvider *provider = gtk_css_provider_new();
+  gtk_css_provider_load_from_string(
+      provider,
+      "frame { background: #bee3f8; color: #2d3748; border: 1px solid #90cdf4; border-radius: 18px; padding: 12px 16px; margin: 4px; }");
+  gtk_style_context_add_provider(gtk_widget_get_style_context(bubble_frame),
+                                 GTK_STYLE_PROVIDER(provider),
+                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_unref(provider);
+
+  GtkWidget *bubble_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_halign(bubble_box, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(bubble_box), bubble_frame);
+  gtk_box_append(GTK_BOX(message_container), bubble_box);
+
+  GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_hexpand(spacer, TRUE);
+  gtk_box_append(GTK_BOX(message_container), spacer);
+
+  gtk_box_append(GTK_BOX(chat_box_), message_container);
+  scroll_to_bottom();
+  return message_label;
 }
 
 void ChatView::clear_chat() {
@@ -2012,6 +2014,138 @@ std::string ChatView::generate_ai_response(const std::string &message) {
   } catch (const std::exception &e) {
     std::cout << "[DEBUG] ChatView: Exception caught: " << e.what() << std::endl;
     return "Error generating response: " + std::string(e.what());
+  }
+}
+
+void ChatView::append_stream_text(const std::string &delta, bool finished) {
+  // Update assistant bubble text incrementally on main thread
+  if (streaming_label_) {
+    if (!delta.empty()) {
+      // Append delta into buffer and refresh label
+      streaming_buffer_ += delta;
+      gtk_label_set_text(GTK_LABEL(streaming_label_), streaming_buffer_.c_str());
+    }
+    // Keep view scrolled to bottom while streaming
+    scroll_to_bottom();
+  }
+
+  if (finished) {
+    // Re-enable controls
+    if (send_button_) {
+      gtk_widget_set_sensitive(send_button_, TRUE);
+    }
+    if (input_entry_) {
+      gtk_widget_set_sensitive(input_entry_, TRUE);
+    }
+
+    // Persist AI message
+    if (session_manager_ && !streaming_buffer_.empty()) {
+      session_manager_->add_message_to_current_session(streaming_buffer_, false);
+    }
+
+    // Reset streaming state
+    streaming_label_ = nullptr;
+    streaming_buffer_.clear();
+    is_streaming_ = false;
+  }
+}
+
+void ChatView::stream_ai_response(const std::string &message) {
+  is_streaming_ = true;
+
+  if (!model_manager_) {
+    // Report error back to UI
+    struct Data { ChatView* self; std::string* msg; bool finished; };
+    Data* d = new Data{this, new std::string("Error: Model manager not available."), true};
+    g_idle_add([](gpointer u) -> gboolean {
+      Data* d = static_cast<Data*>(u);
+      d->self->append_stream_text(*d->msg, d->finished);
+      delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
+    return;
+  }
+
+  if (!model_selector_) {
+    struct Data { ChatView* self; std::string* msg; bool finished; };
+    Data* d = new Data{this, new std::string("Error: Model selector not available."), true};
+    g_idle_add([](gpointer u) -> gboolean {
+      Data* d = static_cast<Data*>(u);
+      d->self->append_stream_text(*d->msg, d->finished);
+      delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
+    return;
+  }
+
+  // Apply config override for DUOROU_FORCE_LLAMA
+  if (config_manager_) {
+    bool force_llama = config_manager_->getBool("model.force_llama", false);
+    if (force_llama) {
+      setenv("DUOROU_FORCE_LLAMA", "1", 1);
+    } else {
+      unsetenv("DUOROU_FORCE_LLAMA");
+    }
+  }
+
+  guint selected_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(model_selector_));
+  auto available_models = model_manager_->getAllModels();
+  if (available_models.empty() || selected_index >= available_models.size()) {
+    struct Data { ChatView* self; std::string* msg; bool finished; };
+    Data* d = new Data{this, new std::string("Error: Invalid or empty model selection."), true};
+    g_idle_add([](gpointer u) -> gboolean {
+      Data* d = static_cast<Data*>(u);
+      d->self->append_stream_text(*d->msg, d->finished);
+      delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
+    return;
+  }
+
+  const auto &selected_model = available_models[selected_index];
+  std::string model_id = selected_model.name;
+
+  try {
+    if (!model_manager_->loadModel(model_id)) {
+      struct Data { ChatView* self; std::string* msg; bool finished; };
+      Data* d = new Data{this, new std::string("Error: Failed to load model: " + model_id), true};
+      g_idle_add([](gpointer u) -> gboolean {
+        Data* d = static_cast<Data*>(u);
+        d->self->append_stream_text(*d->msg, d->finished);
+        delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
+      return;
+    }
+
+    core::TextGenerator *text_generator = model_manager_->getTextGenerator(model_id);
+    if (!text_generator || !text_generator->canGenerate()) {
+      struct Data { ChatView* self; std::string* msg; bool finished; };
+      Data* d = new Data{this, new std::string("Error: Text generator is not ready for generation"), true};
+      g_idle_add([](gpointer u) -> gboolean {
+        Data* d = static_cast<Data*>(u);
+        d->self->append_stream_text(*d->msg, d->finished);
+        delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
+      return;
+    }
+
+    core::GenerationParams params;
+    params.max_tokens = 512;
+    params.temperature = 0.7f;
+    params.top_p = 0.9f;
+    params.top_k = 40;
+    params.repeat_penalty = 1.1f;
+
+    auto cb = [this](int /*token*/, const std::string &text, bool finished) {
+      struct Data { ChatView* self; std::string* delta; bool finished; };
+      Data* d = new Data{this, new std::string(text), finished};
+      g_idle_add([](gpointer u) -> gboolean {
+        Data* d = static_cast<Data*>(u);
+        d->self->append_stream_text(*d->delta, d->finished);
+        delete d->delta; delete d; return G_SOURCE_REMOVE; }, d);
+    };
+
+    // Start streaming; ignore return content here, chunks are handled by callback
+    text_generator->generateStream(message, cb, params);
+  } catch (const std::exception &e) {
+    struct Data { ChatView* self; std::string* msg; bool finished; };
+    Data* d = new Data{this, new std::string(std::string("Error generating response: ") + e.what()), true};
+    g_idle_add([](gpointer u) -> gboolean {
+      Data* d = static_cast<Data*>(u);
+      d->self->append_stream_text(*d->msg, d->finished);
+      delete d->msg; delete d; return G_SOURCE_REMOVE; }, d);
   }
 }
 

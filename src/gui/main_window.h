@@ -135,6 +135,7 @@ private:
   GtkWidget *sidebar_;       // Sidebar
   GtkWidget *content_stack_; // Content stack
   GtkWidget *status_bar_;    // Status bar
+  GtkWidget *paned_;         // Draggable paned container
 
   // Sidebar buttons
   GtkWidget *new_chat_button_;  // New chat button
