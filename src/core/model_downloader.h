@@ -56,7 +56,13 @@ public:
      * @param model_dir 模型存储目录
      */
     ModelDownloader(const std::string& base_url = "https://registry.ollama.ai",
-                   const std::string& model_dir = "~/.ollama/models");
+                   const std::string& model_dir = 
+#ifdef _WIN32
+                   std::string(getenv("USERPROFILE")) + "/.ollama/models"
+#else
+                   "~/.ollama/models"
+#endif
+                   );
     
     /**
      * @brief 析构函数
