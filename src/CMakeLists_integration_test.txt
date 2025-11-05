@@ -1,0 +1,49 @@
+# 独立的模块集成测试
+cmake_minimum_required(VERSION 3.16)
+
+# 兼容 include 与 src 目录调用的源目录解析
+set(DUOROU_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(EXISTS "${DUOROU_SRC_DIR}/test_module_integration.cpp")
+    message(STATUS "Integration tests: using source dir ${DUOROU_SRC_DIR}")
+else()
+    # 当本文件位于 src/ 下被直接处理时，当前目录就是 src
+    set(DUOROU_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    message(STATUS "Integration tests: using source dir ${DUOROU_SRC_DIR}")
+endif()
+
+# 创建集成测试可执行文件
+add_executable(module_integration_test
+    ${DUOROU_SRC_DIR}/test_module_integration.cpp
+    ${DUOROU_SRC_DIR}/core/text_generator.cpp
+)
+
+# 设置C++标准
+set_target_properties(module_integration_test PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+
+# 包含目录
+target_include_directories(module_integration_test PRIVATE
+    ${DUOROU_SRC_DIR}
+    ${DUOROU_SRC_DIR}/core
+    ${DUOROU_SRC_DIR}/ml
+    ${DUOROU_SRC_DIR}/kvcache
+    ${DUOROU_SRC_DIR}/extensions/ollama
+    ${DUOROU_SRC_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/llama.cpp/include
+)
+
+# 链接库
+target_link_libraries(module_integration_test
+    duorou_model
+    llama
+)
+
+# 编译器标志
+target_compile_options(module_integration_test PRIVATE
+    -Wall -Wextra -O2
+)
+
+# 添加测试
+add_test(NAME ModuleIntegrationTest COMMAND module_integration_test)

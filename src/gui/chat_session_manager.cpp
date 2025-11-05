@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 namespace duorou {
 namespace gui {
@@ -10,12 +11,51 @@ namespace gui {
 ChatSessionManager::ChatSessionManager()
     : storage_adapter_(std::make_unique<SessionStorageAdapter>()) {
   // 初始化存储适配器
-  storage_adapter_->initialize("127.0.0.1", 6379);
+  // 优先连接到按配置文件指定的 6385 端口；失败则回退到 6379
+  bool connected = storage_adapter_->initialize("127.0.0.1", 6385);
+  if (!connected) {
+    storage_adapter_->initialize("127.0.0.1", 6379);
+  } else {
+    // 仅在 6385（加载了 requirepass 的配置）时尝试认证
+    storage_adapter_->authenticate("password123");
+  }
 
   // 尝试从存储加载会话
   if (!load_sessions()) {
-    // 如果加载失败或没有会话，创建默认会话
-    create_new_session("Welcome Chat");
+    // 如果新端口（6385）没有会话，尝试从老端口（6379）迁移
+    try {
+      SessionStorageAdapter legacy;
+      if (legacy.initialize("127.0.0.1", 6379)) {
+        // 读取旧端口的所有会话
+        auto legacy_ids = legacy.getAllSessionIds();
+        if (!legacy_ids.empty()) {
+          // 迁移并载入到当前内存与新端口存储
+          for (const auto &sid : legacy_ids) {
+            auto session = legacy.loadSession(sid);
+            if (session) {
+              {
+                std::lock_guard<std::mutex> lock(storage_mutex_);
+                storage_adapter_->saveSession(*session);
+                storage_adapter_->saveToFile();
+              }
+              sessions_.push_back(std::move(session));
+            }
+          }
+          if (!sessions_.empty()) {
+            current_session_id_ = sessions_.front()->get_id();
+            notify_session_list_change();
+            notify_session_change();
+          }
+        }
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "Legacy session migration error: " << e.what() << std::endl;
+    }
+
+    // 若迁移后仍无会话，创建默认会话
+    if (sessions_.empty()) {
+      create_new_session("Welcome Chat");
+    }
   }
 }
 
@@ -24,15 +64,19 @@ std::string ChatSessionManager::create_new_session(const std::string &title) {
   std::string session_id = session->get_id();
 
   // 保存到存储
-  storage_adapter_->saveSession(*session);
+  {
+    std::lock_guard<std::mutex> lock(storage_mutex_);
+    storage_adapter_->saveSession(*session);
+    // 保存到磁盘
+    storage_adapter_->saveToFile();
+  }
 
   sessions_.push_back(std::move(session));
 
   // 切换到新会话
   current_session_id_ = session_id;
 
-  // 保存到磁盘
-  storage_adapter_->saveToFile();
+  // 已在互斥区保存到磁盘
 
   notify_session_list_change();
   notify_session_change();
@@ -58,7 +102,12 @@ bool ChatSessionManager::delete_session(const std::string &session_id) {
   }
 
   // 从存储中删除
-  storage_adapter_->deleteSession(session_id);
+  {
+    std::lock_guard<std::mutex> lock(storage_mutex_);
+    storage_adapter_->deleteSession(session_id);
+    // 保存到磁盘
+    storage_adapter_->saveToFile();
+  }
 
   // 如果删除的是当前会话，需要切换到其他会话
   bool was_current = (session_id == current_session_id_);
@@ -76,8 +125,7 @@ bool ChatSessionManager::delete_session(const std::string &session_id) {
     }
   }
 
-  // 保存到磁盘
-  storage_adapter_->saveToFile();
+  // 已在互斥区保存到磁盘
 
   notify_session_list_change();
   return true;
@@ -118,11 +166,23 @@ bool ChatSessionManager::add_message_to_current_session(
 
   current->add_message(message, is_user);
 
-  // 保存更新的会话到存储
-  storage_adapter_->saveSession(*current);
-  storage_adapter_->saveToFile();
+  // 立即通知 UI（更新会话标题等）；持久化改为后台线程，避免阻塞主线程
+  notify_session_list_change();
 
-  notify_session_list_change(); // 可能会更新会话标题
+  // 将持久化移至后台线程，保护存储操作避免并发竞争
+  std::string sid = current->get_id();
+  std::thread([this, sid]() {
+    try {
+      std::lock_guard<std::mutex> lock(storage_mutex_);
+      ChatSession *session = get_session(sid);
+      if (!session) return;
+      storage_adapter_->saveSession(*session);
+      storage_adapter_->saveToFile();
+    } catch (const std::exception &e) {
+      std::cerr << "Async save session error: " << e.what() << std::endl;
+    }
+  }).detach();
+
   return true;
 }
 
@@ -147,8 +207,11 @@ bool ChatSessionManager::set_session_title(const std::string &session_id,
   if (it != sessions_.end()) {
     (*it)->set_title(new_title);
     // 保存更新的会话
-    storage_adapter_->saveSession(**it);
-    storage_adapter_->saveToFile();
+    {
+      std::lock_guard<std::mutex> lock(storage_mutex_);
+      storage_adapter_->saveSession(**it);
+      storage_adapter_->saveToFile();
+    }
     notify_session_list_change();
     return true;
   }
@@ -166,8 +229,11 @@ bool ChatSessionManager::set_session_custom_name(const std::string &session_id,
   if (it != sessions_.end()) {
     (*it)->set_custom_name(custom_name);
     // 保存更新的会话
-    storage_adapter_->saveSession(**it);
-    storage_adapter_->saveToFile();
+    {
+      std::lock_guard<std::mutex> lock(storage_mutex_);
+      storage_adapter_->saveSession(**it);
+      storage_adapter_->saveToFile();
+    }
     notify_session_list_change();
     return true;
   }
@@ -181,6 +247,7 @@ bool ChatSessionManager::rename_session(const std::string &session_id,
 
 bool ChatSessionManager::save_sessions() {
   try {
+    std::lock_guard<std::mutex> lock(storage_mutex_);
     // 保存所有会话到存储
     for (const auto &session : sessions_) {
       storage_adapter_->saveSession(*session);
@@ -196,7 +263,8 @@ bool ChatSessionManager::save_sessions() {
 
 bool ChatSessionManager::load_sessions() {
   try {
-    // 从存储加载数据
+    std::lock_guard<std::mutex> lock(storage_mutex_);
+    // 从存储加载数据（磁盘/远端）
     if (!storage_adapter_->loadFromFile()) {
       return false;
     }

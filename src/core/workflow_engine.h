@@ -17,18 +17,18 @@ namespace duorou {
 namespace core {
 
 /**
- * @brief 任务状态枚举
+ * @brief Task status enumeration
  */
 enum class TaskStatus {
-    PENDING,        ///< 等待执行
-    RUNNING,        ///< 正在执行
-    COMPLETED,      ///< 已完成
-    FAILED,         ///< 执行失败
-    CANCELLED       ///< 已取消
+    PENDING,        ///< Waiting for execution
+    RUNNING,        ///< Currently executing
+    COMPLETED,      ///< Completed
+    FAILED,         ///< Execution failed
+    CANCELLED       ///< Cancelled
 };
 
 /**
- * @brief 任务优先级枚举
+ * @brief Task priority enumeration
  */
 enum class TaskPriority {
     LOW = 0,
@@ -38,316 +38,316 @@ enum class TaskPriority {
 };
 
 /**
- * @brief 任务结果结构
+ * @brief Task result structure
  */
 struct TaskResult {
-    bool success;                   ///< 是否成功
-    std::string message;            ///< 结果消息
-    std::string output_data;        ///< 输出数据
-    std::chrono::milliseconds duration;  ///< 执行时长
+    bool success;                   ///< Whether successful
+    std::string message;            ///< Result message
+    std::string output_data;        ///< Output data
+    std::chrono::milliseconds duration;  ///< Execution duration
     
     TaskResult() : success(false), duration(0) {}
 };
 
 /**
- * @brief 任务基类
+ * @brief Base task class
  */
 class BaseTask {
 public:
     /**
-     * @brief 构造函数
-     * @param id 任务ID
-     * @param name 任务名称
-     * @param priority 任务优先级
+     * @brief Constructor
+     * @param id Task ID
+     * @param name Task name
+     * @param priority Task priority
      */
     BaseTask(const std::string& id, const std::string& name, TaskPriority priority = TaskPriority::NORMAL);
     
     /**
-     * @brief 虚析构函数
+     * @brief Virtual destructor
      */
     virtual ~BaseTask() = default;
     
     /**
-     * @brief 执行任务
-     * @return 任务结果
+     * @brief Execute task
+     * @return Task result
      */
     virtual TaskResult execute() = 0;
     
     /**
-     * @brief 取消任务
+     * @brief Cancel task
      */
     virtual void cancel();
     
     /**
-     * @brief 获取任务所需的模型
-     * @return 模型名称，空字符串表示不需要特定模型
+     * @brief Get required model for task
+     * @return Model name, empty string means no specific model required
      */
     virtual std::string getRequiredModel() const { return ""; }
     
     /**
-     * @brief 获取任务ID
-     * @return 任务ID
+     * @brief Get task ID
+     * @return Task ID
      */
     const std::string& getId() const { return id_; }
     
     /**
-     * @brief 获取任务名称
-     * @return 任务名称
+     * @brief Get task name
+     * @return Task name
      */
     const std::string& getName() const { return name_; }
     
     /**
-     * @brief 获取任务优先级
-     * @return 任务优先级
+     * @brief Get task priority
+     * @return Task priority
      */
     TaskPriority getPriority() const { return priority_; }
     
     /**
-     * @brief 获取任务状态
-     * @return 任务状态
+     * @brief Get task status
+     * @return Task status
      */
     TaskStatus getStatus() const { return status_; }
     
     /**
-     * @brief 设置任务状态
-     * @param status 新状态
+     * @brief Set task status
+     * @param status New status
      */
     void setStatus(TaskStatus status) { status_ = status; }
     
     /**
-     * @brief 检查任务是否被取消
-     * @return 被取消返回true，否则返回false
+     * @brief Check if task is cancelled
+     * @return Returns true if cancelled, false otherwise
      */
     bool isCancelled() const { return cancelled_.load(); }
     
     /**
-     * @brief 获取创建时间
-     * @return 创建时间
+     * @brief Get creation time
+     * @return Creation time
      */
     std::chrono::system_clock::time_point getCreatedTime() const { return created_time_; }
     
 protected:
-    std::string id_;                                        ///< 任务ID
-    std::string name_;                                      ///< 任务名称
-    TaskPriority priority_;                                 ///< 任务优先级
-    TaskStatus status_;                                     ///< 任务状态
-    std::atomic<bool> cancelled_;                           ///< 是否被取消
-    std::chrono::system_clock::time_point created_time_;   ///< 创建时间
+    std::string id_;                                        ///< Task ID
+    std::string name_;                                      ///< Task name
+    TaskPriority priority_;                                 ///< Task priority
+    TaskStatus status_;                                     ///< Task status
+    std::atomic<bool> cancelled_;                           ///< Whether cancelled
+    std::chrono::system_clock::time_point created_time_;   ///< Creation time
 };
 
 /**
- * @brief 任务比较器（用于优先队列）
+ * @brief Task comparator (for priority queue)
  */
 struct TaskComparator {
     bool operator()(const std::shared_ptr<BaseTask>& a, const std::shared_ptr<BaseTask>& b) const {
-        // 优先级高的任务优先执行
+        // Higher priority tasks execute first
         if (a->getPriority() != b->getPriority()) {
             return a->getPriority() < b->getPriority();
         }
-        // 优先级相同时，创建时间早的优先执行
+        // When priority is same, earlier created tasks execute first
         return a->getCreatedTime() > b->getCreatedTime();
     }
 };
 
 /**
- * @brief 工作流引擎类
+ * @brief Workflow engine class
  * 
- * 负责任务的调度、执行和管理，支持优先级队列和并发执行
+ * Responsible for task scheduling, execution and management, supports priority queue and concurrent execution
  */
 class WorkflowEngine {
 public:
     /**
-     * @brief 构造函数
+     * @brief Constructor
      */
     WorkflowEngine();
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~WorkflowEngine();
     
     /**
-     * @brief 初始化工作流引擎
-     * @param worker_count 工作线程数量，0表示使用CPU核心数
-     * @return 成功返回true，失败返回false
+     * @brief Initialize workflow engine
+     * @param worker_count Number of worker threads, 0 means use CPU core count
+     * @return Returns true on success, false on failure
      */
     bool initialize(size_t worker_count = 0);
     
     /**
-     * @brief 启动工作流引擎
-     * @return 成功返回true，失败返回false
+     * @brief Start workflow engine
+     * @return Returns true on success, false on failure
      */
     bool start();
     
     /**
-     * @brief 停止工作流引擎
+     * @brief Stop workflow engine
      */
     void stop();
     
     /**
-     * @brief 提交任务
-     * @param task 任务指针
-     * @return 成功返回true，失败返回false
+     * @brief Submit task
+     * @param task Task pointer
+     * @return Returns true on success, false on failure
      */
     bool submitTask(std::shared_ptr<BaseTask> task);
     
     /**
-     * @brief 提交需要资源的任务
-     * @param task 任务指针
-     * @param required_resources 所需资源列表
-     * @param lock_mode 锁定模式
-     * @return 成功返回true，失败返回false
+     * @brief Submit task that requires resources
+     * @param task Task pointer
+     * @param required_resources List of required resources
+     * @param lock_mode Lock mode
+     * @return Returns true on success, false on failure
      */
     bool submitTaskWithResources(std::shared_ptr<BaseTask> task, const std::vector<std::string>& required_resources, LockMode lock_mode = LockMode::EXCLUSIVE);
     
     /**
-     * @brief 取消任务
-     * @param task_id 任务ID
-     * @return 成功返回true，失败返回false
+     * @brief Cancel task
+     * @param task_id Task ID
+     * @return Returns true on success, false on failure
      */
     bool cancelTask(const std::string& task_id);
     
     /**
-     * @brief 等待任务完成
-     * @param task_id 任务ID
-     * @param timeout_ms 超时时间（毫秒），0表示无限等待
-     * @return 任务结果
+     * @brief Wait for task completion
+     * @param task_id Task ID
+     * @param timeout_ms Timeout in milliseconds, 0 means infinite wait
+     * @return Task result
      */
     TaskResult waitForTask(const std::string& task_id, int timeout_ms = 0);
     
     /**
-     * @brief 获取任务状态
-     * @param task_id 任务ID
-     * @return 任务状态
+     * @brief Get task status
+     * @param task_id Task ID
+     * @return Task status
      */
     TaskStatus getTaskStatus(const std::string& task_id) const;
     
     /**
-     * @brief 获取任务结果
-     * @param task_id 任务ID
-     * @return 任务结果，如果任务不存在或未完成返回空结果
+     * @brief Get task result
+     * @param task_id Task ID
+     * @return Task result, returns empty result if task doesn't exist or is not completed
      */
     TaskResult getTaskResult(const std::string& task_id) const;
     
     /**
-     * @brief 获取等待队列中的任务数量
-     * @return 等待任务数量
+     * @brief Get number of tasks in waiting queue
+     * @return Number of pending tasks
      */
     size_t getPendingTaskCount() const;
     
     /**
-     * @brief 获取正在执行的任务数量
-     * @return 正在执行的任务数量
+     * @brief Get number of running tasks
+     * @return Number of running tasks
      */
     size_t getRunningTaskCount() const;
     
     /**
-     * @brief 获取已完成的任务数量
-     * @return 已完成的任务数量
+     * @brief Get number of completed tasks
+     * @return Number of completed tasks
      */
     size_t getCompletedTaskCount() const;
     
     /**
-     * @brief 清理已完成的任务记录
+     * @brief Clean up completed task records
      */
     void cleanupCompletedTasks();
     
     /**
-     * @brief 设置任务完成回调函数
-     * @param callback 回调函数
+     * @brief Set task completion callback function
+     * @param callback Callback function
      */
     void setTaskCompletionCallback(std::function<void(const std::string&, const TaskResult&)> callback);
     
     /**
-     * @brief 获取资源管理器
-     * @return 资源管理器引用
+     * @brief Get resource manager
+     * @return Resource manager reference
      */
     ResourceManager& getResourceManager() { return *resource_manager_; }
     
     /**
-     * @brief 获取资源管理器（常量版本）
-     * @return 资源管理器常量引用
+     * @brief Get resource manager (const version)
+     * @return Resource manager const reference
      */
     const ResourceManager& getResourceManager() const { return *resource_manager_; }
     
     /**
-     * @brief 启用/禁用模型切换优化
-     * @param enable 是否启用
+     * @brief Enable/disable model switching optimization
+     * @param enable Whether to enable
      */
     void optimizeModelSwitching(bool enable = true) { optimize_model_switching_ = enable; }
     
     /**
-     * @brief 检查是否启用了模型切换优化
-     * @return 启用返回true，否则返回false
+     * @brief Check if model switching optimization is enabled
+     * @return Returns true if enabled, false otherwise
      */
     bool isModelSwitchingOptimized() const { return optimize_model_switching_; }
     
     /**
-     * @brief 获取工作线程数量
-     * @return 工作线程数量
+     * @brief Get number of worker threads
+     * @return Number of worker threads
      */
     size_t getWorkerCount() const { return worker_count_; }
     
     /**
-     * @brief 检查引擎是否正在运行
-     * @return 正在运行返回true，否则返回false
+     * @brief Check if engine is running
+     * @return Returns true if running, false otherwise
      */
     bool isRunning() const { return running_.load(); }
     
 private:
     /**
-     * @brief 工作线程函数
+     * @brief Worker thread function
      */
     void workerThread();
     
     /**
-     * @brief 执行任务
-     * @param task 任务指针
+     * @brief Execute task
+     * @param task Task pointer
      */
     void executeTask(std::shared_ptr<BaseTask> task);
     
     /**
-     * @brief 生成唯一的任务ID
-     * @return 任务ID
+     * @brief Generate unique task ID
+     * @return Task ID
      */
     std::string generateTaskId();
     
 private:
-    // 任务队列和管理
+    // Task queue and management
     std::priority_queue<std::shared_ptr<BaseTask>, 
                        std::vector<std::shared_ptr<BaseTask>>, 
-                       TaskComparator> task_queue_;                     ///< 任务优先队列
-    std::unordered_map<std::string, std::shared_ptr<BaseTask>> all_tasks_;  ///< 所有任务映射
-    std::unordered_map<std::string, TaskResult> task_results_;          ///< 任务结果映射
+                       TaskComparator> task_queue_;                     ///< Task priority queue
+    std::unordered_map<std::string, std::shared_ptr<BaseTask>> all_tasks_;  ///< All tasks mapping
+    std::unordered_map<std::string, TaskResult> task_results_;          ///< Task results mapping
     
-    // 线程管理
-    std::vector<std::thread> worker_threads_;                           ///< 工作线程池
-    size_t worker_count_;                                               ///< 工作线程数量
-    std::atomic<bool> running_;                                         ///< 是否正在运行
-    std::atomic<bool> stop_requested_;                                  ///< 是否请求停止
+    // Thread management
+    std::vector<std::thread> worker_threads_;                           ///< Worker thread pool
+    size_t worker_count_;                                               ///< Number of worker threads
+    std::atomic<bool> running_;                                         ///< Whether running
+    std::atomic<bool> stop_requested_;                                  ///< Whether stop requested
     
-    // 同步原语
-    mutable std::mutex queue_mutex_;                                    ///< 队列互斥锁
-    mutable std::mutex results_mutex_;                                  ///< 结果互斥锁
-    std::condition_variable queue_condition_;                           ///< 队列条件变量
+    // Synchronization primitives
+    mutable std::mutex queue_mutex_;                                    ///< Queue mutex
+    mutable std::mutex results_mutex_;                                  ///< Results mutex
+    std::condition_variable queue_condition_;                           ///< Queue condition variable
     
-    // 统计信息
-    std::atomic<size_t> running_task_count_;                           ///< 正在执行的任务数量
-    std::atomic<size_t> completed_task_count_;                         ///< 已完成的任务数量
+    // Statistics
+    std::atomic<size_t> running_task_count_;                           ///< Number of running tasks
+    std::atomic<size_t> completed_task_count_;                         ///< Number of completed tasks
     
-    // 回调函数
-    std::function<void(const std::string&, const TaskResult&)> completion_callback_;  ///< 任务完成回调
+    // Callback functions
+    std::function<void(const std::string&, const TaskResult&)> completion_callback_;  ///< Task completion callback
     
-    // 资源管理
-    std::unique_ptr<ResourceManager> resource_manager_;                 ///< 资源管理器
-    std::unordered_map<std::string, std::vector<std::string>> task_resources_; ///< 任务资源映射
-    mutable std::mutex task_resources_mutex_;                          ///< 任务资源映射互斥锁
+    // Resource management
+    std::unique_ptr<ResourceManager> resource_manager_;                 ///< Resource manager
+    std::unordered_map<std::string, std::vector<std::string>> task_resources_; ///< Task resource mapping
+    mutable std::mutex task_resources_mutex_;                          ///< Task resource mapping mutex
     
-    /// 模型切换优化相关
-    std::atomic<bool> optimize_model_switching_;                        ///< 是否启用模型切换优化
-    std::string current_loaded_model_;                                  ///< 当前加载的模型
+    /// Model switching optimization related
+    std::atomic<bool> optimize_model_switching_;                        ///< Whether model switching optimization is enabled
+    std::string current_loaded_model_;                                  ///< Currently loaded model
     
-    bool initialized_;                                                  ///< 是否已初始化
+    bool initialized_;                                                  ///< Whether initialized
 };
 
 } // namespace core

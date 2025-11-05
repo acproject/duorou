@@ -5,10 +5,10 @@
 
 int main(int argc, char* argv[]) {
     try {
-        // 创建应用程序实例
+        // Create application instance
         auto app = std::make_unique<duorou::core::Application>(argc, argv);
         
-        // 初始化应用程序
+        // Initialize application
         if (!app->initialize()) {
             std::cerr << "Failed to initialize application" << std::endl;
             return 1;
@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
         
         std::cout << "Duorou application initialized successfully" << std::endl;
         
-        // 运行应用程序
+        // Run application
         int result = app->run();
         
         std::cout << "Duorou application exited with code: " << result << std::endl;

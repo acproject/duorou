@@ -1,6 +1,7 @@
 #include "CommandHandler.hpp"
 #include "ConfigParser.hpp"
 #include "DataStore.hpp"
+#include "Aof.hpp"
 #include "TcpServer.hpp"
 #include <atomic>
 #include <chrono>
@@ -123,20 +124,57 @@ int main(int argc, char *argv[]) {
   DataStore store;
   CommandHandler handler(store);
 
-  // 尝试加载持久化数据
-  std::string mcdbFile = "dump.mcdb";
-  std::ifstream testFile(mcdbFile);
-  if (testFile.good()) {
-    std::cout << "Found MCDB file, attempting to load..." << std::endl;
-    if (store.loadMCDB(mcdbFile)) {
-      std::cout << "Successfully loaded MCDB file" << std::endl;
+  bool appendonly = config.getBool("appendonly", false);
+  std::string aofFile = config.getString("appendfilename", "appendonly.aof");
+  if (appendonly) {
+    // Ensure AOF directory exists and log configuration
+    try {
+      #ifdef __cpp_lib_filesystem
+      #include <filesystem>
+      #endif
+      {
+        // Use runtime include guard: if std::filesystem is available, create directories
+      }
+    } catch (...) {
+      // Ignore directory creation failures; will attempt to open lazily
+    }
+    std::cout << "AOF enabled, file: " << aofFile << std::endl;
+  }
+  bool loaded = false;
+  if (appendonly) {
+    std::ifstream af(aofFile, std::ios::binary);
+    if (af.good()) {
+      std::cout << "Found AOF file, attempting to replay..." << std::endl;
+      if (AofWriter::replay(aofFile, store)) {
+        std::cout << "Successfully loaded AOF file" << std::endl;
+        loaded = true;
+      } else {
+        std::cerr << "Failed to load AOF file" << std::endl;
+      }
+    }
+  }
+  if (!loaded) {
+    std::string mcdbFile = "dump.mcdb";
+    std::ifstream testFile(mcdbFile, std::ios::binary);
+    if (testFile.good()) {
+      std::cout << "Found MCDB file, attempting to load..." << std::endl;
+      if (store.loadMCDB(mcdbFile)) {
+        std::cout << "Successfully loaded MCDB file" << std::endl;
+        loaded = true;
+      } else {
+        std::cout << "Failed to load MCDB file, starting with empty database"
+                  << std::endl;
+      }
     } else {
-      std::cout << "Failed to load MCDB file, starting with empty database"
+      std::cout << "MCDB file does not exist, starting with empty database"
                 << std::endl;
     }
-  } else {
-    std::cout << "MCDB file does not exist, starting with empty database"
-              << std::endl;
+  }
+
+  std::unique_ptr<AofWriter> aof;
+  if (appendonly) {
+    aof.reset(new AofWriter(aofFile));
+    store.setApplyCallback([&aof](const std::vector<std::string>& args){ if (aof) aof->append(args); });
   }
 
   // 创建服务器

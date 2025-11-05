@@ -5,10 +5,12 @@
 #include <string>
 #include <vector>
 
-#ifdef HAVE_GTK
+#if (defined(HAVE_GTK) && __has_include(<gtk/gtk.h>)) || __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
 #else
-// GTK类型的占位符定义
+#define DUOROU_HAS_GTK 0
+// GTK 类型占位符定义（无 GTK 开发头文件时避免诊断与编译错误）
 typedef void* GtkWidget;
 typedef void* GtkMenu;
 typedef void* GtkPopoverMenu;
@@ -16,369 +18,378 @@ typedef void* GdkPixbuf;
 typedef void* gpointer;
 typedef unsigned int guint;
 typedef int gboolean;
+typedef int gint;
+typedef double gdouble;
+#ifndef TRUE
 #define TRUE 1
+#endif
+#ifndef FALSE
 #define FALSE 0
+#endif
+#ifndef G_CALLBACK
 #define G_CALLBACK(f) ((void(*)(void))(f))
-#define g_signal_connect(instance, detailed_signal, c_handler, data) \
-    ((void)0)
+#endif
+#ifndef g_signal_connect
+#define g_signal_connect(instance, detailed_signal, c_handler, data) ((void)0)
+#endif
 #endif
 
 namespace duorou {
 namespace gui {
 
 /**
- * 系统托盘状态枚举
+ * System tray status enumeration
  */
 enum class TrayStatus {
-    Idle,           // 空闲状态
-    Working,        // 工作中
-    Error,          // 错误状态
-    Generating,     // 生成中
-    Loading         // 加载中
+    Idle,           // Idle state
+    Working,        // Working state
+    Error,          // Error state
+    Generating,     // Generating state
+    Loading         // Loading state
 };
 
 /**
- * 系统托盘图标类型
+ * System tray icon type
  */
 enum class TrayIconType {
-    SYSTEM,     // 系统图标
-    CUSTOM,     // 自定义图标
-    TEXT        // 文本图标
+    SYSTEM,     // System icon
+    CUSTOM,     // Custom icon
+    TEXT        // Text icon
 };
 
 /**
- * 托盘菜单项结构
+ * Tray menu item structure
  */
 struct TrayMenuItem {
-        std::string id;                           // 菜单项ID
-        std::string label;                        // 显示文本
-        std::string icon;                         // 图标路径或名称
-        bool enabled = true;                      // 是否启用
-        bool separator = false;                   // 是否为分隔符
-        bool visible = true;                      // 是否可见
-        bool checked = false;                     // 是否选中
-        std::string badge;                        // 徽章文本
-        std::string tooltip;                      // 提示文本
-        std::string shortcut;                     // 快捷键 (如 "Ctrl+N", "Cmd+Q")
-        int priority = 0;                         // 菜单项优先级 (用于排序)
-        std::function<void()> callback;           // 点击回调
-         std::function<void(bool)> toggle_callback; // 切换回调 (用于复选框菜单项)
-         std::vector<TrayMenuItem> submenu;        // 子菜单
+        std::string id;                           // Menu item ID
+        std::string label;                        // Display text
+        std::string icon;                         // Icon path or name
+        bool enabled = true;                      // Whether enabled
+        bool separator = false;                   // Whether is separator
+        bool visible = true;                      // Whether visible
+        bool checked = false;                     // Whether checked
+        std::string badge;                        // Badge text
+        std::string tooltip;                      // Tooltip text
+        std::string shortcut;                     // Shortcut key (e.g. "Ctrl+N", "Cmd+Q")
+        int priority = 0;                         // Menu item priority (for sorting)
+        std::function<void()> callback;           // Click callback
+         std::function<void(bool)> toggle_callback; // Toggle callback (for checkbox menu items)
+         std::vector<TrayMenuItem> submenu;        // Submenu
      };
 
 /**
- * 系统托盘类
- * 提供系统托盘图标、菜单和状态指示功能
+ * System tray class
+ * Provides system tray icon, menu and status indication functionality
  */
 class SystemTray {
 public:
     SystemTray();
     ~SystemTray();
 
-    // 禁用拷贝构造和赋值
+    // Disable copy constructor and assignment
     SystemTray(const SystemTray&) = delete;
     SystemTray& operator=(const SystemTray&) = delete;
 
     /**
-     * 初始化系统托盘
-     * @param app_name 应用程序名称
-     * @param icon_path 托盘图标路径
-     * @return 是否初始化成功
+     * Initialize system tray
+     * @param app_name Application name
+     * @param icon_path Tray icon path
+     * @return Whether initialization succeeded
      */
     bool initialize(const std::string& app_name, const std::string& icon_path = "");
 
     /**
-     * 显示系统托盘图标
+     * Show system tray icon
      */
     void show();
 
     /**
-     * 隐藏系统托盘图标
+     * Hide system tray icon
      */
     void hide();
 
     /**
-     * 检查托盘是否可见
-     * @return 是否可见
+     * Check if tray is visible
+     * @return Whether visible
      */
     bool isVisible() const;
 
     /**
-     * 设置托盘图标
-     * @param icon_path 图标文件路径
-     * @return 是否设置成功
+     * Set tray icon
+     * @param icon_path Icon file path
+     * @return Whether setting succeeded
      */
     bool setIcon(const std::string& icon_path);
 
     /**
-     * 设置托盘图标（从资源）
-     * @param icon_name 图标名称
-     * @return 是否设置成功
+     * Set tray icon (from resource)
+     * @param icon_name Icon name
+     * @return Whether setting succeeded
      */
     bool setIconFromTheme(const std::string& icon_name);
 
     /**
-     * 设置托盘提示文本
-     * @param tooltip 提示文本
+     * Set tray tooltip text
+     * @param tooltip Tooltip text
      */
     void setTooltip(const std::string& tooltip);
 
     /**
-     * 设置托盘状态
-     * @param status 状态
+     * Set tray status
+     * @param status Status
      */
     void setStatus(TrayStatus status);
 
     /**
-     * 获取当前状态
-     * @return 当前状态
+     * Get current status
+     * @return Current status
      */
     TrayStatus getStatus() const;
 
     /**
-     * 设置托盘菜单
-     * @param menu_items 菜单项列表
+     * Set tray menu
+     * @param menu_items Menu item list
      */
     void setMenu(const std::vector<TrayMenuItem>& menu_items);
 
     /**
-     * 添加菜单项
-     * @param item 菜单项
+     * Add menu item
+     * @param item Menu item
      */
     void addMenuItem(const TrayMenuItem& item);
 
     /**
-     * 移除菜单项
-     * @param item_id 菜单项ID
+     * Remove menu item
+     * @param item_id Menu item ID
      */
     void removeMenuItem(const std::string& item_id);
 
     /**
-     * 启用/禁用菜单项
-     * @param item_id 菜单项ID
-     * @param enabled 是否启用
+     * Enable/disable menu item
+     * @param item_id Menu item ID
+     * @param enabled Whether to enable
      */
     void setMenuItemEnabled(const std::string& item_id, bool enabled);
 
     /**
-     * 查找菜单项
-     * @param item_id 菜单项ID
-     * @return 菜单项指针，未找到返回nullptr
+     * Find menu item
+     * @param item_id Menu item ID
+     * @return Menu item pointer, returns nullptr if not found
      */
     TrayMenuItem* findMenuItem(const std::string& item_id);
 
     /**
-     * 更新菜单项标签
-     * @param item_id 菜单项ID
-     * @param label 新标签
-     * @return 是否更新成功
+     * Update menu item label
+     * @param item_id Menu item ID
+     * @param label New label
+     * @return Whether update succeeded
      */
     bool updateMenuItemLabel(const std::string& item_id, const std::string& label);
 
     /**
-     * 更新菜单项图标
-     * @param item_id 菜单项ID
-     * @param icon_name 图标名称
-     * @return 是否更新成功
+     * Update menu item icon
+     * @param item_id Menu item ID
+     * @param icon_name Icon name
+     * @return Whether update succeeded
      */
     bool updateMenuItemIcon(const std::string& item_id, const std::string& icon_name);
 
     /**
-     * 更新菜单项回调
-     * @param item_id 菜单项ID
-     * @param callback 新回调函数
-     * @return 是否更新成功
+     * Update menu item callback
+     * @param item_id Menu item ID
+     * @param callback New callback function
+     * @return Whether update succeeded
      */
     bool updateMenuItemCallback(const std::string& item_id, std::function<void()> callback);
 
     /**
-     * 批量添加菜单项
-     * @param items 菜单项列表
+     * Batch add menu items
+     * @param items Menu item list
      */
     void addMenuItems(const std::vector<TrayMenuItem>& items);
 
     /**
-     * 批量移除菜单项
-     * @param item_ids 菜单项ID列表
+     * Batch remove menu items
+     * @param item_ids Menu item ID list
      */
     void removeMenuItems(const std::vector<std::string>& item_ids);
 
     /**
-     * 清空所有菜单项
+     * Clear all menu items
      */
     void clearMenu();
 
     /**
-     * 获取所有菜单项
-     * @return 菜单项列表的常量引用
+     * Get all menu items
+     * @return Constant reference to menu item list
      */
     const std::vector<TrayMenuItem>& getMenuItems() const;
 
     /**
-     * 检查菜单项是否存在
-     * @param item_id 菜单项ID
-     * @return 是否存在
+     * Check if menu item exists
+     * @param item_id Menu item ID
+     * @return Whether exists
      */
     bool hasMenuItem(const std::string& item_id) const;
 
     /**
-     * 添加子菜单项
-     * @param parent_id 父菜单项ID
-     * @param item 子菜单项
-     * @return 是否添加成功
+     * Add submenu item
+     * @param parent_id Parent menu item ID
+     * @param item Submenu item
+     * @return Whether addition succeeded
      */
     bool addSubMenuItem(const std::string& parent_id, const TrayMenuItem& item);
 
     /**
-     * 移除子菜单项
-     * @param parent_id 父菜单项ID
-     * @param item_id 子菜单项ID
-     * @return 是否移除成功
+     * Remove submenu item
+     * @param parent_id Parent menu item ID
+     * @param item_id Submenu item ID
+     * @return Whether removal succeeded
      */
     bool removeSubMenuItem(const std::string& parent_id, const std::string& item_id);
 
     /**
-     * 查找子菜单项
-     * @param parent_id 父菜单项ID
-     * @param item_id 子菜单项ID
-     * @return 子菜单项指针，未找到返回nullptr
+     * Find submenu item
+     * @param parent_id Parent menu item ID
+     * @param item_id Submenu item ID
+     * @return Submenu item pointer, returns nullptr if not found
      */
     TrayMenuItem* findSubMenuItem(const std::string& parent_id, const std::string& item_id);
 
     /**
-     * 设置子菜单
-     * @param parent_id 父菜单项ID
-     * @param submenu_items 子菜单项列表
-     * @return 是否设置成功
+     * Set submenu
+     * @param parent_id Parent menu item ID
+     * @param submenu_items Submenu item list
+     * @return Whether setting succeeded
      */
     bool setSubMenu(const std::string& parent_id, const std::vector<TrayMenuItem>& submenu_items);
 
     /**
-     * 清空子菜单
-     * @param parent_id 父菜单项ID
-     * @return 是否清空成功
+     * Clear submenu
+     * @param parent_id Parent menu item ID
+     * @return Whether clearing succeeded
      */
     bool clearSubMenu(const std::string& parent_id);
 
     /**
-     * 设置菜单项可见性
-     * @param item_id 菜单项ID
-     * @param visible 是否可见
+     * Set menu item visibility
+     * @param item_id Menu item ID
+     * @param visible Whether visible
      */
     void setMenuItemVisible(const std::string& item_id, bool visible);
 
     /**
-     * 检查菜单项是否可见
-     * @param item_id 菜单项ID
-     * @return 是否可见
+     * Check if menu item is visible
+     * @param item_id Menu item ID
+     * @return Whether visible
      */
     bool isMenuItemVisible(const std::string& item_id) const;
 
     /**
-     * 设置菜单项选中状态
-     * @param item_id 菜单项ID
-     * @param checked 是否选中
+     * Set menu item checked state
+     * @param item_id Menu item ID
+     * @param checked Whether checked
      */
     void setMenuItemChecked(const std::string& item_id, bool checked);
 
     /**
-     * 检查菜单项是否选中
-     * @param item_id 菜单项ID
-     * @return 是否选中
+     * Check if menu item is checked
+     * @param item_id Menu item ID
+     * @return Whether checked
      */
     bool isMenuItemChecked(const std::string& item_id) const;
 
     /**
-     * 设置菜单项徽章
-     * @param item_id 菜单项ID
-     * @param badge 徽章文本
+     * Set menu item badge
+     * @param item_id Menu item ID
+     * @param badge Badge text
      */
     void setMenuItemBadge(const std::string& item_id, const std::string& badge);
 
     /**
-     * 获取菜单项徽章
-     * @param item_id 菜单项ID
-     * @return 徽章文本
+     * Get menu item badge
+     * @param item_id Menu item ID
+     * @return Badge text
      */
     std::string getMenuItemBadge(const std::string& item_id) const;
 
     /**
-     * 设置菜单项提示文本
-     * @param item_id 菜单项ID
-     * @param tooltip 提示文本
+     * Set menu item tooltip text
+     * @param item_id Menu item ID
+     * @param tooltip Tooltip text
      */
     void setMenuItemTooltip(const std::string& item_id, const std::string& tooltip);
 
     /**
-     * 获取菜单项提示文本
-     * @param item_id 菜单项ID
-     * @return 提示文本
+     * Get menu item tooltip text
+     * @param item_id Menu item ID
+     * @return Tooltip text
      */
     std::string getMenuItemTooltip(const std::string& item_id) const;
 
      /**
-      * 设置菜单项快捷键
-      * @param item_id 菜单项ID
-      * @param shortcut 快捷键字符串 (如 "Ctrl+N", "Cmd+Q")
+      * Set menu item shortcut
+      * @param item_id Menu item ID
+      * @param shortcut Shortcut string (e.g. "Ctrl+N", "Cmd+Q")
       */
      void setMenuItemShortcut(const std::string& item_id, const std::string& shortcut);
 
      /**
-      * 获取菜单项快捷键
-      * @param item_id 菜单项ID
-      * @return 快捷键字符串
+      * Get menu item shortcut
+      * @param item_id Menu item ID
+      * @return Shortcut string
       */
      std::string getMenuItemShortcut(const std::string& item_id) const;
 
      /**
-      * 设置菜单项优先级
-      * @param item_id 菜单项ID
-      * @param priority 优先级值
+      * Set menu item priority
+      * @param item_id Menu item ID
+      * @param priority Priority value
       */
      void setMenuItemPriority(const std::string& item_id, int priority);
 
      /**
-      * 获取菜单项优先级
-      * @param item_id 菜单项ID
-      * @return 优先级值
+      * Get menu item priority
+      * @param item_id Menu item ID
+      * @return Priority value
       */
      int getMenuItemPriority(const std::string& item_id) const;
 
      /**
-      * 设置菜单项切换回调
-      * @param item_id 菜单项ID
-      * @param callback 切换回调函数
+      * Set menu item toggle callback
+      * @param item_id Menu item ID
+      * @param callback Toggle callback function
       */
      void setMenuItemToggleCallback(const std::string& item_id, std::function<void(bool)> callback);
 
      /**
-      * 按优先级排序菜单项
+      * Sort menu items by priority
       */
      void sortMenuItemsByPriority();
 
      /**
-      * 批量更新菜单项 (优化性能)
-      * @param updates 更新操作的函数
+      * Batch update menu items (performance optimization)
+      * @param updates Function for update operations
       */
      void batchUpdateMenuItems(std::function<void()> updates);
 
      /**
-      * 强制重建菜单
+      * Force rebuild menu
       */
      void forceRebuildMenu();
 
      /**
-      * 检查菜单是否需要重建
-      * @return 是否需要重建
+      * Check if menu needs rebuild
+      * @return Whether rebuild is needed
       */
      bool needsMenuRebuild() const;
 
      /**
-      * 显示通知消息
-     * @param title 标题
-     * @param message 消息内容
-     * @param icon_name 图标名称（可选）
-     * @param timeout_ms 超时时间（毫秒，0表示不自动关闭）
+      * Show notification message
+     * @param title Title
+     * @param message Message content
+     * @param icon_name Icon name (optional)
+     * @param timeout_ms Timeout in milliseconds (0 means no auto-close)
      */
     void showNotification(const std::string& title, 
                          const std::string& message,
@@ -386,63 +397,63 @@ public:
                          int timeout_ms = 5000);
 
     /**
-     * 设置左键点击回调
-     * @param callback 回调函数
+     * Set left click callback
+     * @param callback Callback function
      */
     void setLeftClickCallback(std::function<void()> callback);
 
     /**
-     * 设置右键点击回调
-     * @param callback 回调函数
+     * Set right click callback
+     * @param callback Callback function
      */
     void setRightClickCallback(std::function<void()> callback);
 
     /**
-     * 设置双击回调
-     * @param callback 回调函数
+     * Set double click callback
+     * @param callback Callback function
      */
     void setDoubleClickCallback(std::function<void()> callback);
 
     /**
-     * 设置状态变化回调
-     * @param callback 状态变化时的回调函数
+     * Set status change callback
+     * @param callback Callback function for status changes
      */
     void setStatusChangeCallback(std::function<void(TrayStatus)> callback);
     
     /**
-     * 设置退出回调
-     * @param callback 退出时的回调函数
+     * Set quit callback
+     * @param callback Callback function for quit
      */
     void setQuitCallback(std::function<void()> callback);
     
     /**
-     * 根据窗口状态更新菜单
-     * @param window_visible 窗口是否可见
+     * Update menu based on window state
+     * @param window_visible Whether window is visible
      */
     void updateWindowStateMenu(bool window_visible);
 
     /**
-     * 更新进度显示
-     * @param progress 进度值（0.0-1.0）
-     * @param text 进度文本
+     * Update progress display
+     * @param progress Progress value (0.0-1.0)
+     * @param text Progress text
      */
     void updateProgress(double progress, const std::string& text = "");
 
     /**
-     * 清除进度显示
+     * Clear progress display
      */
     void clearProgress();
 
     /**
-     * 检查系统是否支持托盘
-     * @return 是否支持
+     * Check if system supports tray
+     * @return Whether supported
      */
     static bool isSystemTraySupported();
 
     /**
-     * 获取默认图标路径
-     * @param status 状态
-     * @return 图标路径
+     * Get default icon path
+     * @param status Status
+     * @return Icon path
      */
     static std::string getDefaultIconPath(TrayStatus status);
 
@@ -450,7 +461,7 @@ private:
     class Impl;
     std::unique_ptr<Impl> pimpl_;
 
-    // GTK回调函数
+    // GTK callback functions
     static void onActivate(GtkWidget* widget, gpointer user_data);
     static void onPopupMenu(GtkWidget* widget, gpointer user_data);
     static void onMenuItemActivated(GtkWidget* menu_item, gpointer user_data);
@@ -458,33 +469,33 @@ private:
 };
 
 /**
- * 系统托盘管理器
- * 单例模式，管理全局系统托盘实例
+ * System tray manager
+ * Singleton pattern, manages global system tray instance
  */
 class SystemTrayManager {
 public:
     /**
-     * 获取单例实例
-     * @return 系统托盘管理器实例
+     * Get singleton instance
+     * @return System tray manager instance
      */
     static SystemTrayManager& getInstance();
 
     /**
-     * 初始化系统托盘
-     * @param app_name 应用程序名称
-     * @param icon_path 图标路径
-     * @return 是否初始化成功
+     * Initialize system tray
+     * @param app_name Application name
+     * @param icon_path Icon path
+     * @return Whether initialization succeeded
      */
     bool initialize(const std::string& app_name, const std::string& icon_path = "");
 
     /**
-     * 获取系统托盘实例
-     * @return 系统托盘指针
+     * Get system tray instance
+     * @return System tray pointer
      */
     SystemTray* getTray();
 
     /**
-     * 关闭系统托盘
+     * Shutdown system tray
      */
     void shutdown();
 

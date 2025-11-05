@@ -14,19 +14,19 @@ public:
     VideoDisplayWindow();
     ~VideoDisplayWindow();
     
-    // 显示窗口
+    // Show window
     void show();
     
-    // 隐藏窗口
+    // Hide window
     void hide();
     
-    // 更新视频帧
+    // Update video frame
     void update_frame(const media::VideoFrame& frame);
     
-    // 检查窗口是否可见
+    // Check if window is visible
     bool is_visible() const;
     
-    // 设置窗口关闭回调
+    // Set window close callback
     void set_close_callback(std::function<void()> callback);
     
 private:
@@ -34,28 +34,28 @@ private:
     GtkWidget* video_area_;
     GtkWidget* info_label_;
     
-    // 视频帧数据
+    // Video frame data
     std::unique_ptr<guchar[]> frame_data_;
     int frame_width_;
     int frame_height_;
     int frame_channels_;
     
-    // 缓存Cairo表面以避免重复创建
+    // Cache Cairo surface to avoid repeated creation
     cairo_surface_t* cached_surface_;
     std::unique_ptr<guchar[]> cached_rgba_data_;
     int cached_width_;
     int cached_height_;
     
-    // 窗口关闭回调
+    // Window close callback
     std::function<void()> close_callback_;
     
-    // 初始化UI
+    // Initialize UI
     void init_ui();
     
-    // 绘制回调
+    // Draw callback
     static void on_draw_area(GtkDrawingArea* area, cairo_t* cr, int width, int height, gpointer user_data);
     
-    // 窗口关闭回调
+    // Window close callback
     static gboolean on_window_close(GtkWidget* widget, gpointer user_data);
 };
 

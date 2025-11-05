@@ -148,6 +148,12 @@ public:
      * @param max_size 最大缓存大小（字节）
      */
     void setMaxCacheSize(size_t max_size);
+
+    /**
+     * @brief 设置本地模型存储目录（运行时生效）
+     * @param model_dir 模型目录（支持 ~ 展开）
+     */
+    void setModelDirectory(const std::string& model_dir);
     
 private:
     class Impl;

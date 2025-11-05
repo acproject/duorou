@@ -14,10 +14,10 @@ OllamaModelLoader::OllamaModelLoader(std::shared_ptr<ModelPathManager> model_pat
     : model_path_manager_(model_path_manager) {
     logger_.initialize();
     
-    // 初始化ModelfileParser
+    // Initialize ModelfileParser
     modelfile_parser_ = std::make_shared<ModelfileParser>(model_path_manager_);
     
-    // 初始化完成
+    // Initialization completed
 }
 
 bool OllamaModelLoader::loadFromOllamaModel(const std::string& model_name) {
@@ -33,7 +33,7 @@ bool OllamaModelLoader::loadFromOllamaModel(const std::string& model_name) {
 bool OllamaModelLoader::loadFromModelPath(const ModelPath& model_path) {
     logger_.info("[OllamaModelLoader] Starting to load model: " + model_path.toString());
     
-    // 读取manifest文件
+    // Read manifest file
     logger_.info("[OllamaModelLoader] Reading manifest file for model...");
     ModelManifest manifest;
     if (!model_path_manager_->readManifest(model_path, manifest)) {
@@ -42,7 +42,7 @@ bool OllamaModelLoader::loadFromModelPath(const ModelPath& model_path) {
     }
     logger_.info("[OllamaModelLoader] Manifest file read successfully");
     
-    // 从manifest获取GGUF文件路径
+    // Get GGUF file path from manifest
     logger_.info("[OllamaModelLoader] Extracting GGUF path from manifest...");
     std::string gguf_path = getGGUFPathFromManifest(manifest);
     if (gguf_path.empty()) {
@@ -51,14 +51,14 @@ bool OllamaModelLoader::loadFromModelPath(const ModelPath& model_path) {
     }
     logger_.info("[OllamaModelLoader] GGUF path extracted: " + gguf_path);
     
-    // 检查文件是否存在
+    // Check if file exists
     logger_.info("[OllamaModelLoader] Checking if GGUF file exists...");
     if (!std::filesystem::exists(gguf_path)) {
         logger_.error("[OllamaModelLoader] GGUF model file not found: " + gguf_path);
         return false;
     }
     
-    // 获取文件大小信息
+    // Get file size information
     auto file_size = std::filesystem::file_size(gguf_path);
     logger_.info("[OllamaModelLoader] GGUF file size: " + std::to_string(file_size / (1024 * 1024)) + " MB");
     
@@ -82,12 +82,12 @@ bool OllamaModelLoader::isOllamaModelAvailable(const std::string& model_name) {
 std::vector<std::string> OllamaModelLoader::listAvailableModels() {
     std::vector<std::string> model_names;
     
-    // 枚举所有manifest文件
+    // Enumerate all manifest files
     auto manifests = model_path_manager_->enumerateManifests(true);
     
     for (const auto& [path, manifest] : manifests) {
-        // 从路径提取模型名称
-        // 路径格式: registry/namespace/repository:tag
+        // Extract model name from path
+        // Path format: registry/namespace/repository:tag
         std::regex path_regex(R"(([^/]+)/([^/]+)/([^:]+):([^:]+))");
         std::smatch matches;
         
@@ -96,11 +96,27 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
             std::string namespace_ = matches[2].str();
             std::string repository = matches[3].str();
             std::string tag = matches[4].str();
+
+            // 过滤视觉/多模态模型（例如 qwen3-vl、*.vision、*.multimodal 等）
+            auto is_vision_like = [](const std::string &repo) {
+                std::string s = repo;
+                std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                if (s.find("-vl") != std::string::npos) return true;
+                if (s.find("vl") != std::string::npos) return true;
+                if (s.find("vision") != std::string::npos) return true;
+                if (s.find("multimodal") != std::string::npos) return true;
+                return false;
+            };
+
+            if (is_vision_like(repository)) {
+                // Skip vision models to only expose text models compatible with llama.cpp
+                continue;
+            }
             
-            // 构建ollama风格的模型名称
+            // Build ollama-style model name
             std::string model_name;
             if (namespace_ == "library") {
-                // 官方模型，省略namespace
+                // Official model, omit namespace
                 model_name = repository;
             } else {
                 model_name = namespace_ + "/" + repository;
@@ -114,7 +130,7 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
         }
     }
     
-    // 排序并去重
+    // Sort and remove duplicates
     std::sort(model_names.begin(), model_names.end());
     model_names.erase(std::unique(model_names.begin(), model_names.end()), model_names.end());
     
@@ -122,7 +138,7 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
 }
 
 std::string OllamaModelLoader::getGGUFPathFromManifest(const ModelManifest& manifest) {
-    // 查找模型层（GGUF文件）
+    // Find model layer (GGUF file)
     for (const auto& layer : manifest.layers) {
         // Debug output for layer checking
         std::cout << "Checking layer: mediaType=" << layer.media_type << ", digest=" << layer.digest << std::endl;
@@ -130,11 +146,11 @@ std::string OllamaModelLoader::getGGUFPathFromManifest(const ModelManifest& mani
         std::cout << "Generated blob path: " << blob_path << std::endl;
         std::cout << "File exists: " << (std::filesystem::exists(blob_path) ? "yes" : "no") << std::endl;
         
-        // ollama中GGUF模型的media type
+        // Media type for GGUF models in ollama
         if (layer.media_type == "application/vnd.ollama.image.model" ||
             layer.media_type == "application/vnd.docker.image.rootfs.diff.tar.gzip") {
             
-            // 获取blob文件路径
+            // Get blob file path
             if (!blob_path.empty() && std::filesystem::exists(blob_path)) {
                 return blob_path;
             }
@@ -152,26 +168,26 @@ bool OllamaModelLoader::parseOllamaModelName(const std::string& model_name, Mode
 std::string OllamaModelLoader::normalizeOllamaModelName(const std::string& model_name) {
     std::string normalized = model_name;
     
-    // 如果没有registry前缀，添加默认的ollama registry
+    // If no registry prefix, add default ollama registry
     if (normalized.find("://") == std::string::npos) {
         normalized = "registry://" + normalized;
     }
     
-    // 解析模型名称格式：[scheme://][registry/][namespace/]repository[:tag]
-    // 支持repository名称包含点号，如qwen2.5vl
+    // Parse model name format: [scheme://][registry/][namespace/]repository[:tag]
+    // Support repository names containing dots, such as qwen2.5vl
     std::regex full_path_regex(R"(^([^:/]+://)([^/]+)/([^/]+)/([^:]+)(?::([^:]+))?$)");
     std::smatch matches;
     
     if (std::regex_match(normalized, matches, full_path_regex)) {
-        // 已经是完整路径格式，直接返回
+        // Already in full path format, return directly
         if (matches[5].str().empty()) {
-            // 没有tag，添加默认的latest
+            // No tag, add default latest
             normalized += ":latest";
         }
         return normalized;
     }
     
-    // 处理简单格式：repository[:tag] 或 namespace/repository[:tag]
+    // Handle simple format: repository[:tag] or namespace/repository[:tag]
     std::regex simple_name_regex(R"(^([^:/]+://)?(?:([^/]+)/)?([^/:]+(?:\.[^/:]+)*)(?::([^:]+))?$)");
     
     if (std::regex_match(normalized, matches, simple_name_regex)) {
@@ -211,25 +227,25 @@ bool OllamaModelLoader::loadFromOllamaModelWithLoRA(
     }
     
     if (!enable_lora) {
-        // 如果不启用LoRA，使用标准加载方法
+        // If LoRA is not enabled, use standard loading method
         return loadFromModelPath(model_path);
     }
     
-    // 读取模型manifest
+    // Read model manifest
     ModelManifest manifest;
     if (!model_path_manager_->readManifest(model_path, manifest)) {
         logger_.error("Failed to read manifest for model: " + model_name);
         return false;
     }
     
-    // 解析Modelfile配置
+    // Parse Modelfile configuration
     ModelfileConfig config;
     if (!parseModelfileFromManifest(manifest, config)) {
         logger_.warning("No Modelfile configuration found, using standard loading");
         return loadFromModelPath(model_path);
     }
     
-    // 使用配置加载模型
+    // Load model using configuration
     return loadFromModelfileConfig(config);
 }
 
@@ -240,7 +256,7 @@ bool OllamaModelLoader::loadFromModelfileConfig(
     logger_.info("Base model: " + config.base_model);
     logger_.info("LoRA adapters: " + std::to_string(config.lora_adapters.size()));
     
-    // 验证基础模型文件存在
+    // Verify base model file exists
     if (!std::filesystem::exists(config.base_model)) {
         logger_.error("Base model file not found: " + config.base_model);
         return false;
@@ -258,7 +274,7 @@ bool OllamaModelLoader::parseModelfileFromManifest(
         return false;
     }
     
-    // 使用ModelfileParser解析manifest
+    // Parse manifest using ModelfileParser
     bool success = modelfile_parser_->parseFromManifest(manifest, config);
     
     if (success) {
@@ -266,7 +282,7 @@ bool OllamaModelLoader::parseModelfileFromManifest(
         logger_.info("Base model: " + config.base_model);
         logger_.info("LoRA adapters found: " + std::to_string(config.lora_adapters.size()));
         
-        // 验证LoRA适配器
+        // Validate LoRA adapters
         for (const auto& adapter : config.lora_adapters) {
             if (!modelfile_parser_->validateLoRAAdapter(adapter)) {
                 logger_.warning("Invalid LoRA adapter: " + adapter.name + " at " + adapter.path);

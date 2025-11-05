@@ -38,45 +38,45 @@ class VideoCapture::Impl {
 public:
   VideoSource source = VideoSource::NONE;
   int device_id = 0;
-  int window_id = -1;  // 桌面捕获时的窗口ID，-1表示整个桌面
-  int camera_device_index = 0;  // 摄像头设备索引
+  int window_id = -1;  // Window ID for desktop capture, -1 means entire desktop
+  int camera_device_index = 0;  // Camera device index
   bool capturing = false;
   std::function<void(const VideoFrame &)> frame_callback;
   std::thread capture_thread;
   std::mutex mutex;
 
   ~Impl() {
-    std::cout << "VideoCapture::Impl 析构开始" << std::endl;
+    std::cout << "VideoCapture::Impl destructor started" << std::endl;
 
-    // 1. 首先设置停止标志
+    // 1. First set stop flag
     capturing = false;
 
-    // 2. 等待捕获线程完全结束
+    // 2. Wait for capture thread to completely finish
     if (capture_thread.joinable()) {
-      std::cout << "等待捕获线程结束..." << std::endl;
+      std::cout << "Waiting for capture thread to finish..." << std::endl;
       capture_thread.join();
-      std::cout << "捕获线程已结束" << std::endl;
+      std::cout << "Capture thread finished" << std::endl;
     }
 
-    // 3. 清理平台特定资源
+    // 3. Clean up platform-specific resources
 #ifdef __APPLE__
     duorou::media::cleanup_macos_screen_capture();
 #endif
 
-    // 4. 清理GStreamer资源
+    // 4. Clean up GStreamer resources
 #ifdef HAVE_GSTREAMER
     cleanup_gstreamer();
 #endif
 
-    // 5. 清理OpenCV资源
+    // 5. Clean up OpenCV resources
 #ifdef HAVE_OPENCV
     if (opencv_capture.isOpened()) {
       opencv_capture.release();
-      std::cout << "OpenCV 捕获已释放" << std::endl;
+      std::cout << "OpenCV capture released" << std::endl;
     }
 #endif
 
-    std::cout << "VideoCapture::Impl 析构完成" << std::endl;
+    std::cout << "VideoCapture::Impl destructor completed" << std::endl;
   }
 
 #ifdef HAVE_GSTREAMER
@@ -96,11 +96,11 @@ public:
     if (!gst_initialized) {
       gst_init(nullptr, nullptr);
       gst_initialized = true;
-      std::cout << "GStreamer 初始化成功" << std::endl;
+      std::cout << "GStreamer initialized successfully" << std::endl;
     }
     return true;
 #else
-    std::cout << "GStreamer 未启用" << std::endl;
+    std::cout << "GStreamer not enabled" << std::endl;
     return false;
 #endif
   }
@@ -108,45 +108,45 @@ public:
   void cleanup_gstreamer() {
 #ifdef HAVE_GSTREAMER
     if (pipeline) {
-      // 安全地停止管道
+      // Safely stop the pipeline
       GstStateChangeReturn ret =
           gst_element_set_state(pipeline, GST_STATE_NULL);
 
-      // 等待状态变化完成，避免竞态条件
+      // Wait for state change to complete, avoiding race conditions
       if (ret != GST_STATE_CHANGE_FAILURE) {
         GstState state;
         GstState pending;
-        // 等待最多2秒让管道完全停止
+        // Wait up to 2 seconds for pipeline to completely stop
         ret = gst_element_get_state(pipeline, &state, &pending, 2 * GST_SECOND);
         if (ret == GST_STATE_CHANGE_ASYNC) {
-          std::cout << "警告: GStreamer 管道停止仍在进行中" << std::endl;
+          std::cout << "Warning: GStreamer pipeline stop still in progress" << std::endl;
         }
       }
 
-      // 清理appsink引用（它是pipeline的一部分，会被自动释放）
+      // Clean up appsink reference (it's part of pipeline, will be auto-released)
       appsink = nullptr;
 
-      // 释放管道
+      // Release pipeline
       gst_object_unref(pipeline);
       pipeline = nullptr;
-      std::cout << "GStreamer 管道已安全清理" << std::endl;
+      std::cout << "GStreamer pipeline safely cleaned up" << std::endl;
     }
 
     if (loop) {
-      // 安全地退出主循环
+      // Safely exit main loop
       if (g_main_loop_is_running(loop)) {
         g_main_loop_quit(loop);
       }
 
-      // 等待GStreamer线程结束
+      // Wait for GStreamer thread to finish
       if (gst_thread.joinable()) {
         gst_thread.join();
       }
 
-      // 释放主循环
+      // Release main loop
       g_main_loop_unref(loop);
       loop = nullptr;
-      std::cout << "GStreamer 主循环已安全清理" << std::endl;
+      std::cout << "GStreamer main loop safely cleaned up" << std::endl;
     }
 #endif
   }
@@ -154,16 +154,16 @@ public:
   bool try_gstreamer_desktop_capture() {
 #ifdef HAVE_GSTREAMER
     if (!initialize_gstreamer()) {
-      std::cout << "GStreamer 初始化失败" << std::endl;
+      std::cout << "GStreamer initialization failed" << std::endl;
       return false;
     }
 
-    // 创建桌面捕获管道
+    // Create desktop capture pipeline
 #ifdef __APPLE__
-    // macOS 使用 avfvideosrc 捕获屏幕，避免GTK依赖
+    // macOS uses avfvideosrc to capture screen, avoiding GTK dependency
     std::string pipeline_str;
     if (window_id == -1 || window_id == 0) {
-      // 捕获整个桌面
+      // Capture entire desktop
       pipeline_str =
           "avfvideosrc capture-screen=true ! "
           "video/x-raw,format=BGRA,width=1280,height=720,framerate=15/1 ! "
@@ -172,8 +172,8 @@ public:
           "appsink name=sink emit-signals=true sync=false max-buffers=1 "
           "drop=true";
     } else {
-      // avfvideosrc 不直接支持窗口捕获，回退到整个桌面
-      std::cout << "avfvideosrc 不支持特定窗口捕获，将捕获整个桌面" << std::endl;
+      // avfvideosrc doesn't directly support window capture, fallback to entire desktop
+      std::cout << "avfvideosrc does not support specific window capture, will capture entire desktop" << std::endl;
       pipeline_str =
           "avfvideosrc capture-screen=true ! "
           "video/x-raw,format=BGRA,width=1280,height=720,framerate=15/1 ! "
@@ -183,17 +183,17 @@ public:
           "drop=true";
     }
 #elif defined(__linux__)
-    // Linux 使用 ximagesrc 捕获屏幕
+    // Linux uses ximagesrc to capture screen
     std::string pipeline_str;
     if (window_id == -1 || window_id == 0) {
-      // 捕获整个桌面
+      // Capture entire desktop
       pipeline_str =
           "ximagesrc ! "
           "videoconvert ! "
           "video/x-raw,format=RGB,width=1280,height=720,framerate=30/1 ! "
           "appsink name=sink";
     } else {
-      // 捕获特定窗口
+      // Capture specific window
       pipeline_str =
           "ximagesrc xid=" + std::to_string(window_id) + " ! "
           "videoconvert ! "
@@ -201,7 +201,7 @@ public:
           "appsink name=sink";
     }
 #else
-    std::cout << "当前平台不支持 GStreamer 桌面捕获" << std::endl;
+    std::cout << "Current platform does not support GStreamer desktop capture" << std::endl;
     return false;
 #endif
 
@@ -209,9 +209,9 @@ public:
     pipeline = gst_parse_launch(pipeline_str.c_str(), &error);
 
     if (!pipeline || error) {
-      std::cout << "创建 GStreamer 管道失败: "
-                << (error ? error->message : "未知错误") << std::endl;
-      std::cout << "这可能是由于权限问题或设备不可用" << std::endl;
+      std::cout << "Failed to create GStreamer pipeline: "
+                << (error ? error->message : "unknown error") << std::endl;
+      std::cout << "This may be due to permission issues or device unavailability" << std::endl;
       if (error)
         g_error_free(error);
       return false;
@@ -219,42 +219,42 @@ public:
 
     appsink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
     if (!appsink) {
-      std::cout << "获取 appsink 失败" << std::endl;
+      std::cout << "Failed to get appsink" << std::endl;
       gst_object_unref(pipeline);
       pipeline = nullptr;
       return false;
     }
 
-    // appsink 已在管道中配置，无需额外设置
+    // appsink is already configured in pipeline, no additional setup needed
 
-    // 测试管道是否可以启动到PLAYING状态来检查权限
+    // Test if pipeline can start to PLAYING state to check permissions
     GstStateChangeReturn ret =
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
-      std::cout << "GStreamer 管道无法启动，可能需要屏幕录制权限" << std::endl;
+      std::cout << "GStreamer pipeline cannot start, may need screen recording permission" << std::endl;
       std::cout
-          << "请在系统偏好设置 > 安全性与隐私 > 隐私 > 屏幕录制中允许此应用"
+          << "Please allow this app in System Preferences > Security & Privacy > Privacy > Screen Recording"
           << std::endl;
       cleanup_gstreamer();
       return false;
     }
 
-    // 等待状态变化完成
+    // Wait for state change to complete
     GstState state;
     ret = gst_element_get_state(pipeline, &state, nullptr, GST_CLOCK_TIME_NONE);
     if (state != GST_STATE_PLAYING) {
-      std::cout << "GStreamer 管道状态异常，当前状态: " << state << std::endl;
-      std::cout << "这通常表示没有屏幕录制权限" << std::endl;
+      std::cout << "GStreamer pipeline state abnormal, current state: " << state << std::endl;
+      std::cout << "This usually indicates no screen recording permission" << std::endl;
       cleanup_gstreamer();
       return false;
     }
 
-    // 恢复到 NULL 状态，等待实际启动
+    // Restore to NULL state, wait for actual startup
     gst_element_set_state(pipeline, GST_STATE_NULL);
 
-    std::cout << "屏幕录制权限检查通过" << std::endl;
+    std::cout << "Screen recording permission check passed" << std::endl;
 
-    std::cout << "GStreamer 桌面捕获初始化成功" << std::endl;
+    std::cout << "GStreamer desktop capture initialized successfully" << std::endl;
     return true;
 #else
     return false;
@@ -262,38 +262,38 @@ public:
   }
 
   bool initialize_desktop_capture() {
-    // 首先尝试 GStreamer
+    // First try GStreamer
     if (try_gstreamer_desktop_capture()) {
       return true;
     }
 
-    // 回退到原始实现
-    std::cout << "回退到简化实现" << std::endl;
+    // Fallback to original implementation
+    std::cout << "Fallback to simplified implementation" << std::endl;
 #ifdef __APPLE__
-    // 尝试使用 ScreenCaptureKit
+    // Try using ScreenCaptureKit
     if (duorou::media::initialize_macos_screen_capture()) {
-      std::cout << "ScreenCaptureKit 桌面捕获初始化成功" << std::endl;
+      std::cout << "ScreenCaptureKit desktop capture initialized successfully" << std::endl;
       return true;
     }
-    std::cout << "ScreenCaptureKit 初始化失败，使用模拟数据" << std::endl;
-    std::cout << "初始化 macOS 桌面捕获 (简化版本)" << std::endl;
+    std::cout << "ScreenCaptureKit initialization failed, using simulated data" << std::endl;
+    std::cout << "Initialize macOS desktop capture (simplified version)" << std::endl;
     return true;
 #elif defined(__linux__)
-    std::cout << "初始化 Linux 桌面捕获 (简化版本)" << std::endl;
+    std::cout << "Initialize Linux desktop capture (simplified version)" << std::endl;
     return true;
 #else
-    std::cout << "当前平台不支持桌面捕获" << std::endl;
+    std::cout << "Current platform does not support desktop capture" << std::endl;
     return false;
 #endif
   }
 
   bool initialize_camera_capture(int device_id) {
-    // 如果 camera_device_index 为 -1，表示禁用摄像头
+    // If camera_device_index is -1, it means camera is disabled
     if (camera_device_index == -1) {
       return false;
     }
     
-    // 使用 camera_device_index 而不是 device_id
+    // Use camera_device_index instead of device_id
     int actual_device_id = camera_device_index;
     
 #ifdef HAVE_GSTREAMER
@@ -301,9 +301,9 @@ public:
       return false;
     }
 
-    // 创建摄像头捕获管道
+    // Create camera capture pipeline
 #ifdef __APPLE__
-    // macOS 使用 avfvideosrc 捕获摄像头
+    // macOS uses avfvideosrc to capture camera
     std::string pipeline_str =
         "avfvideosrc device-index=" + std::to_string(actual_device_id) +
         " ! "
@@ -311,7 +311,7 @@ public:
         "video/x-raw,format=RGB,width=640,height=480,framerate=30/1 ! "
         "appsink name=sink";
 #elif defined(__linux__)
-    // Linux 使用 v4l2src 捕获摄像头
+    // Linux uses v4l2src to capture camera
     std::string pipeline_str =
         "v4l2src device=/dev/video" + std::to_string(actual_device_id) +
         " ! "
@@ -319,7 +319,7 @@ public:
         "video/x-raw,format=RGB,width=640,height=480,framerate=30/1 ! "
         "appsink name=sink";
 #else
-    std::cout << "当前平台不支持 GStreamer 摄像头捕获" << std::endl;
+    std::cout << "Current platform does not support GStreamer camera capture" << std::endl;
     return false;
 #endif
 
@@ -327,8 +327,8 @@ public:
     pipeline = gst_parse_launch(pipeline_str.c_str(), &error);
 
     if (!pipeline || error) {
-      std::cout << "创建摄像头 GStreamer 管道失败: "
-                << (error ? error->message : "未知错误") << std::endl;
+      std::cout << "Failed to create camera GStreamer pipeline: "
+                << (error ? error->message : "Unknown error") << std::endl;
       if (error)
         g_error_free(error);
       return false;
@@ -336,36 +336,36 @@ public:
 
     appsink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
     if (!appsink) {
-      std::cout << "获取摄像头 appsink 失败" << std::endl;
+      std::cout << "Failed to get camera appsink" << std::endl;
       gst_object_unref(pipeline);
       pipeline = nullptr;
       return false;
     }
 
-    // 配置 appsink
+    // Configure appsink
     g_object_set(appsink, "emit-signals", TRUE, "sync", FALSE, nullptr);
 
-    std::cout << "GStreamer 摄像头捕获初始化成功，设备: " << actual_device_id
+    std::cout << "GStreamer camera capture initialized successfully, device: " << actual_device_id
               << std::endl;
     return true;
 #elif defined(HAVE_OPENCV)
-    // 回退到 OpenCV 实现
+    // Fallback to OpenCV implementation
     opencv_capture.open(actual_device_id);
     if (!opencv_capture.isOpened()) {
-      std::cout << "无法打开摄像头设备 " << actual_device_id << std::endl;
+      std::cout << "Unable to open camera device " << actual_device_id << std::endl;
       return false;
     }
 
-    // 设置摄像头参数
+    // Set camera parameters
     opencv_capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     opencv_capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     opencv_capture.set(cv::CAP_PROP_FPS, 30);
 
-    std::cout << "成功初始化摄像头设备 " << actual_device_id << " (OpenCV)"
+    std::cout << "Successfully initialized camera device " << actual_device_id << " (OpenCV)"
               << std::endl;
     return true;
 #else
-    std::cout << "GStreamer 和 OpenCV 均未启用，无法使用摄像头捕获"
+    std::cout << "Neither GStreamer nor OpenCV is enabled, cannot use camera capture"
               << std::endl;
     return false;
 #endif
@@ -374,19 +374,19 @@ public:
   void capture_loop() {
 #ifdef HAVE_GSTREAMER
     if (pipeline && appsink) {
-      // GStreamer 捕获循环
+      // GStreamer capture loop
       while (capturing) {
         try {
-          // 检查基本状态
+          // Check basic state
           if (!capturing) {
             break;
           }
 
-          // 添加更严格的空指针检查
+          // Add stricter null pointer checks
           if (!pipeline || !appsink ||
               gst_element_get_state(pipeline, nullptr, nullptr, 0) ==
                   GST_STATE_CHANGE_FAILURE) {
-            std::cout << "GStreamer: 管道状态异常，退出捕获循环" << std::endl;
+            std::cout << "GStreamer: Pipeline state abnormal, exiting capture loop" << std::endl;
             break;
           }
 
@@ -400,16 +400,16 @@ public:
             if (buffer && caps && GST_IS_BUFFER(buffer) && GST_IS_CAPS(caps)) {
               GstMapInfo map;
               if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-                // 检查数据有效性
+                // Check data validity
                 if (map.data && map.size > 0) {
-                  // 获取视频信息
+                  // Get video information
                   GstStructure *structure = gst_caps_get_structure(caps, 0);
                   if (structure) {
                     int width, height;
                     if (gst_structure_get_int(structure, "width", &width) &&
                         gst_structure_get_int(structure, "height", &height) &&
                         width > 0 && height > 0) {
-                      // 创建视频帧
+                      // Create video frame
                       VideoFrame frame;
                       frame.width = width;
                       frame.height = height;
@@ -423,67 +423,67 @@ public:
                               .count() /
                           1000.0;
 
-                      std::cout << "收到视频帧: " << width << "x" << height
-                                << ", 大小: " << map.size << " 字节"
+                      std::cout << "Received video frame: " << width << "x" << height
+                                << ", size: " << map.size << " bytes"
                                 << std::endl;
 
                       if (frame_callback) {
                         frame_callback(frame);
                       }
                     } else {
-                      std::cout << "GStreamer: 无效的帧尺寸" << std::endl;
+                      std::cout << "GStreamer: Invalid frame dimensions" << std::endl;
                     }
                   } else {
-                    std::cout << "GStreamer: 无法获取caps结构" << std::endl;
+                    std::cout << "GStreamer: Unable to get caps structure" << std::endl;
                   }
                 } else {
-                  std::cout << "GStreamer: 无效的缓冲区数据" << std::endl;
+                  std::cout << "GStreamer: Invalid buffer data" << std::endl;
                 }
                 gst_buffer_unmap(buffer, &map);
               } else {
-                std::cout << "GStreamer: 无法映射缓冲区" << std::endl;
+                std::cout << "GStreamer: Unable to map buffer" << std::endl;
               }
             } else {
-              std::cout << "GStreamer: 无效的缓冲区或caps" << std::endl;
+              std::cout << "GStreamer: Invalid buffer or caps" << std::endl;
             }
 
             gst_sample_unref(sample);
           } else {
-            // 没有可用的样本，稍微等待
+            // No available samples, wait a bit
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
           }
         } catch (const std::exception &e) {
-          std::cout << "GStreamer捕获异常: " << e.what() << std::endl;
+          std::cout << "GStreamer capture exception: " << e.what() << std::endl;
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         } catch (...) {
-          std::cout << "GStreamer捕获未知异常" << std::endl;
+          std::cout << "GStreamer capture unknown exception" << std::endl;
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
       }
     } else {
 #endif
-      // 原始捕获循环（OpenCV 或模拟数据）
+      // Original capture loop (OpenCV or simulated data)
       while (capturing) {
         VideoFrame frame;
 
         if (source == VideoSource::DESKTOP_CAPTURE) {
 #ifdef __APPLE__
-          // 在 macOS 上，如果 ScreenCaptureKit 正在运行，完全依赖回调机制
-          // 不生成任何后备数据，避免与真实屏幕数据混合造成闪烁
+          // On macOS, if ScreenCaptureKit is running, rely completely on callback mechanism
+          // Don't generate any fallback data to avoid flickering from mixing with real screen data
           if (duorou::media::is_macos_screen_capture_running()) {
-            // ScreenCaptureKit 正在运行，只等待回调数据，不生成测试图案
+            // ScreenCaptureKit is running, only wait for callback data, don't generate test patterns
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
             continue;
           }
-          // 只有在 ScreenCaptureKit 完全未运行时才使用后备实现
-          // 这种情况下生成测试图案是安全的，因为不会与真实数据混合
+          // Only use fallback implementation when ScreenCaptureKit is completely not running
+          // In this case generating test patterns is safe because it won't mix with real data
           if (capture_desktop_frame(frame)) {
             if (frame_callback) {
               frame_callback(frame);
             }
           }
 #else
-        // 非 macOS 平台使用标准桌面捕获
+        // Non-macOS platforms use standard desktop capture
         if (capture_desktop_frame(frame)) {
           if (frame_callback) {
             frame_callback(frame);
@@ -498,7 +498,7 @@ public:
           }
         }
 
-        // 控制帧率 (30 FPS)
+        // Control frame rate (30 FPS)
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
       }
 #ifdef HAVE_GSTREAMER
@@ -508,9 +508,9 @@ public:
 
   bool capture_desktop_frame(VideoFrame &frame) {
 #ifdef __APPLE__
-    // macOS 桌面捕获实现 - 使用 ScreenCaptureKit
-    // 注意：这个函数在新的实现中不再直接使用，因为ScreenCaptureKit使用回调机制
-    // 保留作为后备方案，使用简化的测试图案
+    // macOS desktop capture implementation - using ScreenCaptureKit
+    // Note: This function is no longer directly used in the new implementation, because ScreenCaptureKit uses callback mechanism
+    // Kept as fallback solution, using simplified test patterns
     frame.width = 1920;
     frame.height = 1080;
     frame.channels = 4; // RGBA
@@ -519,12 +519,12 @@ public:
                           .count() /
                       1000.0;
 
-    // 创建简单的测试图案
+    // Create simple test pattern
     frame.data.resize(1920 * 1080 * 4);
     for (int y = 0; y < 1080; ++y) {
       for (int x = 0; x < 1920; ++x) {
         int index = (y * 1920 + x) * 4;
-        // 创建彩色渐变图案
+        // Create color gradient pattern
         frame.data[index] = static_cast<uint8_t>((x * 255) / 1920);     // R
         frame.data[index + 1] = static_cast<uint8_t>((y * 255) / 1080); // G
         frame.data[index + 2] = 128;                                    // B
@@ -532,10 +532,10 @@ public:
       }
     }
 
-    std::cout << "使用后备桌面数据 (彩色测试图案)" << std::endl;
+    std::cout << "Using fallback desktop data (color test pattern)" << std::endl;
     return true;
 #elif defined(__linux__)
-    // Linux X11 桌面截图实现
+    // Linux X11 desktop screenshot implementation
     frame.width = 640;
     frame.height = 480;
     frame.channels = 3; // RGB
@@ -544,9 +544,9 @@ public:
                           .count() /
                       1000.0;
 
-    // 简化实现：创建空白帧数据
+    // Simplified implementation: create blank frame data
     frame.data.resize(640 * 480 * 3);
-    std::fill(frame.data.begin(), frame.data.end(), 128); // 灰色填充
+    std::fill(frame.data.begin(), frame.data.end(), 128); // Gray fill
     return true;
 #else
     return false;
@@ -568,7 +568,7 @@ public:
                           .count() /
                       1000.0;
 
-    // 转换 OpenCV Mat 到字节数组
+    // Convert OpenCV Mat to byte array
     size_t data_size = opencv_frame.total() * opencv_frame.elemSize();
     frame.data.resize(data_size);
     std::memcpy(frame.data.data(), opencv_frame.data, data_size);
@@ -583,19 +583,19 @@ public:
 VideoCapture::VideoCapture() : pImpl(std::make_unique<Impl>()) {}
 
 VideoCapture::~VideoCapture() {
-  std::cout << "VideoCapture 析构开始" << std::endl;
+  std::cout << "VideoCapture destructor started" << std::endl;
 
-  // 1. 首先停止捕获，这会设置停止标志
+  // 1. First stop capture, this will set stop flag
   stop_capture();
 
-  std::cout << "VideoCapture 析构完成" << std::endl;
+  std::cout << "VideoCapture destructor completed" << std::endl;
 }
 
 bool VideoCapture::initialize(VideoSource source, int device_id) {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
 
   if (pImpl->capturing) {
-    std::cout << "视频捕获已在运行，请先停止" << std::endl;
+    std::cout << "Video capture is already running, please stop first" << std::endl;
     return false;
   }
 
@@ -608,7 +608,7 @@ bool VideoCapture::initialize(VideoSource source, int device_id) {
   case VideoSource::CAMERA:
     return pImpl->initialize_camera_capture(device_id);
   default:
-    std::cout << "未知的视频源类型" << std::endl;
+    std::cout << "Unknown video source type" << std::endl;
     return false;
   }
 }
@@ -617,37 +617,37 @@ bool VideoCapture::start_capture() {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
 
   if (pImpl->capturing) {
-    std::cout << "视频捕获已在运行" << std::endl;
+    std::cout << "Video capture is already running" << std::endl;
     return true;
   }
 
   if (pImpl->source == VideoSource::NONE) {
-    std::cout << "请先初始化视频源" << std::endl;
+    std::cout << "Please initialize video source first" << std::endl;
     return false;
   }
 
 #ifdef HAVE_GSTREAMER
   if (pImpl->pipeline) {
-    // 启动 GStreamer 管道
+    // Start GStreamer pipeline
     GstStateChangeReturn ret =
         gst_element_set_state(pImpl->pipeline, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
-      std::cout << "启动 GStreamer 管道失败" << std::endl;
+      std::cout << "Failed to start GStreamer pipeline" << std::endl;
       return false;
     }
-    std::cout << "GStreamer 管道已启动" << std::endl;
+    std::cout << "GStreamer pipeline started" << std::endl;
   }
 #endif
 
 #ifdef __APPLE__
-  // 如果是桌面捕获，总是尝试启动ScreenCaptureKit
+  // If desktop capture, always try to start ScreenCaptureKit
   if (pImpl->source == VideoSource::DESKTOP_CAPTURE) {
-    std::cout << "尝试启动 ScreenCaptureKit..." << std::endl;
+    std::cout << "Attempting to start ScreenCaptureKit..." << std::endl;
     if (duorou::media::start_macos_screen_capture(pImpl->frame_callback, pImpl->window_id)) {
-      std::cout << "ScreenCaptureKit 已成功启动" << std::endl;
+      std::cout << "ScreenCaptureKit started successfully" << std::endl;
     } else {
-      std::cout << "启动 ScreenCaptureKit 失败，将使用后备实现" << std::endl;
-      // 继续执行，使用后备的测试图案
+      std::cout << "Failed to start ScreenCaptureKit, will use fallback implementation" << std::endl;
+      // Continue execution, use fallback test pattern
     }
   }
 #endif
@@ -656,7 +656,7 @@ bool VideoCapture::start_capture() {
   pImpl->capture_thread =
       std::thread(&VideoCapture::Impl::capture_loop, pImpl.get());
 
-  std::cout << "开始视频捕获" << std::endl;
+  std::cout << "Starting video capture" << std::endl;
   return true;
 }
 
@@ -669,14 +669,14 @@ void VideoCapture::stop_capture() {
   }
 
   if (!was_capturing) {
-    return; // 已经停止，避免重复操作
+    return; // Already stopped, avoid duplicate operations
   }
 
 #ifdef __APPLE__
-  // 停止 ScreenCaptureKit
+  // Stop ScreenCaptureKit
   if (pImpl->source == VideoSource::DESKTOP_CAPTURE) {
     duorou::media::stop_macos_screen_capture();
-    std::cout << "ScreenCaptureKit 已停止" << std::endl;
+    std::cout << "ScreenCaptureKit stopped" << std::endl;
   }
 #endif
 
@@ -686,9 +686,9 @@ void VideoCapture::stop_capture() {
 
 #ifdef HAVE_GSTREAMER
   if (pImpl->pipeline) {
-    // 停止 GStreamer 管道
+    // Stop GStreamer pipeline
     gst_element_set_state(pImpl->pipeline, GST_STATE_NULL);
-    std::cout << "GStreamer 管道已停止" << std::endl;
+    std::cout << "GStreamer pipeline stopped" << std::endl;
   }
 #endif
 
@@ -698,13 +698,13 @@ void VideoCapture::stop_capture() {
   }
 #endif
 
-  // 在所有资源清理完成后再清除回调函数
+  // Clear callback function after all resources are cleaned up
   {
     std::lock_guard<std::mutex> lock(pImpl->mutex);
     pImpl->frame_callback = nullptr;
   }
 
-  std::cout << "停止视频捕获" << std::endl;
+  std::cout << "Stopping video capture" << std::endl;
 }
 
 bool VideoCapture::is_capturing() const {
@@ -713,7 +713,7 @@ bool VideoCapture::is_capturing() const {
 }
 
 bool VideoCapture::get_next_frame(VideoFrame &frame) {
-  // 这个方法在当前实现中不使用，因为我们使用回调机制
+  // This method is not used in current implementation because we use callback mechanism
   return false;
 }
 
@@ -727,11 +727,11 @@ std::vector<std::string> VideoCapture::get_camera_devices() {
   std::vector<std::string> devices;
 
 #ifdef HAVE_OPENCV
-  // 尝试打开前几个设备
+  // Try to open first few devices
   for (int i = 0; i < 5; ++i) {
     cv::VideoCapture test_cap(i);
     if (test_cap.isOpened()) {
-      devices.push_back("摄像头设备 " + std::to_string(i));
+      devices.push_back("Camera device " + std::to_string(i));
       test_cap.release();
     }
   }
@@ -742,7 +742,7 @@ std::vector<std::string> VideoCapture::get_camera_devices() {
 
 bool VideoCapture::is_camera_available() {
 #ifdef __APPLE__
-  // 在 macOS 上使用 AVFoundation 检测摄像头
+  // On macOS use AVFoundation to detect camera
   return duorou::media::is_macos_camera_available();
 #elif defined(HAVE_OPENCV)
   cv::VideoCapture test_cap(0);
@@ -763,7 +763,7 @@ std::pair<int, int> VideoCapture::get_desktop_resolution() {
   size_t height = CGDisplayPixelsHigh(display);
   return {static_cast<int>(width), static_cast<int>(height)};
 #elif defined(__linux__)
-  // Linux X11 实现
+  // Linux X11 implementation
   Display *display = XOpenDisplay(nullptr);
   if (display) {
     Screen *screen = DefaultScreenOfDisplay(display);
@@ -773,19 +773,19 @@ std::pair<int, int> VideoCapture::get_desktop_resolution() {
     return {width, height};
   }
 #endif
-  return {1920, 1080}; // 默认分辨率
+  return {1920, 1080}; // Default resolution
 }
 
 void VideoCapture::set_capture_window_id(int window_id) {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
   pImpl->window_id = window_id;
-  std::cout << "设置桌面捕获窗口ID: " << window_id << std::endl;
+  std::cout << "Set desktop capture window ID: " << window_id << std::endl;
 }
 
 void VideoCapture::set_camera_device_index(int device_index) {
   std::lock_guard<std::mutex> lock(pImpl->mutex);
   pImpl->camera_device_index = device_index;
-  std::cout << "设置摄像头设备索引: " << device_index << std::endl;
+  std::cout << "Set camera device index: " << device_index << std::endl;
 }
 
 } // namespace media

@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(duorou VERSION 1.0.0 LANGUAGES C CXX)
 
+# 启用 CTest/CTest 相关变量 (提供 BUILD_TESTING 选项)
+include(CTest)
+# 启用测试收集（生成CTestTestfile.cmake）
+enable_testing()
+
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,7 +27,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 elseif(MSVC)
     add_compile_options(/W4)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options(/Od /Zi)
+        add_compile_options(/Od /Zi /RTC1)
     else()
         add_compile_options(/O2 /DNDEBUG)
     endif()
@@ -67,6 +72,8 @@ option(DUOROU_ENABLE_VULKAN "Enable Vulkan support" OFF)
 option(DUOROU_ENABLE_OPENCL "Enable OpenCL support" OFF)
 
 option(DUOROU_BUILD_EXAMPLES "Build examples" OFF)
+# 新增：可选构建 GUI（GTK4）
+option(DUOROU_BUILD_GUI "Build GUI components and executable (requires GTK4)" ON)
 
 # 自动启用平台特定选项
 if(APPLE AND NOT DUOROU_ENABLE_METAL)
@@ -78,35 +85,40 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 # GTK4 依赖
-if(WIN32)
-    # Windows 平台使用 vcpkg 查找 GTK4
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(GTK4 gtk4)
+if(DUOROU_BUILD_GUI)
+    if(WIN32)
+        # Windows 平台使用 vcpkg 查找 GTK4
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(GTK4 gtk4)
+        endif()
+        
+        if(NOT GTK4_FOUND)
+            # 尝试使用 vcpkg 安装的 GTK4
+            find_package(gtk QUIET)
+            if(gtk_FOUND)
+                set(GTK4_FOUND TRUE)
+                set(GTK4_LIBRARIES gtk::gtk)
+                set(GTK4_INCLUDE_DIRS ${gtk_INCLUDE_DIRS})
+                message(STATUS "Found GTK4 via vcpkg")
+            else()
+                message(WARNING "GTK4 not found via vcpkg. Please install with: vcpkg install gtk:x64-windows")
+                message(STATUS "Alternative: install MSYS2 and use: pacman -S mingw-w64-x86_64-gtk4")
+            endif()
+        endif()
+    else()
+        # 非 Windows 平台使用 pkg-config（非致命）
+        pkg_check_modules(GTK4 QUIET gtk4)
     endif()
     
-    if(NOT GTK4_FOUND)
-        # 尝试使用 vcpkg 安装的 GTK4
-        find_package(gtk QUIET)
-        if(gtk_FOUND)
-            set(GTK4_FOUND TRUE)
-            set(GTK4_LIBRARIES gtk::gtk)
-            set(GTK4_INCLUDE_DIRS ${gtk_INCLUDE_DIRS})
-            message(STATUS "Found GTK4 via vcpkg")
-        else()
-            message(WARNING "GTK4 not found via vcpkg. Please install with: vcpkg install gtk:x64-windows")
-            message(STATUS "Alternative: install MSYS2 and use: pacman -S mingw-w64-x86_64-gtk4")
-        endif()
+    if(GTK4_FOUND)
+        message(STATUS "Found GTK4: ${GTK4_VERSION}")
+    else()
+        message(WARNING "GTK4 not found. Disabling GUI build. Set -DDUOROU_BUILD_GUI=OFF or install GTK4.")
+        set(DUOROU_BUILD_GUI OFF CACHE BOOL "Build GUI components and executable (requires GTK4)" FORCE)
     endif()
 else()
-    # 非 Windows 平台使用 pkg-config
-    pkg_check_modules(GTK4 REQUIRED gtk4)
-endif()
-
-if(GTK4_FOUND)
-    message(STATUS "Found GTK4: ${GTK4_VERSION}")
-else()
-    message(FATAL_ERROR "GTK4 not found. Please install GTK4 development packages.")
+    message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GTK4 detection.")
 endif()
 
 # 线程支持
@@ -138,49 +150,6 @@ endif()
 
 # OpenSSL 支持 (用于SHA256计算)
 find_package(OpenSSL REQUIRED)
-
-# OpenMP 支持 (用于并行计算)
-if(APPLE)
-    # macOS 特殊处理 - 手动配置 OpenMP
-    find_path(OpenMP_INCLUDE_DIR omp.h
-        PATHS /opt/homebrew/Cellar/libomp/21.1.1/include /opt/homebrew/include /usr/local/include
-        NO_DEFAULT_PATH
-    )
-    find_library(OpenMP_LIBRARY omp
-        PATHS /opt/homebrew/Cellar/libomp/21.1.1/lib /opt/homebrew/lib /usr/local/lib
-        NO_DEFAULT_PATH
-    )
-    
-    if(OpenMP_INCLUDE_DIR AND OpenMP_LIBRARY)
-        set(OpenMP_CXX_FOUND TRUE)
-        # 修复 macOS 下 OpenMP 编译选项
-        separate_arguments(OpenMP_CXX_FLAGS NATIVE_COMMAND "-Xpreprocessor -fopenmp")
-        separate_arguments(OpenMP_C_FLAGS NATIVE_COMMAND "-Xpreprocessor -fopenmp")
-        set(OpenMP_CXX_LIBRARIES "${OpenMP_LIBRARY}")
-        set(OpenMP_CXX_LIB_NAMES "omp")
-        set(OpenMP_C_LIB_NAMES "omp")
-        add_library(OpenMP::OpenMP_CXX INTERFACE IMPORTED)
-        set_target_properties(OpenMP::OpenMP_CXX PROPERTIES
-            INTERFACE_COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CXX>:-Xpreprocessor;-fopenmp>"
-            INTERFACE_INCLUDE_DIRECTORIES "${OpenMP_INCLUDE_DIR}"
-            INTERFACE_LINK_LIBRARIES "${OpenMP_LIBRARY}"
-        )
-        set(OpenMP_FOUND TRUE)
-        message(STATUS "Found OpenMP (manual): ${OpenMP_LIBRARY}")
-    else()
-        set(OpenMP_CXX_FOUND FALSE)
-        set(OpenMP_FOUND FALSE)
-        message(WARNING "OpenMP not found. Install with: brew install libomp")
-    endif()
-else()
-    # 非 macOS 系统使用标准查找
-    find_package(OpenMP)
-    if(OpenMP_CXX_FOUND)
-        message(STATUS "Found OpenMP: ${OpenMP_CXX_VERSION}")
-    else()
-        message(WARNING "OpenMP not found. Parallel computation will be disabled.")
-    endif()
-endif()
 if(OPENSSL_FOUND)
     message(STATUS "Found OpenSSL: ${OPENSSL_VERSION}")
 else()
@@ -253,13 +222,43 @@ else()
     set(HAVE_OPENCV FALSE)
 endif()
 
+# WebKitGTK 和 MD4C 支持（Markdown 渲染增强）
+if(DUOROU_BUILD_GUI)
+    # WebKitGTK (GTK4 通常对应 webkit2gtk-4.1；部分环境仍为 4.0)
+    pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.1)
+    if(NOT WEBKIT2GTK_FOUND)
+        pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.0)
+    endif()
+    if(WEBKIT2GTK_FOUND)
+        message(STATUS "Found WebKitGTK: ${WEBKIT2GTK_VERSION}")
+        set(HAVE_WEBKIT2GTK TRUE)
+    else()
+        message(STATUS "WebKitGTK not found. MarkdownView will fall back to GtkTextView.")
+        set(HAVE_WEBKIT2GTK FALSE)
+    endif()
+
+    # MD4C for Markdown->HTML conversion (md4c-html provides md_html, depends on md4c)
+    pkg_check_modules(MD4C_HTML QUIET md4c-html)
+    pkg_check_modules(MD4C QUIET md4c)
+    if(MD4C_HTML_FOUND)
+        message(STATUS "Found MD4C-HTML: ${MD4C_HTML_VERSION}")
+        set(HAVE_MD4C TRUE)
+    elseif(MD4C_FOUND)
+        message(STATUS "Found MD4C (core) only: ${MD4C_VERSION}")
+        message(STATUS "Note: md4c-html not found; HTML conversion will be disabled.")
+        set(HAVE_MD4C FALSE)
+    else()
+        message(STATUS "MD4C not found. Using minimal fallback converter.")
+        set(HAVE_MD4C FALSE)
+    endif()
+endif()
+
 # 包含目录
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMemory/src/server
-    ${GTK4_INCLUDE_DIRS}
 )
 
 # 添加视频音频库的包含目录
@@ -279,10 +278,21 @@ if(OpenCV_FOUND)
     include_directories(${OpenCV_INCLUDE_DIRS})
 endif()
 
-# 链接目录
-link_directories(
-    ${GTK4_LIBRARY_DIRS}
-)
+# 添加 WebKitGTK/MD4C 的包含目录
+if(WEBKIT2GTK_FOUND)
+    include_directories(${WEBKIT2GTK_INCLUDE_DIRS})
+endif()
+if(MD4C_HTML_FOUND)
+    include_directories(${MD4C_HTML_INCLUDE_DIRS})
+endif()
+if(MD4C_FOUND)
+    include_directories(${MD4C_INCLUDE_DIRS})
+endif()
+
+# 链接目录（仅在启用 GUI 且找到 GTK4 时添加）
+if(DUOROU_BUILD_GUI AND GTK4_FOUND)
+    link_directories(${GTK4_LIBRARY_DIRS})
+endif()
 
 # 添加视频音频库的链接目录
 if(FFMPEG_FOUND)
@@ -297,13 +307,26 @@ if(PORTAUDIO_FOUND)
     link_directories(${PORTAUDIO_LIBRARY_DIRS})
 endif()
 
-# 编译定义
+# 添加 WebKitGTK/MD4C 的链接目录
+if(WEBKIT2GTK_FOUND)
+    link_directories(${WEBKIT2GTK_LIBRARY_DIRS})
+endif()
+if(MD4C_HTML_FOUND)
+    link_directories(${MD4C_HTML_LIBRARY_DIRS})
+endif()
+if(MD4C_FOUND)
+    link_directories(${MD4C_LIBRARY_DIRS})
+endif()
+
+# 编译定义（基础定义 + 条件 GTK 定义）
 add_definitions(
-    ${GTK4_CFLAGS_OTHER}
     -DDUOROU_VERSION="${PROJECT_VERSION}"
     -DDUOROU_PLATFORM="${DUOROU_PLATFORM}"
-    -DHAVE_GTK
 )
+
+if(DUOROU_BUILD_GUI AND GTK4_FOUND)
+    add_definitions(${GTK4_CFLAGS_OTHER} -DHAVE_GTK)
+endif()
 
 # 添加视频音频库的编译定义
 if(FFMPEG_FOUND)
@@ -322,26 +345,21 @@ if(OpenCV_FOUND)
     add_definitions(-DHAVE_OPENCV)
 endif()
 
+# 编译定义：WebKitGTK / MD4C
+if(WEBKIT2GTK_FOUND)
+    add_definitions(-DHAVE_WEBKIT2GTK ${WEBKIT2GTK_CFLAGS_OTHER})
+endif()
+if(MD4C_HTML_FOUND)
+    add_definitions(-DHAVE_MD4C ${MD4C_HTML_CFLAGS_OTHER})
+elseif(MD4C_FOUND)
+    # Core md4c present but html helper missing; do not define HAVE_MD4C
+    add_definitions(${MD4C_CFLAGS_OTHER})
+endif()
+
 # llama.cpp 子项目配置
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-
-# 启用BLAS优化
-if(APPLE)
-    set(GGML_BLAS ON CACHE BOOL "" FORCE)
-    set(GGML_BLAS_VENDOR "Apple" CACHE STRING "" FORCE)
-    set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
-    message(STATUS "Enabled BLAS with Accelerate framework for llama.cpp")
-else()
-    set(GGML_BLAS ON CACHE BOOL "" FORCE)
-    set(GGML_BLAS_VENDOR "OpenBLAS" CACHE STRING "" FORCE)
-    message(STATUS "Enabled BLAS with OpenBLAS for llama.cpp")
-endif()
-
-# 启用OpenMP支持
-set(GGML_OPENMP ON CACHE BOOL "" FORCE)
-message(STATUS "Enabled OpenMP support for llama.cpp")
 
 # 根据选项配置 llama.cpp
 if(DUOROU_ENABLE_CUDA)
@@ -386,10 +404,34 @@ endif()
 # 添加子项目
 add_subdirectory(third_party/llama.cpp)
 add_subdirectory(third_party/stable-diffusion.cpp)
+add_subdirectory(src/model)
+if(TARGET duorou_model)
+    target_include_directories(duorou_model PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include
+    )
+    target_link_libraries(duorou_model PRIVATE ggml)
+endif()
 # MiniMemory作为独立服务运行，不需要编译到主项目中
+
+# 添加工具模块
+add_subdirectory(src/utils)
 
 # 添加扩展模块
 add_subdirectory(src/extensions)
+
+# 添加 kvcache 模块
+add_subdirectory(src/kvcache)
+
+# 移除自研 ml 模块，仅保留 llama.cpp 作为推理引擎
+# add_subdirectory(src/ml)
+
+# 添加 Model 模块
+# (已在上方初始化 src/model；移除重复 add_subdirectory 以避免二次使用同一 binary 目录)
+
+# 集成测试
+if(BUILD_TESTING)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/src/CMakeLists_integration_test.txt)
+endif()
 
 # 创建源文件目录（如果不存在）
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
@@ -420,14 +462,13 @@ set(DUOROU_SOURCES_LIST
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
-    src/core/safetensors_parser.cpp
-    src/core/hf_tokenizer.cpp
 
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
     src/gui/image_view.cpp
     src/gui/settings_dialog.cpp
     src/gui/system_tray.cpp
+    src/gui/markdown_view.cpp
     src/gui/chat_session.cpp
     src/gui/chat_session_manager.cpp
     src/gui/session_storage_adapter.cpp
@@ -460,14 +501,12 @@ set(DUOROU_HEADERS_LIST
     src/core/resource_manager.h
     src/core/workflow_engine.h
     src/core/model_switch_task.h
-    src/core/safetensors_parser.h
-    src/core/hf_tokenizer.h
-    src/core/qwen_safetensors_engine.h
     src/gui/main_window.h
     src/gui/chat_view.h
     src/gui/image_view.h
     src/gui/settings_dialog.h
     src/gui/system_tray.h
+    src/gui/markdown_view.h
     src/gui/chat_session.h
     src/gui/chat_session_manager.h
     src/gui/session_storage_adapter.h
@@ -516,39 +555,55 @@ if(NOT DUOROU_SOURCES)
     set(DUOROU_HEADERS ${DUOROU_HEADERS_LIST})
 endif()
 
-# 只有当存在源文件时才构建可执行文件
-if(DUOROU_SOURCES)
+# 只有当存在源文件且启用 GUI 时才构建可执行文件
+if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     list(LENGTH DUOROU_SOURCES DUOROU_SOURCES_COUNT)
     message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
     
-    # 设置包含目录
+    # 设置包含目录（GTK 目录按条件添加）
     target_include_directories(duorou PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp
-        ${GTK4_INCLUDE_DIRS}
     )
+    target_include_directories(duorou_model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include
+)
+    if(GTK4_FOUND)
+        target_include_directories(duorou PRIVATE ${GTK4_INCLUDE_DIRS})
+    endif()
+
+    target_link_libraries(duorou_model PRIVATE ggml)
     
-    # 链接库
+    # 链接库（GTK4 按条件链接）
     target_link_libraries(duorou
         llama
         stable-diffusion
         duorou_ollama_extension
-        ${GTK4_LIBRARIES}
+        duorou_model
+        duorou_utils
         Threads::Threads
         nlohmann_json::nlohmann_json
         CURL::libcurl
         OpenSSL::SSL
         OpenSSL::Crypto
     )
-    
-    # 链接OpenMP (如果可用)
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(duorou OpenMP::OpenMP_CXX)
-        message(STATUS "Linking OpenMP for parallel computation")
+    if(GTK4_FOUND)
+        target_link_libraries(duorou ${GTK4_LIBRARIES})
+    endif()
+    if(WEBKIT2GTK_FOUND)
+        target_link_libraries(duorou ${WEBKIT2GTK_LIBRARIES})
+        message(STATUS "Linking WebKitGTK libraries: ${WEBKIT2GTK_LIBRARIES}")
+    endif()
+    if(MD4C_HTML_FOUND)
+        target_link_libraries(duorou ${MD4C_HTML_LIBRARIES})
+        message(STATUS "Linking MD4C-HTML libraries: ${MD4C_HTML_LIBRARIES}")
+    elseif(MD4C_FOUND)
+        target_link_libraries(duorou ${MD4C_LIBRARIES})
+        message(STATUS "Linking MD4C libraries: ${MD4C_LIBRARIES}")
     endif()
     
     # 链接视频音频处理库
@@ -583,7 +638,6 @@ if(DUOROU_SOURCES)
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework AVFoundation"
-            "-framework Accelerate"
         )
     elseif(WIN32)
         target_link_libraries(duorou
@@ -611,6 +665,8 @@ if(DUOROU_SOURCES)
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
     )
+elseif(NOT DUOROU_BUILD_GUI)
+    message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GUI executable build.")
 else()
     message(STATUS "No source files found. Skipping executable build.")
     message(STATUS "To build the executable, create the source files listed in DUOROU_SOURCES_LIST.")
@@ -661,24 +717,26 @@ endif()
 
 include(CPack)
 
-# 复制GUI资源文件到build目录
-set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
-file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
+# 复制GUI资源文件到build目录（仅在启用 GUI 时）
+if(DUOROU_BUILD_GUI)
+    set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
+    file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
 
-# 复制CSS和图片文件
-set(GUI_RESOURCE_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
-)
+    # 复制CSS和图片文件
+    set(GUI_RESOURCE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
+    )
 
-foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
-    get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
-    configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
-endforeach()
+    foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
+        get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
+        configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
+    endforeach()
 
-message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
+    message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
+endif()
 
 # 显示配置摘要
 message(STATUS "")
@@ -695,27 +753,3 @@ message(STATUS "  OpenCL Support: ${DUOROU_ENABLE_OPENCL}")
 
 message(STATUS "  Build Examples: ${DUOROU_BUILD_EXAMPLES}")
 message(STATUS "")
-
-# # 添加测试程序
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_tokenizer.cpp")
-#     add_executable(test_tokenizer test/test_tokenizer.cpp)
-#     target_link_libraries(test_tokenizer PRIVATE 
-#         duorou_ollama_extension
-#         nlohmann_json::nlohmann_json
-#     )
-#     target_include_directories(test_tokenizer PRIVATE 
-#         ${CMAKE_CURRENT_SOURCE_DIR}/src
-#     )
-# endif()
-
-# # 添加文本生成错误处理测试
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_text_generation.cpp")
-#     add_executable(test_text_generation test/test_text_generation.cpp)
-#     target_link_libraries(test_text_generation PRIVATE 
-#         duorou_ollama_extension
-#         nlohmann_json::nlohmann_json
-#     )
-#     target_include_directories(test_text_generation PRIVATE 
-#         ${CMAKE_CURRENT_SOURCE_DIR}/src
-#     )
-# endif()

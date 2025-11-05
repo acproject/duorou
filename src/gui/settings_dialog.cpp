@@ -5,10 +5,14 @@
 #include "../core/model_manager.h"
 
 #include <iostream>
+#ifdef HAVE_GTK
 #include <gtk/gtk.h>
+#endif
 
 namespace duorou {
 namespace gui {
+
+#ifdef HAVE_GTK
 
 SettingsDialog::SettingsDialog()
     : dialog_(nullptr)
@@ -57,48 +61,48 @@ SettingsDialog::SettingsDialog(core::Application* app)
 }
 
 SettingsDialog::~SettingsDialog() {
-    // GTK4会自动清理子组件
+    // GTK4 automatically cleans up child components
 }
 
 bool SettingsDialog::initialize() {
-    // 创建对话框
+    // Create dialog
     dialog_ = gtk_dialog_new();
     if (!dialog_) {
         std::cerr << "Failed to create settings dialog" << std::endl;
         return false;
     }
 
-    // 设置对话框属性
+    // Set dialog properties
     gtk_window_set_title(GTK_WINDOW(dialog_), "Settings");
     gtk_window_set_default_size(GTK_WINDOW(dialog_), 600, 500);
     gtk_window_set_modal(GTK_WINDOW(dialog_), TRUE);
     gtk_window_set_resizable(GTK_WINDOW(dialog_), TRUE);
 
-    // 获取对话框内容区域
+    // Get dialog content area
     GtkWidget* content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog_));
     
-    // 创建notebook用于分页
+    // Create notebook for tabs
     notebook_ = gtk_notebook_new();
     gtk_widget_set_vexpand(notebook_, TRUE);
     gtk_widget_set_hexpand(notebook_, TRUE);
     
-    // 创建各个设置页面
+    // Create settings pages
     create_general_page();
     create_model_page();
     create_performance_page();
     
-    // 添加到内容区域
+    // Add to content area
     gtk_box_append(GTK_BOX(content_area), notebook_);
     
-    // 添加对话框按钮
+    // Add dialog buttons
     gtk_dialog_add_button(GTK_DIALOG(dialog_), "Cancel", GTK_RESPONSE_CANCEL);
     gtk_dialog_add_button(GTK_DIALOG(dialog_), "Apply", GTK_RESPONSE_APPLY);
     gtk_dialog_add_button(GTK_DIALOG(dialog_), "OK", GTK_RESPONSE_OK);
     
-    // 连接信号
+    // Connect signals
     connect_signals();
     
-    // 加载当前设置
+    // Load current settings
     load_settings();
 
     std::cout << "Settings dialog initialized successfully" << std::endl;
@@ -111,14 +115,14 @@ void SettingsDialog::show(GtkWidget* parent) {
             gtk_window_set_transient_for(GTK_WINDOW(dialog_), GTK_WINDOW(parent));
         }
         
-        // 确保对话框在最顶层显示
+        // Ensure dialog is shown on top
         gtk_window_set_modal(GTK_WINDOW(dialog_), TRUE);
         
-        // 显示对话框并确保获得焦点
+        // Show dialog and ensure it gets focus
         gtk_widget_show(dialog_);
         gtk_window_present(GTK_WINDOW(dialog_));
         
-        // 强制获取焦点
+        // Force focus grab
         gtk_widget_grab_focus(dialog_);
     }
 }
@@ -136,18 +140,18 @@ void SettingsDialog::create_general_page() {
     gtk_widget_set_margin_top(general_page_, 20);
     gtk_widget_set_margin_bottom(general_page_, 20);
     
-    // 应用程序设置组
+    // Application settings group
     GtkWidget* app_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_bottom(app_group, 20);
     
-    // 组标题
+    // Group title
     GtkWidget* app_title = gtk_label_new("Application Settings");
     gtk_widget_set_halign(app_title, GTK_ALIGN_START);
     gtk_widget_add_css_class(app_title, "settings-group-title");
     gtk_widget_set_margin_bottom(app_title, 10);
     gtk_box_append(GTK_BOX(app_group), app_title);
     
-    // 主题选择
+    // Theme selection
     GtkWidget* theme_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* theme_label = gtk_label_new("Theme:");
     gtk_widget_set_size_request(theme_label, 100, -1);
@@ -165,7 +169,7 @@ void SettingsDialog::create_general_page() {
     gtk_widget_set_margin_bottom(theme_box, 5);
     gtk_box_append(GTK_BOX(app_group), theme_box);
     
-    // 语言选择
+    // Language selection
     GtkWidget* language_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* language_label = gtk_label_new("Language:");
     gtk_widget_set_size_request(language_label, 100, -1);
@@ -174,7 +178,6 @@ void SettingsDialog::create_general_page() {
     language_combo_ = gtk_combo_box_text_new();
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language_combo_), "English");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language_combo_), "中文");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language_combo_), "日本語");
     gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
     
     gtk_box_append(GTK_BOX(language_box), language_label);
@@ -183,7 +186,7 @@ void SettingsDialog::create_general_page() {
     gtk_widget_set_margin_bottom(language_box, 5);
     gtk_box_append(GTK_BOX(app_group), language_box);
     
-    // 启动时最小化到系统托盘
+    // Minimize to system tray on startup
     startup_check_ = gtk_check_button_new_with_label("Minimize to system tray on startup");
     gtk_widget_set_margin_start(startup_check_, 15);
     gtk_widget_set_margin_bottom(startup_check_, 5);
@@ -191,7 +194,7 @@ void SettingsDialog::create_general_page() {
     
     gtk_box_append(GTK_BOX(general_page_), app_group);
     
-    // 添加到notebook
+    // Add to notebook
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), general_page_, gtk_label_new("General"));
 }
 
@@ -202,18 +205,18 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_top(model_page_, 20);
     gtk_widget_set_margin_bottom(model_page_, 20);
     
-    // 模型设置组
+    // Model settings group
     GtkWidget* model_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_bottom(model_group, 20);
     
-    // 组标题
+    // Group title
     GtkWidget* model_title = gtk_label_new("Model Settings");
     gtk_widget_set_halign(model_title, GTK_ALIGN_START);
     gtk_widget_add_css_class(model_title, "settings-group-title");
     gtk_widget_set_margin_bottom(model_title, 10);
     gtk_box_append(GTK_BOX(model_group), model_title);
     
-    // LLaMA模型选择下拉菜单
+    // LLaMA model selection dropdown
     GtkWidget* llama_combo_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* llama_combo_label = gtk_label_new("LLaMA Model:");
     gtk_widget_set_size_request(llama_combo_label, 120, -1);
@@ -228,7 +231,13 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(llama_combo_box, 5);
     gtk_box_append(GTK_BOX(model_group), llama_combo_box);
     
-    // Llama.cpp模型路径
+    // Add Force LLaMA backend checkbox
+    force_llama_check_ = gtk_check_button_new_with_label("Force LLaMA backend (use llama.cpp for text generation)");
+    gtk_widget_set_margin_start(force_llama_check_, 15);
+    gtk_widget_set_margin_bottom(force_llama_check_, 5);
+    gtk_box_append(GTK_BOX(model_group), force_llama_check_);
+    
+    // Llama.cpp model path
     GtkWidget* llama_path_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* llama_path_label = gtk_label_new("Llama.cpp Models Path:");
     gtk_widget_set_size_request(llama_path_label, 120, -1);
@@ -248,7 +257,7 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(llama_path_box, 5);
     gtk_box_append(GTK_BOX(model_group), llama_path_box);
     
-    // Ollama模型路径
+    // Ollama model path
     GtkWidget* ollama_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* ollama_label = gtk_label_new("Ollama Models Path:");
     gtk_widget_set_size_request(ollama_label, 120, -1);
@@ -268,21 +277,21 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(ollama_box, 5);
     gtk_box_append(GTK_BOX(model_group), ollama_box);
     
-    // 移除Custom Path配置项，因为已有Model Path作为Llama.cpp模型存储位置
+    // Remove Custom Path configuration item, as Model Path already serves as Llama.cpp model storage location
     
-    // Stable Diffusion模型配置组
+    // Stable Diffusion model configuration group
     GtkWidget* sd_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_margin_top(sd_group, 10);
     gtk_widget_set_margin_bottom(sd_group, 10);
     
-    // SD组标题
+    // SD group title
     GtkWidget* sd_title = gtk_label_new("Stable Diffusion Models");
     gtk_widget_set_halign(sd_title, GTK_ALIGN_START);
     gtk_widget_add_css_class(sd_title, "settings-subsection-title");
     gtk_widget_set_margin_bottom(sd_title, 5);
     gtk_box_append(GTK_BOX(sd_group), sd_title);
     
-    // 主模型路径
+    // Main model path
     GtkWidget* sd_main_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* sd_main_label = gtk_label_new("Main Model:");
     gtk_widget_set_size_request(sd_main_label, 120, -1);
@@ -302,7 +311,7 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(sd_main_box, 5);
     gtk_box_append(GTK_BOX(sd_group), sd_main_box);
     
-    // VAE模型路径
+    // VAE model path
     GtkWidget* sd_vae_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* sd_vae_label = gtk_label_new("VAE Model:");
     gtk_widget_set_size_request(sd_vae_label, 120, -1);
@@ -322,7 +331,7 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(sd_vae_box, 5);
     gtk_box_append(GTK_BOX(sd_group), sd_vae_box);
     
-    // ControlNet模型路径
+    // ControlNet model path
     GtkWidget* sd_controlnet_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* sd_controlnet_label = gtk_label_new("ControlNet:");
     gtk_widget_set_size_request(sd_controlnet_label, 120, -1);
@@ -342,7 +351,7 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_margin_bottom(sd_controlnet_box, 5);
     gtk_box_append(GTK_BOX(sd_group), sd_controlnet_box);
     
-    // LoRA模型路径
+    // LoRA model path
     GtkWidget* sd_lora_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* sd_lora_label = gtk_label_new("LoRA Models:");
     gtk_widget_set_size_request(sd_lora_label, 120, -1);
@@ -366,10 +375,10 @@ void SettingsDialog::create_model_page() {
     
     gtk_box_append(GTK_BOX(model_page_), model_group);
     
-    // 添加到notebook
+    // Add to notebook
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), model_page_, gtk_label_new("Models"));
     
-    // 刷新模型列表
+    // Refresh model list
     refresh_model_list();
 }
 
@@ -380,18 +389,18 @@ void SettingsDialog::create_performance_page() {
     gtk_widget_set_margin_top(performance_page_, 20);
     gtk_widget_set_margin_bottom(performance_page_, 20);
     
-    // 性能设置组
+    // Performance settings group
     GtkWidget* perf_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_bottom(perf_group, 20);
     
-    // 组标题
+    // Group title
     GtkWidget* perf_title = gtk_label_new("Performance Settings");
     gtk_widget_set_halign(perf_title, GTK_ALIGN_START);
     gtk_widget_add_css_class(perf_title, "settings-group-title");
     gtk_widget_set_margin_bottom(perf_title, 10);
     gtk_box_append(GTK_BOX(perf_group), perf_title);
     
-    // 线程数设置
+    // Thread count setting
     GtkWidget* threads_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* threads_label = gtk_label_new("CPU Threads:");
     gtk_widget_set_size_request(threads_label, 120, -1);
@@ -406,13 +415,13 @@ void SettingsDialog::create_performance_page() {
     gtk_widget_set_margin_bottom(threads_box, 5);
     gtk_box_append(GTK_BOX(perf_group), threads_box);
     
-    // GPU加速
+    // GPU acceleration
     gpu_check_ = gtk_check_button_new_with_label("Enable GPU acceleration (if available)");
     gtk_widget_set_margin_start(gpu_check_, 15);
     gtk_widget_set_margin_bottom(gpu_check_, 5);
     gtk_box_append(GTK_BOX(perf_group), gpu_check_);
     
-    // 内存限制
+    // Memory limit
     GtkWidget* memory_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget* memory_label = gtk_label_new("Memory Limit (GB):");
     gtk_widget_set_size_request(memory_label, 120, -1);
@@ -429,19 +438,19 @@ void SettingsDialog::create_performance_page() {
     
     gtk_box_append(GTK_BOX(performance_page_), perf_group);
     
-    // 添加到notebook
+    // Add to notebook
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), performance_page_, gtk_label_new("Performance"));
 }
 
 void SettingsDialog::connect_signals() {
-    // 连接对话框响应信号
+    // Connect dialog response signal
     g_signal_connect(dialog_, "response", G_CALLBACK(on_dialog_response), this);
 }
 
 void SettingsDialog::load_settings() {
     if (!application_) {
         std::cout << "Warning: Application instance not available, using default values" << std::endl;
-        // 设置默认值
+        // Set default values
         gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
         gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
@@ -454,7 +463,7 @@ void SettingsDialog::load_settings() {
     auto* config_manager = application_->getConfigManager();
     if (!config_manager) {
         std::cout << "Warning: ConfigManager not available, using default values" << std::endl;
-        // 设置默认值
+        // Set default values
         gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
         gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
@@ -466,13 +475,17 @@ void SettingsDialog::load_settings() {
     
     std::cout << "Loading settings from configuration file..." << std::endl;
     
-    // 从配置文件加载设置
+    // Load settings from configuration file
     int theme_index = config_manager->getInt("ui.theme", 0);
     int language_index = config_manager->getInt("ui.language", 0);
     bool startup_minimize = config_manager->getBool("ui.startup_minimize", false);
     bool gpu_enabled = config_manager->getBool("performance.gpu_enabled", false);
     int threads = config_manager->getInt("performance.threads", 4);
     int memory_limit = config_manager->getInt("performance.memory_limit", 8);
+    bool force_llama = config_manager->getBool("model.force_llama", false);
+    if (force_llama_check_) {
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(force_llama_check_), force_llama);
+    }
     
     std::string llama_selected = config_manager->getString("models.llama_selected", "");
     std::string sd_path = config_manager->getString("models.sd_path", "");
@@ -482,7 +495,7 @@ void SettingsDialog::load_settings() {
     std::string model_path = config_manager->getString("models.model_path", "");
     std::string ollama_path = config_manager->getString("models.ollama_path", "");
     
-    // 设置UI控件的值
+    // Set UI control values
     gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), theme_index);
     gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), language_index);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), startup_minimize);
@@ -490,17 +503,29 @@ void SettingsDialog::load_settings() {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), threads);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(memory_spin_), memory_limit);
     
-    // 设置模型路径
+    // Set model paths
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_model_entry_)), sd_path.c_str(), sd_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_vae_entry_)), sd_vae_path.c_str(), sd_vae_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_controlnet_entry_)), sd_controlnet_path.c_str(), sd_controlnet_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_lora_entry_)), sd_lora_path.c_str(), sd_lora_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(model_path_entry_)), model_path.c_str(), model_path.length());
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(ollama_path_entry_)), ollama_path.c_str(), ollama_path.length());
+
+    // 应用路径到 ModelManager 并刷新模型列表
+    auto model_manager = application_->getModelManager();
+    if (model_manager) {
+        if (!ollama_path.empty()) {
+            model_manager->setOllamaModelsPath(ollama_path);
+        }
+        if (!model_path.empty()) {
+            model_manager->rescanModelDirectory(model_path);
+        }
+        refresh_model_list();
+    }
     
-    // 如果有保存的模型选择，尝试设置到下拉菜单
+    // If there's a saved model selection, try to set it in the dropdown
     if (!llama_selected.empty() && llama_model_combo_) {
-        // 查找匹配的模型选项
+        // Find matching model option
         GtkTreeModel* model = gtk_combo_box_get_model(GTK_COMBO_BOX(llama_model_combo_));
         GtkTreeIter iter;
         gboolean valid = gtk_tree_model_get_iter_first(model, &iter);
@@ -535,7 +560,7 @@ void SettingsDialog::save_settings() {
         return;
     }
     
-    // 获取当前设置值
+    // Get current setting values
     int theme_index = gtk_combo_box_get_active(GTK_COMBO_BOX(theme_combo_));
     int language_index = gtk_combo_box_get_active(GTK_COMBO_BOX(language_combo_));
     gboolean startup_minimize = gtk_check_button_get_active(GTK_CHECK_BUTTON(startup_check_));
@@ -543,7 +568,7 @@ void SettingsDialog::save_settings() {
     int threads = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(threads_spin_));
     int memory_limit = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(memory_spin_));
     
-    // 获取选中的LLaMA模型
+    // Get selected LLaMA model
     gchar* selected_model = nullptr;
     if (llama_model_combo_) {
         selected_model = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(llama_model_combo_));
@@ -556,7 +581,7 @@ void SettingsDialog::save_settings() {
     const char* model_path = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(model_path_entry_)));
     const char* ollama_path = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(ollama_path_entry_)));
     
-    // 保存设置到配置文件
+    // Save settings to configuration file
     config_manager->setInt("ui.theme", theme_index);
     config_manager->setInt("ui.language", language_index);
     config_manager->setBool("ui.startup_minimize", startup_minimize);
@@ -592,23 +617,35 @@ void SettingsDialog::save_settings() {
         config_manager->setString("models.ollama_path", ollama_path);
     }
     
-    // 保存配置到文件
+    // Save configuration to file
     if (config_manager->saveConfig()) {
         std::cout << "Settings saved successfully" << std::endl;
     } else {
         std::cout << "Error: Failed to save settings" << std::endl;
     }
-    
+
     if (selected_model) {
         g_free(selected_model);
+    }
+
+    // 保存后立即应用路径到 ModelManager 并刷新列表
+    auto model_manager = application_->getModelManager();
+    if (model_manager) {
+        if (ollama_path && strlen(ollama_path) > 0) {
+            model_manager->setOllamaModelsPath(ollama_path);
+        }
+        if (model_path && strlen(model_path) > 0) {
+            model_manager->rescanModelDirectory(model_path);
+        }
+        refresh_model_list();
     }
 }
 
 void SettingsDialog::reset_to_defaults() {
-    // TODO: 重置所有设置为默认值
+    // TODO: Reset all settings to default values
     std::cout << "Resetting settings to default values..." << std::endl;
     
-    // 重置UI控件为默认值
+    // Reset UI controls to default values
     gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
     gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
@@ -616,7 +653,7 @@ void SettingsDialog::reset_to_defaults() {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), 4);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(memory_spin_), 8);
     
-    // 重置模型选择
+    // Reset model selection
     if (llama_model_combo_) {
         gtk_combo_box_set_active(GTK_COMBO_BOX(llama_model_combo_), 0);
     }
@@ -629,7 +666,7 @@ void SettingsDialog::reset_to_defaults() {
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(ollama_path_entry_)), "", 0);
 }
 
-// 静态回调函数实现
+// Static callback function implementations
 void SettingsDialog::on_ok_button_clicked(GtkWidget* widget, gpointer user_data) {
     SettingsDialog* dialog = static_cast<SettingsDialog*>(user_data);
     dialog->save_settings();
@@ -651,7 +688,7 @@ void SettingsDialog::on_reset_button_clicked(GtkWidget* widget, gpointer user_da
     dialog->reset_to_defaults();
 }
 
-// 对话框响应处理
+// Dialog response handling
 void SettingsDialog::set_application(core::Application* app) {
     application_ = app;
     refresh_model_list();
@@ -662,33 +699,46 @@ void SettingsDialog::refresh_model_list() {
         return;
     }
     
-    // 清空现有选项
+    // Clear existing options
     gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(llama_model_combo_));
     
-    // 从ModelManager获取真实的可用模型列表
+    // Get real available model list from ModelManager
     auto model_manager = application_->getModelManager();
     if (model_manager) {
-        std::vector<std::string> local_models = model_manager->getLocalModels();
+        std::vector<duorou::core::ModelManagerInfo> models = model_manager->getAllModels();
         
-        if (local_models.empty()) {
-            // 如果没有本地模型，添加提示信息
+        // 筛选语言模型
+        std::vector<std::string> language_model_names;
+        for (const auto &info : models) {
+            if (info.type == duorou::core::ModelType::LANGUAGE_MODEL) {
+                // 优先展示 name，其次 id
+                if (!info.name.empty()) {
+                    language_model_names.push_back(info.name);
+                } else if (!info.id.empty()) {
+                    language_model_names.push_back(info.id);
+                }
+            }
+        }
+
+        if (language_model_names.empty()) {
+            // If no local models, add hint information
             gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), "No models found");
         } else {
-            // 添加所有本地模型
-            for (const auto& model : local_models) {
-                gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), model.c_str());
+            // Add all local models
+            for (const auto& name : language_model_names) {
+                gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), name.c_str());
             }
         }
     } else {
-        // 如果ModelManager不可用，显示错误信息
+        // If ModelManager is unavailable, show error message
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), "Model manager unavailable");
     }
     
-    // 设置默认选择
+    // Set default selection
     gtk_combo_box_set_active(GTK_COMBO_BOX(llama_model_combo_), 0);
 }
 
-// Llama模型现在通过下拉菜单选择，不再需要文件对话框
+// Llama models are now selected through dropdown, no longer need file dialog
 
 void SettingsDialog::on_sd_file_dialog_response(GtkNativeDialog* dialog, gint response, gpointer user_data) {
     SettingsDialog* settings = static_cast<SettingsDialog*>(user_data);
@@ -827,6 +877,14 @@ void SettingsDialog::on_model_path_dialog_response(GtkNativeDialog* dialog, gint
             char* filename = g_file_get_path(file);
             if (filename) {
                 gtk_editable_set_text(GTK_EDITABLE(settings->model_path_entry_), filename);
+                // 立即触发重新扫描并刷新列表
+                if (settings->application_) {
+                    auto mm = settings->application_->getModelManager();
+                    if (mm) {
+                        mm->rescanModelDirectory(filename);
+                        settings->refresh_model_list();
+                    }
+                }
                 g_free(filename);
             }
             g_object_unref(file);
@@ -859,6 +917,14 @@ void SettingsDialog::on_ollama_path_dialog_response(GtkNativeDialog* dialog, gin
             char* filename = g_file_get_path(file);
             if (filename) {
                 gtk_editable_set_text(GTK_EDITABLE(settings->ollama_path_entry_), filename);
+                // 立即应用 Ollama 路径并刷新列表
+                if (settings->application_) {
+                    auto mm = settings->application_->getModelManager();
+                    if (mm) {
+                        mm->setOllamaModelsPath(filename);
+                        settings->refresh_model_list();
+                    }
+                }
                 g_free(filename);
             }
             g_object_unref(file);
@@ -900,6 +966,88 @@ void SettingsDialog::on_dialog_response(GtkDialog* dialog, gint response_id, gpo
             break;
     }
 }
+
+#else // HAVE_GTK
+
+SettingsDialog::SettingsDialog()
+    : dialog_(nullptr)
+    , notebook_(nullptr)
+    , general_page_(nullptr)
+    , theme_combo_(nullptr)
+    , language_combo_(nullptr)
+    , startup_check_(nullptr)
+    , model_page_(nullptr)
+    , llama_model_combo_(nullptr)
+    , sd_model_entry_(nullptr)
+    , sd_vae_entry_(nullptr)
+    , sd_controlnet_entry_(nullptr)
+    , sd_lora_entry_(nullptr)
+    , model_path_entry_(nullptr)
+    , ollama_path_entry_(nullptr)
+    , performance_page_(nullptr)
+    , threads_spin_(nullptr)
+    , gpu_check_(nullptr)
+    , memory_spin_(nullptr)
+    , application_(nullptr)
+{
+}
+
+SettingsDialog::SettingsDialog(core::Application* app)
+    : dialog_(nullptr)
+    , notebook_(nullptr)
+    , general_page_(nullptr)
+    , theme_combo_(nullptr)
+    , language_combo_(nullptr)
+    , startup_check_(nullptr)
+    , model_page_(nullptr)
+    , llama_model_combo_(nullptr)
+    , sd_model_entry_(nullptr)
+    , sd_vae_entry_(nullptr)
+    , sd_controlnet_entry_(nullptr)
+    , sd_lora_entry_(nullptr)
+    , model_path_entry_(nullptr)
+    , ollama_path_entry_(nullptr)
+    , performance_page_(nullptr)
+    , threads_spin_(nullptr)
+    , gpu_check_(nullptr)
+    , memory_spin_(nullptr)
+    , application_(app)
+{
+}
+
+SettingsDialog::~SettingsDialog() {}
+
+bool SettingsDialog::initialize() { return false; }
+void SettingsDialog::show(GtkWidget* /*parent*/) {}
+void SettingsDialog::hide() {}
+void SettingsDialog::create_general_page() {}
+void SettingsDialog::create_model_page() {}
+void SettingsDialog::create_performance_page() {}
+void SettingsDialog::connect_signals() {}
+void SettingsDialog::load_settings() {}
+void SettingsDialog::save_settings() {}
+void SettingsDialog::reset_to_defaults() {}
+void SettingsDialog::on_ok_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_cancel_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_apply_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_reset_button_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::set_application(core::Application* app) { application_ = app; }
+void SettingsDialog::refresh_model_list() {}
+void SettingsDialog::on_sd_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_vae_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_vae_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_controlnet_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_controlnet_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_lora_file_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_sd_lora_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_model_path_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_model_path_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_ollama_path_dialog_response(GtkNativeDialog* /*dialog*/, gint /*response*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_ollama_path_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
+void SettingsDialog::on_dialog_response(GtkDialog* /*dialog*/, gint /*response_id*/, gpointer /*user_data*/) {}
+
+#endif // HAVE_GTK
 
 } // namespace gui
 } // namespace duorou

@@ -5,7 +5,7 @@
 #include <memory>
 #include <functional>
 #include <mutex>
-#include "stable-diffusion.h"
+#include "../../third_party/stable-diffusion.cpp/stable-diffusion.h"
 
 namespace duorou {
 namespace core {

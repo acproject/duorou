@@ -7,7 +7,7 @@
 namespace duorou {
 namespace core {
 
-// BaseTask实现
+// BaseTask implementation
 BaseTask::BaseTask(const std::string& id, const std::string& name, TaskPriority priority)
     : id_(id)
     , name_(name)
@@ -22,7 +22,7 @@ void BaseTask::cancel() {
     status_ = TaskStatus::CANCELLED;
 }
 
-// WorkflowEngine实现
+// WorkflowEngine implementation
 WorkflowEngine::WorkflowEngine()
     : worker_count_(0)
     , running_(false)
@@ -43,11 +43,11 @@ bool WorkflowEngine::initialize(size_t worker_count) {
         return true;
     }
     
-    // 如果未指定工作线程数，使用CPU核心数
+    // If worker count not specified, use CPU core count
     if (worker_count == 0) {
         worker_count_ = std::thread::hardware_concurrency();
         if (worker_count_ == 0) {
-            worker_count_ = 4; // 默认4个线程
+            worker_count_ = 4; // Default 4 threads
         }
     } else {
         worker_count_ = worker_count;
@@ -69,7 +69,7 @@ bool WorkflowEngine::start() {
         return true;
     }
     
-    // 注册默认资源
+    // Register default resources
     ResourceInfo llama_resource;
     llama_resource.id = "llama_model";
     llama_resource.type = ResourceType::MODEL;
@@ -109,7 +109,7 @@ bool WorkflowEngine::start() {
     running_.store(true);
     stop_requested_.store(false);
     
-    // 创建工作线程
+    // Create worker threads
     worker_threads_.reserve(worker_count_);
     for (size_t i = 0; i < worker_count_; ++i) {
         worker_threads_.emplace_back(&WorkflowEngine::workerThread, this);
@@ -126,14 +126,14 @@ void WorkflowEngine::stop() {
     
     std::cout << "Stopping WorkflowEngine..." << std::endl;
     
-    // 请求停止
+    // Request stop
     stop_requested_.store(true);
     running_.store(false);
     
-    // 唤醒所有等待的工作线程
+    // Wake up all waiting worker threads
     queue_condition_.notify_all();
     
-    // 等待所有工作线程结束
+    // Wait for all worker threads to finish
     for (auto& thread : worker_threads_) {
         if (thread.joinable()) {
             thread.join();
@@ -142,7 +142,7 @@ void WorkflowEngine::stop() {
     
     worker_threads_.clear();
     
-    // 取消所有等待中的任务
+    // Cancel all pending tasks
     std::lock_guard<std::mutex> lock(queue_mutex_);
     while (!task_queue_.empty()) {
         auto task = task_queue_.top();
@@ -167,18 +167,18 @@ bool WorkflowEngine::submitTask(std::shared_ptr<BaseTask> task) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         
-        // 检查任务ID是否已存在
+        // Check if task ID already exists
         if (all_tasks_.find(task->getId()) != all_tasks_.end()) {
             std::cerr << "Task with ID already exists: " << task->getId() << std::endl;
             return false;
         }
         
-        // 添加到队列和映射表
+        // Add to queue and mapping table
         task_queue_.push(task);
         all_tasks_[task->getId()] = task;
     }
     
-    // 唤醒一个工作线程
+    // Wake up one worker thread
     queue_condition_.notify_one();
     
     std::cout << "Task submitted: " << task->getId() << " (" << task->getName() << ")" << std::endl;
@@ -196,13 +196,13 @@ bool WorkflowEngine::submitTaskWithResources(std::shared_ptr<BaseTask> task, con
         return false;
     }
     
-    // 尝试获取所需资源
+    // Try to acquire required resources
     std::vector<std::string> acquired_resources;
     for (const auto& resource_id : required_resources) {
         bool success = resource_manager_->acquireLock(resource_id, task->getId(), lock_mode);
         if (!success) {
             std::cerr << "Failed to acquire resource lock: " << resource_id << " for task: " << task->getId() << std::endl;
-            // 释放已获取的资源
+            // Release acquired resources
             for (const auto& acquired : acquired_resources) {
                 resource_manager_->releaseLock(acquired, task->getId());
             }
@@ -211,7 +211,7 @@ bool WorkflowEngine::submitTaskWithResources(std::shared_ptr<BaseTask> task, con
         acquired_resources.push_back(resource_id);
     }
     
-    // 记录任务的资源锁定
+    // Record task resource locks
     {
         std::lock_guard<std::mutex> lock(task_resources_mutex_);
         task_resources_[task->getId()] = acquired_resources;
@@ -253,7 +253,7 @@ bool WorkflowEngine::cancelTask(const std::string& task_id) {
         std::cout << "Task cancelled: " << task_id << std::endl;
         return true;
     } else if (task->getStatus() == TaskStatus::RUNNING) {
-        // 对于正在运行的任务，设置取消标志
+        // For running tasks, set cancel flag
         task->cancel();
         std::cout << "Cancel signal sent to running task: " << task_id << std::endl;
         return true;
@@ -267,7 +267,7 @@ TaskResult WorkflowEngine::waitForTask(const std::string& task_id, int timeout_m
     auto start_time = std::chrono::steady_clock::now();
     
     while (true) {
-        // 检查任务结果
+        // Check task result
         {
             std::lock_guard<std::mutex> lock(results_mutex_);
             auto it = task_results_.find(task_id);
@@ -276,7 +276,7 @@ TaskResult WorkflowEngine::waitForTask(const std::string& task_id, int timeout_m
             }
         }
         
-        // 检查超时
+        // Check timeout
         if (timeout_ms > 0) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - start_time).count();
@@ -288,7 +288,7 @@ TaskResult WorkflowEngine::waitForTask(const std::string& task_id, int timeout_m
             }
         }
         
-        // 短暂休眠
+        // Brief sleep
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
@@ -301,7 +301,7 @@ TaskStatus WorkflowEngine::getTaskStatus(const std::string& task_id) const {
         return it->second->getStatus();
     }
     
-    return TaskStatus::PENDING; // 默认状态
+    return TaskStatus::PENDING; // Default status
 }
 
 TaskResult WorkflowEngine::getTaskResult(const std::string& task_id) const {
@@ -312,7 +312,7 @@ TaskResult WorkflowEngine::getTaskResult(const std::string& task_id) const {
         return it->second;
     }
     
-    return TaskResult(); // 返回空结果
+    return TaskResult(); // Return empty result
 }
 
 size_t WorkflowEngine::getPendingTaskCount() const {
@@ -332,7 +332,7 @@ void WorkflowEngine::cleanupCompletedTasks() {
     std::lock_guard<std::mutex> queue_lock(queue_mutex_);
     std::lock_guard<std::mutex> results_lock(results_mutex_);
     
-    // 清理已完成的任务
+    // Clean up completed tasks
     auto it = all_tasks_.begin();
     while (it != all_tasks_.end()) {
         auto status = it->second->getStatus();
@@ -340,7 +340,7 @@ void WorkflowEngine::cleanupCompletedTasks() {
             status == TaskStatus::FAILED || 
             status == TaskStatus::CANCELLED) {
             
-            // 保留结果，删除任务引用
+            // Keep results, delete task references
             it = all_tasks_.erase(it);
         } else {
             ++it;
@@ -358,28 +358,28 @@ void WorkflowEngine::workerThread() {
     while (running_.load()) {
         std::shared_ptr<BaseTask> task;
         
-        // 获取任务
+        // Get task
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
             
-            // 等待任务或停止信号
+            // Wait for task or stop signal
             queue_condition_.wait(lock, [this] {
                 return !task_queue_.empty() || stop_requested_.load();
             });
             
-            // 检查是否需要停止
+            // Check if need to stop
             if (stop_requested_.load()) {
                 break;
             }
             
-            // 获取任务
+            // Get task
             if (!task_queue_.empty()) {
                 task = task_queue_.top();
                 task_queue_.pop();
             }
         }
         
-        // 执行任务
+        // Execute task
         if (task) {
             executeTask(task);
         }
@@ -391,27 +391,27 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
         return;
     }
     
-    // 更新任务状态
+    // Update task status
     task->setStatus(TaskStatus::RUNNING);
     running_task_count_.fetch_add(1);
     
     std::cout << "Executing task: " << task->getId() << " (" << task->getName() << ")" << std::endl;
     
-    // 模型切换优化逻辑
+    // Model switching optimization logic
     if (optimize_model_switching_) {
-        // 检查是否需要切换模型
+        // Check if model switching is needed
         std::string required_model = task->getRequiredModel();
         if (!required_model.empty() && required_model != current_loaded_model_) {
             std::cout << "Switching model from " << current_loaded_model_ << " to " << required_model << std::endl;
-            // 这里可以添加实际的模型切换逻辑
+            // Actual model switching logic can be added here
             current_loaded_model_ = required_model;
         }
     }
     
-    // 记录开始时间
+    // Record start time
     auto start_time = std::chrono::steady_clock::now();
     
-    // 执行任务
+    // Execute task
     TaskResult result;
     try {
         result = task->execute();
@@ -425,11 +425,11 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
         std::cerr << "Task execution failed with unknown exception" << std::endl;
     }
     
-    // 计算执行时间
+    // Calculate execution time
     auto end_time = std::chrono::steady_clock::now();
     result.duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     
-    // 更新任务状态
+    // Update task status
     if (task->isCancelled()) {
         task->setStatus(TaskStatus::CANCELLED);
         result.success = false;
@@ -440,17 +440,17 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
         task->setStatus(TaskStatus::FAILED);
     }
     
-    // 保存结果
+    // Save result
     {
         std::lock_guard<std::mutex> lock(results_mutex_);
         task_results_[task->getId()] = result;
     }
     
-    // 更新计数器
+    // Update counters
     running_task_count_.fetch_sub(1);
     completed_task_count_.fetch_add(1);
     
-    // 调用完成回调
+    // Call completion callback
     if (completion_callback_) {
         try {
             completion_callback_(task->getId(), result);
@@ -459,7 +459,7 @@ void WorkflowEngine::executeTask(std::shared_ptr<BaseTask> task) {
         }
     }
     
-    // 释放任务锁定的资源
+    // Release task locked resources
     {
         std::lock_guard<std::mutex> lock(task_resources_mutex_);
         auto it = task_resources_.find(task->getId());
@@ -484,7 +484,7 @@ std::string WorkflowEngine::generateTaskId() {
     std::stringstream ss;
     ss << "task_";
     
-    // 生成简单的随机ID
+    // Generate simple random ID
     for (int i = 0; i < 8; ++i) {
         ss << std::hex << dis(gen);
     }

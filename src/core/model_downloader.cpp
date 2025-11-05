@@ -11,7 +11,14 @@ using namespace duorou::core;
 #include <regex>
 #include <algorithm>
 #include <curl/curl.h>
-#include <nlohmann/json.hpp>
+#if __has_include(<nlohmann/json.hpp>)
+#  include <nlohmann/json.hpp>
+#elif __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
+#  include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#else
+#  warning "nlohmann/json.hpp not found; JSON-dependent features will be disabled"
+#  define DUOROU_NO_JSON 1
+#endif
 #include <openssl/sha.h>
 
 // Ensure filesystem is available
@@ -27,10 +34,12 @@ namespace fs = std::experimental::filesystem;
 
 namespace duorou {
 
+#ifndef DUOROU_NO_JSON
 using json = nlohmann::json;
+#endif
 
 /**
- * @brief HTTP响应数据结构
+ * @brief HTTP response data structure
  */
 struct HttpResponse {
     std::string data;
@@ -39,7 +48,7 @@ struct HttpResponse {
 };
 
 /**
- * @brief 下载上下文
+ * @brief Download context
  */
 struct DownloadContext {
     DownloadProgressCallback callback;
@@ -50,7 +59,7 @@ struct DownloadContext {
 };
 
 /**
- * @brief CURL写入回调函数
+ * @brief CURL write callback function
  */
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
     size_t total_size = size * nmemb;
@@ -59,7 +68,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
 }
 
 /**
- * @brief CURL文件写入回调函数
+ * @brief CURL file write callback function
  */
 static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, DownloadContext* ctx) {
     size_t total_size = size * nmemb;
@@ -68,7 +77,7 @@ static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, Downl
         ctx->file->write((char*)contents, total_size);
         ctx->downloaded_size += total_size;
         
-        // 调用进度回调
+        // Call progress callback
         if (ctx->callback && ctx->total_size > 0) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ctx->start_time).count();
@@ -81,7 +90,7 @@ static size_t WriteFileCallback(void* contents, size_t size, size_t nmemb, Downl
 }
 
 /**
- * @brief CURL进度回调函数
+ * @brief CURL progress callback function
  */
 static int ProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     DownloadContext* ctx = static_cast<DownloadContext*>(clientp);
@@ -102,7 +111,7 @@ static int ProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow,
 }
 
 /**
- * @brief ModelDownloader实现类
+ * @brief ModelDownloader implementation class
  */
 class ModelDownloader::Impl {
 public:
@@ -113,15 +122,15 @@ public:
     size_t max_cache_size_;
     
     Impl(const std::string& base_url, const std::string& model_dir)
-        : base_url_(base_url), model_dir_(expandPath(model_dir)), max_cache_size_(10ULL * 1024 * 1024 * 1024) { // 10GB默认
+        : base_url_(base_url), model_dir_(expandPath(model_dir)), max_cache_size_(10ULL * 1024 * 1024 * 1024) { // 10GB default
         
-        // 初始化CURL
+        // Initialize CURL
         curl_global_init(CURL_GLOBAL_DEFAULT);
         
-        // 创建模型目录
+        // Create model directory
         fs::create_directories(model_dir_);
         
-        // 初始化路径管理器
+        // Initialize path manager
         path_manager_ = std::make_unique<ModelPathManager>(model_dir_);
     }
     
@@ -130,7 +139,7 @@ public:
     }
     
     /**
-     * @brief 展开路径中的~符号
+     * @brief Expand ~ symbol in path
      */
     std::string expandPath(const std::string& path) {
         if (path.empty() || path[0] != '~') {
@@ -146,7 +155,7 @@ public:
     }
     
     /**
-     * @brief 执行HTTP GET请求
+     * @brief Execute HTTP GET request
      */
     HttpResponse httpGet(const std::string& url) {
         HttpResponse response;
@@ -175,12 +184,12 @@ public:
     }
     
     /**
-     * @brief 下载文件
+     * @brief Download file
      */
     DownloadResult downloadFile(const std::string& url, const std::string& local_path, DownloadContext& ctx) {
         DownloadResult result;
         
-        // 创建目录
+        // Create directory
         fs::create_directories(fs::path(local_path).parent_path());
         
         std::ofstream file(local_path, std::ios::binary);
@@ -205,7 +214,7 @@ public:
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ProgressCallback);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3600L); // 1小时超时
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3600L); // 1 hour timeout
         
         auto start_time = std::chrono::steady_clock::now();
         CURLcode res = curl_easy_perform(curl);
@@ -238,7 +247,7 @@ public:
     }
     
     /**
-     * @brief 解析模型名称
+     * @brief Parse model name
      */
     core::ModelPath parseModelName(const std::string& model_name) {
         core::ModelPath model_path;
@@ -247,9 +256,12 @@ public:
     }
     
     /**
-     * @brief 获取模型清单
+     * @brief Fetch model manifest
      */
     core::ModelManifest fetchModelManifest(const core::ModelPath& model_path) {
+#ifdef DUOROU_NO_JSON
+        throw std::runtime_error("nlohmann/json is not available; cannot parse manifest.");
+#else
         std::string url = base_url_ + "/v2/" + model_path.repository + "/manifests/" + model_path.tag;
         
         HttpResponse response = httpGet(url);
@@ -258,43 +270,47 @@ public:
         }
         
         try {
-            json manifest_json = json::parse(response.data);
-            core::ModelManifest manifest;
-            
-            manifest.schema_version = manifest_json.value("schemaVersion", 2);
-            manifest.media_type = manifest_json.value("mediaType", "");
-            
-            if (manifest_json.contains("config")) {
-                auto config = manifest_json["config"];
-                manifest.config.media_type = config.value("mediaType", "");
-                manifest.config.digest = config.value("digest", "");
-                manifest.config.size = config.value("size", 0);
+            json manifest_json = json::parse(response.data, nullptr, /*allow_exceptions=*/false);
+            if (manifest_json.is_discarded()) {
+                throw std::runtime_error("Failed to parse manifest JSON: discarded");
             }
-            
-            if (manifest_json.contains("layers")) {
-                for (const auto& layer_json : manifest_json["layers"]) {
-                    core::ModelLayer layer;
-                    layer.media_type = layer_json.value("mediaType", "");
-                    layer.digest = layer_json.value("digest", "");
-                    layer.size = layer_json.value("size", 0);
-                    manifest.layers.push_back(layer);
-                }
-            }
-            
-            return manifest;
-        } catch (const json::exception& e) {
-            throw std::runtime_error("Failed to parse manifest JSON: " + std::string(e.what()));
+             core::ModelManifest manifest;
+             
+             manifest.schema_version = manifest_json.value("schemaVersion", 2);
+             manifest.media_type = manifest_json.value("mediaType", "");
+             
+             if (manifest_json.contains("config")) {
+                 auto config = manifest_json["config"];
+                 manifest.config.media_type = config.value("mediaType", "");
+                 manifest.config.digest = config.value("digest", "");
+                 manifest.config.size = config.value("size", 0);
+             }
+             
+             if (manifest_json.contains("layers")) {
+                 for (const auto& layer_json : manifest_json["layers"]) {
+                     core::ModelLayer layer;
+                     layer.media_type = layer_json.value("mediaType", "");
+                     layer.digest = layer_json.value("digest", "");
+                     layer.size = layer_json.value("size", 0);
+                     manifest.layers.push_back(layer);
+                 }
+             }
+             
+             return manifest;
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("Failed to parse manifest JSON: ") + e.what());
         }
+#endif
     }
     
     /**
-     * @brief 下载blob
+     * @brief Download blob
      */
     DownloadResult downloadBlob(const core::ModelPath& model_path, const std::string& digest, DownloadContext& ctx) {
         std::string url = base_url_ + "/v2/" + model_path.repository + "/blobs/" + digest;
         std::string local_path = path_manager_->getBlobFilePath(digest);
         
-        // 检查blob是否已存在
+        // Check if blob already exists
         if (path_manager_->blobExists(digest)) {
             DownloadResult result;
             result.success = true;
@@ -471,9 +487,39 @@ bool ModelDownloader::isOllamaModel(const std::string& model_name) {
 std::vector<std::string> ModelDownloader::getLocalModels() {
     auto manifests = pImpl_->path_manager_->enumerateManifests();
     std::vector<std::string> model_names;
-    for (const auto& pair : manifests) {
+
+    // 过滤规则：仅保留文本模型，排除包含 "vl" 或明显视觉/多模态标记的仓库名
+    auto is_vision_like = [](const std::string &repository) {
+        std::string repo_lower = repository;
+        std::transform(repo_lower.begin(), repo_lower.end(), repo_lower.begin(), ::tolower);
+        // 常见视觉/多模态模型命名中包含 "-vl" 或 "vl"，以及 "vision"、"multimodal" 等
+        if (repo_lower.find("-vl") != std::string::npos) return true;
+        if (repo_lower.find("vl") != std::string::npos) return true;
+        if (repo_lower.find("vision") != std::string::npos) return true;
+        if (repo_lower.find("multimodal") != std::string::npos) return true;
+        return false;
+    };
+
+    for (const auto &pair : manifests) {
+        // pair.first 形如: registry.ollama.ai/library/qwen3:8b 或 registry.ollama.ai/library/qwen3-vl:8b
+        core::ModelPath path;
+        if (!path.parseFromString(pair.first)) {
+            // 不可解析则原样加入（保守）
+            model_names.push_back(pair.first);
+            continue;
+        }
+
+        if (is_vision_like(path.repository)) {
+            // 跳过视觉/多模态模型
+            continue;
+        }
+
         model_names.push_back(pair.first);
     }
+
+    // 排序并去重，保证稳定输出
+    std::sort(model_names.begin(), model_names.end());
+    model_names.erase(std::unique(model_names.begin(), model_names.end()), model_names.end());
     return model_names;
 }
 
@@ -555,6 +601,29 @@ size_t ModelDownloader::getCacheSize() {
 
 void ModelDownloader::setMaxCacheSize(size_t max_size) {
     pImpl_->max_cache_size_ = max_size;
+}
+
+void ModelDownloader::setModelDirectory(const std::string& model_dir) {
+    // 展开 ~ 并更新内部路径
+    std::string expanded = pImpl_->expandPath(model_dir);
+    pImpl_->model_dir_ = expanded;
+
+    // 确保目录存在
+    try {
+        fs::create_directories(expanded);
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating model directory: " << e.what() << std::endl;
+    }
+
+    // 更新并重新初始化路径管理器
+    if (!pImpl_->path_manager_) {
+        pImpl_->path_manager_ = std::make_unique<ModelPathManager>(expanded);
+    } else {
+        pImpl_->path_manager_->setBasePath(expanded);
+    }
+
+    // 重新初始化以确保新的目录结构可用
+    pImpl_->path_manager_->initialize();
 }
 
 // ModelDownloaderFactory实现

@@ -6,6 +6,7 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include <future>
 #include "text_generator.h"
 #include "image_generator.h"
 #include "model_downloader.h"
@@ -16,316 +17,328 @@ namespace duorou {
 namespace core {
 
 /**
- * @brief 模型类型枚举
+ * @brief Model type enumeration
  */
 enum class ModelType {
-    LANGUAGE_MODEL,     ///< 语言模型 (LLaMA)
-    DIFFUSION_MODEL     ///< 扩散模型 (Stable Diffusion)
+    LANGUAGE_MODEL,     ///< Language model (LLaMA)
+    DIFFUSION_MODEL     ///< Diffusion model (Stable Diffusion)
 };
 
 /**
- * @brief 模型状态枚举
+ * @brief Model status enumeration
  */
 enum class ModelStatus {
-    NOT_LOADED,         ///< 未加载
-    LOADING,            ///< 加载中
-    LOADED,             ///< 已加载
-    ERROR               ///< 错误状态
+    NOT_LOADED,         ///< Not loaded
+    LOADING,            ///< Loading
+    LOADED,             ///< Loaded
+    LOAD_ERROR,              ///< Error status
 };
 
 /**
- * @brief 模型信息结构
+ * @brief Model information structure
  */
-struct ModelInfo {
-    std::string id;                 ///< 模型ID
-    std::string name;               ///< 模型名称
-    std::string path;               ///< 模型文件路径
-    ModelType type;                 ///< 模型类型
-    ModelStatus status;             ///< 模型状态
-    size_t memory_usage;            ///< 内存使用量（字节）
-    std::string description;        ///< 模型描述
+struct ModelManagerInfo {
+    std::string id;                 ///< Model ID
+    std::string name;               ///< Model name
+    std::string path;               ///< Model file path
+    ModelType type;                 ///< Model type
+    ModelStatus status;             ///< Model status
+    size_t memory_usage;            ///< Memory usage (bytes)
+    std::string description;        ///< Model description
     
-    ModelInfo() : type(ModelType::LANGUAGE_MODEL), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
+    ModelManagerInfo() : type(ModelType::LANGUAGE_MODEL), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
 };
 
 /**
- * @brief 模型基类
+ * @brief Base model class
  */
 class BaseModel {
 public:
     virtual ~BaseModel() = default;
     
     /**
-     * @brief 加载模型
-     * @param model_path 模型文件路径
-     * @return 成功返回true，失败返回false
+     * @brief Load model
+     * @param model_path Model file path
+     * @return Returns true on success, false on failure
      */
     virtual bool load(const std::string& model_path) = 0;
     
     /**
-     * @brief 卸载模型
+     * @brief Unload model
      */
     virtual void unload() = 0;
     
     /**
-     * @brief 检查模型是否已加载
-     * @return 已加载返回true，未加载返回false
+     * @brief Check if model is loaded
+     * @return Returns true if loaded, false if not loaded
      */
     virtual bool isLoaded() const = 0;
     
     /**
-     * @brief 获取模型信息
-     * @return 模型信息
+     * @brief Get model information
+     * @return Model information
      */
-    virtual ModelInfo getInfo() const = 0;
+    virtual ModelManagerInfo getInfo() const = 0;
     
     /**
-     * @brief 获取内存使用量
-     * @return 内存使用量（字节）
+     * @brief Get memory usage
+     * @return Memory usage (bytes)
      */
     virtual size_t getMemoryUsage() const = 0;
 };
 
 /**
- * @brief 模型管理器类
+ * @brief Model manager class
  * 
- * 负责模型的加载、卸载、管理和资源调度
+ * Responsible for model loading, unloading, management and resource scheduling
  */
 class ModelManager {
 public:
     /**
-     * @brief 构造函数
+     * @brief Constructor
      */
     ModelManager();
     
     /**
-     * @brief 析构函数
+     * @brief Destructor
      */
     ~ModelManager();
     
     /**
-     * @brief 初始化模型管理器
-     * @return 成功返回true，失败返回false
+     * @brief Initialize model manager
+     * @return Returns true on success, false on failure
      */
     bool initialize();
     
     /**
-     * @brief 注册模型
-     * @param model_info 模型信息
-     * @return 成功返回true，失败返回false
+     * @brief Register model
+     * @param model_info Model information
+     * @return Returns true on success, false on failure
      */
-    bool registerModel(const ModelInfo& model_info);
+    bool registerModel(const ModelManagerInfo& model_info);
     
     /**
-     * @brief 加载模型
-     * @param model_id 模型ID
-     * @return 成功返回true，失败返回false
+     * @brief Load model
+     * @param model_id Model ID
+     * @return Returns true on success, false on failure
      */
     bool loadModel(const std::string& model_id);
     
     /**
-     * @brief 卸载模型
-     * @param model_id 模型ID
-     * @return 成功返回true，失败返回false
+     * @brief Unload model
+     * @param model_id Model ID
+     * @return Returns true on success, false on failure
      */
     bool unloadModel(const std::string& model_id);
     
     /**
-     * @brief 卸载所有模型
+     * @brief Unload all models
      */
     void unloadAllModels();
     
     /**
-     * @brief 获取模型
-     * @param model_id 模型ID
-     * @return 模型指针，如果不存在返回nullptr
+     * @brief Get model
+     * @param model_id Model ID
+     * @return Model pointer, returns nullptr if not found
      */
     std::shared_ptr<BaseModel> getModel(const std::string& model_id) const;
     
     /**
-     * @brief 检查模型是否已加载
-     * @param model_id 模型ID
-     * @return 已加载返回true，未加载返回false
+     * @brief Check if model is loaded
+     * @param model_id Model ID
+     * @return Returns true if loaded, false if not loaded
      */
     bool isModelLoaded(const std::string& model_id) const;
     
     /**
-     * @brief 获取模型信息
-     * @param model_id 模型ID
-     * @return 模型信息，如果不存在返回空的ModelInfo
+     * @brief Get model information
+     * @param model_id Model ID
+     * @return Model information, returns empty ModelManagerInfo if not found
      */
-    ModelInfo getModelInfo(const std::string& model_id) const;
+    ModelManagerInfo getModelInfo(const std::string& model_id) const;
     
     /**
-     * @brief 获取所有已注册的模型列表
-     * @return 模型信息列表
+     * @brief Get list of all registered models
+     * @return List of model information
      */
-    std::vector<ModelInfo> getAllModels() const;
+    std::vector<ModelManagerInfo> getAllModels() const;
     
     /**
-     * @brief 获取已加载的模型列表
-     * @return 已加载模型的ID列表
+     * @brief Get list of loaded models
+     * @return List of loaded model IDs
      */
     std::vector<std::string> getLoadedModels() const;
     
     /**
-     * @brief 获取总内存使用量
-     * @return 总内存使用量（字节）
+     * @brief Get total memory usage
+     * @return Total memory usage (bytes)
      */
     size_t getTotalMemoryUsage() const;
     
     /**
-     * @brief 设置内存限制
-     * @param limit_bytes 内存限制（字节）
+     * @brief Set memory limit
+     * @param limit_bytes Memory limit (bytes)
      */
     void setMemoryLimit(size_t limit_bytes);
     
     /**
-     * @brief 获取内存限制
-     * @return 内存限制（字节）
+     * @brief Get memory limit
+     * @return Memory limit (bytes)
      */
     size_t getMemoryLimit() const;
     
     /**
-     * @brief 检查是否有足够内存加载模型
-     * @param model_id 模型ID
-     * @return 有足够内存返回true，否则返回false
+     * @brief Check if there is enough memory to load model
+     * @param model_id Model ID
+     * @return Returns true if enough memory, false otherwise
      */
     bool hasEnoughMemory(const std::string& model_id) const;
     
     /**
-     * @brief 设置模型加载回调函数
-     * @param callback 回调函数
+     * @brief Set model load callback function
+     * @param callback Callback function
      */
     void setLoadCallback(std::function<void(const std::string&, bool)> callback);
     
     /**
-     * @brief 获取文本生成器
-     * @param model_id 模型ID
-     * @return 文本生成器指针
+     * @brief Get text generator
+     * @param model_id Model ID
+     * @return Text generator pointer
      */
-    TextGenerator* getTextGenerator(const std::string& model_id) const;
+    duorou::core::TextGenerator* getTextGenerator(const std::string& model_id) const;
     
     /**
-     * @brief 获取图像生成器
-     * @param model_id 模型ID
-     * @return 图像生成器指针
+     * @brief Get image generator
+     * @param model_id Model ID
+     * @return Image generator pointer
      */
     ImageGenerator* getImageGenerator(const std::string& model_id) const;
     
     /**
-     * @brief 优化内存使用
-     * @return 释放的内存大小（字节）
+     * @brief Optimize memory usage
+     * @return Size of freed memory (bytes)
      */
     size_t optimizeMemory();
     
     /**
-     * @brief 启用自动内存管理
-     * @param enable 是否启用
+     * @brief Enable automatic memory management
+     * @param enable Whether to enable
      */
     void enableAutoMemoryManagement(bool enable);
     
     /**
-     * @brief 下载模型
-     * @param model_name 模型名称（如 "llama2:7b"）
-     * @param progress_callback 进度回调函数
-     * @return 下载结果的Future
+     * @brief Download model
+     * @param model_name Model name (e.g., "llama2:7b")
+     * @param progress_callback Progress callback function
+     * @return Future of download result
      */
-    std::future<DownloadResult> downloadModel(const std::string& model_name, 
-                                             DownloadProgressCallback progress_callback = nullptr);
+    std::future<duorou::DownloadResult> downloadModel(const std::string& model_name, 
+                                             duorou::DownloadProgressCallback progress_callback = nullptr);
     
     /**
-     * @brief 同步下载模型
-     * @param model_name 模型名称
-     * @param progress_callback 进度回调函数
-     * @return 下载结果
+     * @brief Download model synchronously
+     * @param model_name Model name
+     * @param progress_callback Progress callback function
+     * @return Download result
      */
-    DownloadResult downloadModelSync(const std::string& model_name,
-                                    DownloadProgressCallback progress_callback = nullptr);
+    duorou::DownloadResult downloadModelSync(const std::string& model_name,
+                                    duorou::DownloadProgressCallback progress_callback = nullptr);
     
     /**
-     * @brief 获取模型信息
-     * @param model_name 模型名称
-     * @return 模型信息
+     * @brief Get model information
+     * @param model_name Model name
+     * @return Model information
      */
-    ModelInfo getModelInfo(const std::string& model_name);
+    ModelManagerInfo getModelInfo(const std::string& model_name);
     
     /**
-     * @brief 检查模型是否已下载
-     * @param model_name 模型名称
-     * @return 是否已下载
+     * @brief Check if model is downloaded
+     * @param model_name Model name
+     * @return Whether downloaded
      */
     bool isModelDownloaded(const std::string& model_name);
     
     /**
-     * @brief 获取本地模型列表
-     * @return 本地模型列表
+     * @brief Get local model list
+     * @return Local model list
      */
     std::vector<std::string> getLocalModels();
     
     /**
-     * @brief 删除本地模型
-     * @param model_name 模型名称
-     * @return 是否成功删除
+     * @brief Delete local model
+     * @param model_name Model name
+     * @return Whether successfully deleted
      */
     bool deleteLocalModel(const std::string& model_name);
     
     /**
-     * @brief 验证模型完整性
-     * @param model_name 模型名称
-     * @return 是否完整
+     * @brief Verify model integrity
+     * @param model_name Model name
+     * @return Whether complete
      */
     bool verifyModel(const std::string& model_name);
     
     /**
-     * @brief 清理未使用的模型缓存
-     * @return 清理的字节数
+     * @brief Clean up unused model cache
+     * @return Number of bytes cleaned
      */
     size_t cleanupModelCache();
     
     /**
-     * @brief 获取模型缓存大小
-     * @return 缓存大小（字节）
+     * @brief Get model cache size
+     * @return Cache size (bytes)
      */
     size_t getModelCacheSize();
     
     /**
-     * @brief 设置最大模型缓存大小
-     * @param max_size 最大缓存大小（字节）
+     * @brief Set maximum model cache size
+     * @param max_size Maximum cache size (bytes)
      */
     void setMaxModelCacheSize(size_t max_size);
+
+    /**
+     * @brief 设置 Ollama 模型目录
+     * @param path 模型目录路径（可包含 ~）
+     */
+    void setOllamaModelsPath(const std::string& path);
+
+    /**
+     * @brief 重新扫描指定本地模型目录
+     * @param directory 目录路径
+     */
+    void rescanModelDirectory(const std::string& directory);
     
 private:
     /**
-     * @brief 创建模型实例
-     * @param model_info 模型信息
-     * @return 模型实例指针
+     * @brief Create model instance
+     * @param model_info Model information
+     * @return Model instance pointer
      */
-    std::shared_ptr<BaseModel> createModel(const ModelInfo& model_info);
+    std::shared_ptr<BaseModel> createModel(const ModelManagerInfo& model_info);
     
     /**
-     * @brief 更新模型状态
-     * @param model_id 模型ID
-     * @param status 新状态
+     * @brief Update model status
+     * @param model_id Model ID
+     * @param status New status
      */
     void updateModelStatus(const std::string& model_id, ModelStatus status);
     
     /**
-     * @brief 扫描模型目录
-     * @param directory 目录路径
+     * @brief Scan model directory
+     * @param directory Directory path
      */
     void scanModelDirectory(const std::string& directory);
     
 private:
-    std::unordered_map<std::string, ModelInfo> registered_models_;     ///< 已注册的模型
-    std::unordered_map<std::string, std::shared_ptr<BaseModel>> loaded_models_;  ///< 已加载的模型
-    std::unordered_map<std::string, std::unique_ptr<TextGenerator>> text_generators_; ///< 文本生成器映射
-    mutable std::mutex mutex_;                                         ///< 线程安全互斥锁
-    size_t memory_limit_;                                              ///< 内存限制
-    bool initialized_;                                                 ///< 是否已初始化
-    bool auto_memory_management_;                                      ///< 自动内存管理
-    std::unique_ptr<ModelDownloader> model_downloader_;               ///< 模型下载器
-    std::function<void(const std::string&, bool)> load_callback_;     ///< 模型加载回调函数
+    std::unordered_map<std::string, ModelManagerInfo> registered_models_;     ///< Registered models
+    std::unordered_map<std::string, std::shared_ptr<BaseModel>> loaded_models_;  ///< Loaded models
+    std::unordered_map<std::string, std::unique_ptr<duorou::core::TextGenerator>> text_generators_; ///< Text generator mapping
+    mutable std::mutex mutex_;                                         ///< Thread-safe mutex
+    size_t memory_limit_;                                              ///< Memory limit
+    bool initialized_;                                                 ///< Whether initialized
+    bool auto_memory_management_;                                      ///< Automatic memory management
+    std::unique_ptr<ModelDownloader> model_downloader_;               ///< Model downloader
+    std::function<void(const std::string&, bool)> load_callback_;     ///< Model load callback function
 };
 
 } // namespace core

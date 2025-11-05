@@ -1,7 +1,25 @@
 #ifndef DUOROU_GUI_MAIN_WINDOW_H
 #define DUOROU_GUI_MAIN_WINDOW_H
 
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
+#else
+#define DUOROU_HAS_GTK 0
+// GTK 占位类型，便于在未安装 GTK 头文件的环境下编译通过
+typedef void* GtkWidget;
+typedef void* GtkWindow;
+typedef void* GtkDialog;
+typedef void* GtkGestureClick;
+typedef void* gpointer;
+typedef int gint;
+typedef double gdouble;
+typedef int gboolean;
+typedef unsigned int guint;
+// 额外的占位类型以便信号回调声明
+typedef void* GObject;
+typedef void* GParamSpec;
+#endif
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,8 +41,8 @@ class ChatSessionManager;
 class SystemTray;
 
 /**
- * 主窗口类 - 管理整个应用程序的主界面
- * 包含聊天界面、图像生成界面和设置面板的切换
+ * Main window class - manages the main interface of the entire application
+ * Contains switching between chat interface, image generation interface and settings panel
  */
 class MainWindow {
 public:
@@ -32,102 +50,104 @@ public:
   explicit MainWindow(core::Application *app);
   ~MainWindow();
 
-  // 禁用拷贝构造和赋值
+  // Disable copy constructor and assignment
   MainWindow(const MainWindow &) = delete;
   MainWindow &operator=(const MainWindow &) = delete;
 
   /**
-   * 初始化主窗口
-   * @return 成功返回true，失败返回false
+   * Initialize main window
+   * @return Returns true on success, false on failure
    */
   bool initialize();
 
   /**
-   * 显示主窗口
+   * Show main window
    */
   void show();
 
   /**
-   * 隐藏主窗口
+   * Hide main window
    */
   void hide();
 
   /**
-   * 获取GTK窗口指针
-   * @return GTK窗口指针
+   * Get GTK window pointer
+   * @return GTK window pointer
    */
   GtkWidget *get_window() const { return window_; }
 
   /**
-   * 设置窗口标题
-   * @param title 窗口标题
+   * Set window title
+   * @param title Window title
    */
   void set_title(const std::string &title);
 
   /**
-   * 切换到聊天界面
+   * Switch to chat interface
    */
   void switch_to_chat();
 
   /**
-   * 切换到图像生成界面
+   * Switch to image generation interface
    */
   void switch_to_image_generation();
 
   /**
-   * 显示设置对话框
+   * Show settings dialog
    */
   void show_settings();
 
   /**
-   * 退出应用程序
+   * Quit application
    */
   void quit_application();
 
   /**
-   * 设置应用程序实例引用
-   * @param app 应用程序实例指针
+   * Set application instance reference
+   * @param app Application instance pointer
    */
   void set_application(core::Application *app);
 
   /**
-   * 设置系统托盘状态
-   * @param status 状态描述（如："idle", "processing", "error"）
+   * Set system tray status
+   * @param status Status description (e.g.: "idle", "processing", "error")
    */
   void set_tray_status(const std::string &status);
 
   /**
-   * 从系统托盘恢复窗口显示
+   * Restore window display from system tray
    */
   void restore_from_tray();
 
   /**
-   * 创建新的聊天会话
+   * Create new chat session
    */
   void create_new_chat();
 
   /**
-   * 切换到指定聊天会话
-   * @param session_id 会话ID
+   * Switch to specified chat session
+   * @param session_id Session ID
    */
   void switch_to_chat_session(const std::string &session_id);
 
 private:
-  // GTK组件
-  GtkWidget *window_;        // 主窗口
-  GtkWidget *header_bar_;    // 标题栏
-  GtkWidget *main_box_;      // 主容器
-  GtkWidget *sidebar_;       // 侧边栏
-  GtkWidget *content_stack_; // 内容堆栈
-  GtkWidget *status_bar_;    // 状态栏
+  // GTK components
+  GtkWidget *window_;        // Main window
+  GtkWidget *header_bar_;    // Header bar
+  GtkWidget *main_box_;      // Main container
+  GtkWidget *sidebar_;       // Sidebar
+  GtkWidget *content_stack_; // Content stack
+  GtkWidget *status_bar_;    // Status bar
+  GtkWidget *paned_;         // Draggable paned container
+  GtkWidget *toggle_sidebar_button_; // Toggle sidebar button
 
-  // 侧边栏按钮
-  GtkWidget *new_chat_button_;  // 新建聊天按钮
-  GtkWidget *image_button_;     // 图像生成按钮
-  GtkWidget *settings_button_;  // 设置按钮
-  GtkWidget *chat_history_box_; // 聊天历史容器
+  // Sidebar buttons
+  GtkWidget *new_chat_button_;  // New chat button
+  GtkWidget *image_button_;     // Image generation button
+  GtkWidget *settings_button_;  // Settings button
+  GtkWidget *chat_history_box_; // Chat history container
 
-  // UI组件
+  // UI components
   std::unique_ptr<ChatView> chat_view_;
   std::unique_ptr<ImageView> image_view_;
   std::unique_ptr<SettingsDialog> settings_dialog_;
@@ -138,65 +158,68 @@ private:
   std::unique_ptr<MacOSTray> macos_tray_;
 #endif
 
-  // 当前视图状态
+  // Current view state
   std::string current_view_;
 
-  // 应用程序实例引用
+  // Application instance reference
   core::Application *application_;
 
+  // Remember last non-zero sidebar width for restore
+  int last_sidebar_width_ = 300;
+
   /**
-   * 创建头部栏
+   * Create header bar
    */
   void create_header_bar();
 
   /**
-   * 创建侧边栏
+   * Create sidebar
    */
   void create_sidebar();
 
   /**
-   * 创建内容区域
+   * Create content area
    */
   void create_content_area();
 
   /**
-   * 创建状态栏
+   * Create status bar
    */
   void create_status_bar();
 
   /**
-   * 设置窗口样式
+   * Setup window styling
    */
   void setup_styling();
 
   /**
-   * 连接信号处理器
+   * Connect signal handlers
    */
   void connect_signals();
 
   /**
-   * 更新侧边栏按钮状态
-   * @param active_button 当前活动按钮
+   * Update sidebar button state
+   * @param active_button Currently active button
    */
   void update_sidebar_buttons(GtkWidget *active_button);
 
   /**
-   * 更新聊天历史列表
+   * Update chat history list
    */
   void update_chat_history_list();
 
   /**
-   * 会话变更回调
-   * @param session_id 新的会话ID
+   * Session change callback
+   * @param session_id New session ID
    */
   void on_session_changed(const std::string &session_id);
 
   /**
-   * 会话列表变更回调
+   * Session list change callback
    */
   void on_session_list_changed();
 
-  // 静态回调函数
+  // Static callback functions
   static void on_new_chat_button_clicked(GtkWidget *widget, gpointer user_data);
   static void on_chat_history_item_clicked(GtkWidget *widget,
                                            gpointer user_data);
@@ -215,6 +238,8 @@ private:
   static void on_settings_button_clicked(GtkWidget *widget, gpointer user_data);
   static gboolean on_window_delete_event(GtkWindow *window, gpointer user_data);
   static void on_window_destroy(GtkWidget *widget, gpointer user_data);
+  static void on_toggle_sidebar_button_clicked(GtkWidget *widget, gpointer user_data);
+  static void on_paned_position_notify(GObject *object, GParamSpec *pspec, gpointer user_data);
 };
 
 } // namespace gui

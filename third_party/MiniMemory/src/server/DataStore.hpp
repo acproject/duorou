@@ -7,6 +7,7 @@
 #include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <functional>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -37,6 +38,9 @@ public:
     }
 
     DataStore(size_t max_dbs = DEFAULT_MAX_DBS);
+    void setApplyCallback(const std::function<void(const std::vector<std::string>&)>& cb);
+    void setLoading(bool l);
+    bool isLoading() const;
     // 清理过期键
     void cleanExpiredKeys();    
 
@@ -114,6 +118,8 @@ private:
     int current_db;
     mutable std::mutex mutex;
     Transaction current_transaction;
+    std::function<void(const std::vector<std::string>&)> on_apply;
+    bool loading = false;
 
     // 私有辅助方法声明
     Database& getCurrentDatabase();

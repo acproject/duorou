@@ -1,5 +1,6 @@
 #include "text_generator.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -10,55 +11,50 @@
 namespace duorou {
 namespace core {
 
-// 默认构造函数实现
+// Default constructor implementation
 TextGenerator::TextGenerator(const std::string &model_path)
     : context_size_(2048), vocab_size_(32000), use_ollama_(false) {
-  // 初始化随机数生成器
+  // Initialize random number generator
   std::random_device rd;
   rng_.seed(rd());
 }
 
-// Ollama模型管理器构造函数
+// Ollama model manager constructor
 TextGenerator::TextGenerator(
     std::shared_ptr<duorou::extensions::ollama::OllamaModelManager>
         model_manager,
     const std::string &model_id)
     : context_size_(2048), vocab_size_(32000), model_manager_(model_manager),
-      model_id_(model_id), use_ollama_(true) {
-  // 初始化随机数生成器
+      model_id_(normalizeModelId(model_id)), use_ollama_(true) {
+  // Initialize random number generator
   std::random_device rd;
   rng_.seed(rd());
 }
 
-// 析构函数
+// Destructor
 TextGenerator::~TextGenerator() {
-  // 空析构函数实现
+  // Empty destructor implementation
 }
 
-// 生成文本
+// Generate text
 GenerationResult TextGenerator::generate(const std::string &prompt,
                                          const GenerationParams &params) {
-  std::cout << "[DEBUG] TextGenerator::generate() called with prompt: "
-            << prompt.substr(0, 50) << "..." << std::endl;
 
   std::lock_guard<std::mutex> lock(mutex_);
   GenerationResult result;
 
   if (use_ollama_ && model_manager_) {
-    std::cout << "[DEBUG] Using Ollama model manager for inference"
-              << std::endl;
 
     try {
-      // 创建推理请求
+      // Create inference request
       duorou::extensions::ollama::InferenceRequest request;
       request.model_id = model_id_;
-      // 格式化输入为Qwen ChatML格式
-      request.prompt = formatQwenChatML(prompt);
+      request.prompt = prompt;
       request.max_tokens = params.max_tokens;
       request.temperature = params.temperature;
       request.top_p = params.top_p;
 
-      // 执行推理
+      // Execute inference
       auto start_time = std::chrono::high_resolution_clock::now();
       auto response = model_manager_->generateText(request);
       auto end_time = std::chrono::high_resolution_clock::now();
@@ -72,12 +68,11 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
         result.generation_time =
             std::chrono::duration<double>(end_time - start_time).count();
 
-        std::cout << "[DEBUG] Ollama inference successful: "
-                  << result.text.substr(0, 50) << "..." << std::endl;
+        // Inference successful; returning result
       } else {
-        std::cout << "[DEBUG] Ollama inference failed: "
-                  << response.error_message << std::endl;
-        result.text = "抱歉，推理过程中出现错误: " + response.error_message;
+        // Inference failed; populate error result
+        result.text = "Sorry, an error occurred during inference: " +
+                      response.error_message;
         result.finished = true;
         result.stop_reason = "error";
         result.prompt_tokens = countTokens(prompt);
@@ -85,9 +80,9 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
         result.generation_time = 0.0;
       }
     } catch (const std::exception &e) {
-      std::cout << "[DEBUG] Exception during Ollama inference: " << e.what()
-                << std::endl;
-      result.text = "抱歉，推理过程中出现异常: " + std::string(e.what());
+      // Exception during inference; populate error result
+      result.text = "Sorry, an exception occurred during inference: " +
+                    std::string(e.what());
       result.finished = true;
       result.stop_reason = "exception";
       result.prompt_tokens = countTokens(prompt);
@@ -95,35 +90,34 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
       result.generation_time = 0.0;
     }
   } else {
-    std::cout << "[DEBUG] Using fallback mock implementation" << std::endl;
+    // Using fallback mock implementation
 
-    // 简单的模拟响应
+    // Simple mock response
     if (prompt.find("你好") != std::string::npos ||
         prompt.find("hello") != std::string::npos) {
-      result.text =
-          "你好！我是 Duorou AI 助手，很高兴为您服务。有什么我可以帮助您的吗？";
+      result.text = "Hello! I am Duorou AI assistant, happy to serve you. How "
+                    "can I help you?";
     } else {
-      result.text = "感谢您的提问。这是一个模拟的文本生成响应。当前版本使用简化"
-                    "的实现，未来将集成完整的 llama.cpp 功能。";
+      result.text =
+          "Thank you for your question. This is a simulated text generation "
+          "response. "
+          "The current version uses a simplified implementation, and will "
+          "integrate full llama.cpp functionality in the future.";
     }
     result.finished = true;
     result.stop_reason = "completed";
     result.prompt_tokens = countTokens(prompt);
     result.generated_tokens = countTokens(result.text);
-    result.generation_time = 0.5; // 模拟生成时间
+    result.generation_time = 0.5; // Simulated generation time
   }
 
-  std::cout << "[DEBUG] TextGenerator returning result: "
-            << result.text.substr(0, 30) << "..." << std::endl;
   return result;
 }
 
-// 流式生成文本
+// Stream text generation
 GenerationResult TextGenerator::generateStream(const std::string &prompt,
                                                StreamCallback callback,
                                                const GenerationParams &params) {
-  std::cout << "[DEBUG] TextGenerator::generateStream() called with prompt: "
-            << prompt.substr(0, 50) << "..." << std::endl;
 
   std::lock_guard<std::mutex> lock(mutex_);
   GenerationResult result;
@@ -139,11 +133,9 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
   }
 
   if (use_ollama_ && model_manager_) {
-    std::cout << "[DEBUG] Using Ollama model manager for streaming inference"
-              << std::endl;
 
     try {
-      // 创建流式推理请求
+      // Create streaming inference request
       duorou::extensions::ollama::InferenceRequest request;
       request.model_id = model_id_;
       request.prompt = prompt;
@@ -156,16 +148,16 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
       auto end_time = std::chrono::high_resolution_clock::now();
 
       if (response.success) {
-        // 模拟流式输出，将完整响应分块发送
+        // Simulate streaming output, send complete response in chunks
         std::string full_text = response.generated_text;
-        const size_t chunk_size = 10; // 每次发送10个字符
+        const size_t chunk_size = 10; // Send 10 characters each time
 
         for (size_t i = 0; i < full_text.length(); i += chunk_size) {
           std::string chunk = full_text.substr(i, chunk_size);
           bool is_final = (i + chunk_size >= full_text.length());
           callback(i / chunk_size, chunk, is_final);
 
-          // 模拟流式延迟
+          // Simulate streaming delay
           std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
@@ -177,11 +169,11 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
         result.generation_time =
             std::chrono::duration<double>(end_time - start_time).count();
 
-        std::cout << "[DEBUG] Ollama streaming inference successful"
-                  << std::endl;
+        // Streaming inference successful
       } else {
         std::string error_msg =
-            "抱歉，流式推理过程中出现错误: " + response.error_message;
+            "Sorry, an error occurred during streaming inference: " +
+            response.error_message;
         callback(0, error_msg, true);
 
         result.text = error_msg;
@@ -193,7 +185,8 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
       }
     } catch (const std::exception &e) {
       std::string error_msg =
-          "抱歉，流式推理过程中出现异常: " + std::string(e.what());
+          "Sorry, an exception occurred during streaming inference: " +
+          std::string(e.what());
       callback(0, error_msg, true);
 
       result.text = error_msg;
@@ -204,28 +197,30 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
       result.generation_time = 0.0;
     }
   } else {
-    std::cout << "[DEBUG] Using fallback mock streaming implementation"
-              << std::endl;
+    // Using fallback mock streaming implementation
 
-    // 模拟流式生成
+    // Simulate streaming generation
     std::string response_text;
     if (prompt.find("你好") != std::string::npos ||
         prompt.find("hello") != std::string::npos) {
-      response_text =
-          "你好！我是 Duorou AI 助手，很高兴为您服务。有什么我可以帮助您的吗？";
+      response_text = "Hello! I am Duorou AI assistant, happy to serve you. "
+                      "How can I help you?";
     } else {
-      response_text = "感谢您的提问。这是一个模拟的流式文本生成响应。当前版本使"
-                      "用简化的实现，未来将集成完整的 llama.cpp 功能。";
+      response_text =
+          "Thank you for your question. This is a simulated streaming text "
+          "generation response. "
+          "The current version uses a simplified implementation, and will "
+          "integrate full llama.cpp functionality in the future.";
     }
 
-    // 分块发送响应
+    // Send response in chunks
     const size_t chunk_size = 8;
     for (size_t i = 0; i < response_text.length(); i += chunk_size) {
       std::string chunk = response_text.substr(i, chunk_size);
       bool is_final = (i + chunk_size >= response_text.length());
       callback(i / chunk_size, chunk, is_final);
 
-      // 模拟生成延迟
+      // Simulate generation delay
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -237,43 +232,40 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
     result.generation_time = 0.5;
   }
 
-  std::cout << "[DEBUG] TextGenerator returning streaming result" << std::endl;
   return result;
 }
 
-// 计算文本的token数量
+// Calculate the number of tokens in text
 size_t TextGenerator::countTokens(const std::string &text) const {
-  // 简单估算：平均每4个字符一个token
+  // Simple estimation: average 4 characters per token
   return text.length() / 4 + 1;
 }
 
-// 检查是否可以生成
+// Check if generation is possible
 bool TextGenerator::canGenerate() const {
-  std::cout << "[DEBUG] TextGenerator::canGenerate() called - returning true "
-               "(functionality enabled)"
-            << std::endl;
-  // 启用文本生成功能
+  // Enable text generation functionality
   return true;
 }
 
-// 重置生成器状态
+// Reset generator state
 void TextGenerator::reset() {
   std::lock_guard<std::mutex> lock(mutex_);
-  // 重置内部状态
+  // Reset internal state
 }
 
-// 获取上下文大小
+// Get context size
 int TextGenerator::getContextSize() const { return context_size_; }
 
-// 获取词汇表大小
+// Get vocabulary size
 int TextGenerator::getVocabSize() const { return vocab_size_; }
 
-// 应用Top-K采样
+// Apply Top-K sampling
 void TextGenerator::applyTopK(float *logits, int k) {
   if (k <= 0 || !logits)
     return;
 
-  // 简单实现：将除了前k个最大值之外的所有值设为负无穷
+  // Simple implementation: set all values except the top k largest to negative
+  // infinity
   std::vector<std::pair<float, int>> logit_pairs;
   for (int i = 0; i < vocab_size_; ++i) {
     logit_pairs.emplace_back(logits[i], i);
@@ -288,12 +280,12 @@ void TextGenerator::applyTopK(float *logits, int k) {
   }
 }
 
-// 应用Top-P采样
+// Apply Top-P sampling
 void TextGenerator::applyTopP(float *logits, float p) {
   if (p <= 0.0f || p >= 1.0f || !logits)
     return;
 
-  // 计算softmax概率
+  // Calculate softmax probabilities
   std::vector<std::pair<float, int>> prob_pairs;
   float max_logit = *std::max_element(logits, logits + vocab_size_);
 
@@ -304,21 +296,21 @@ void TextGenerator::applyTopP(float *logits, float p) {
     sum += prob;
   }
 
-  // 归一化
+  // Normalize
   for (auto &pair : prob_pairs) {
     pair.first /= sum;
   }
 
-  // 按概率降序排序
+  // Sort by probability in descending order
   std::sort(prob_pairs.begin(), prob_pairs.end(),
             [](const auto &a, const auto &b) { return a.first > b.first; });
 
-  // 计算累积概率并截断
+  // Calculate cumulative probability and truncate
   float cumulative = 0.0f;
   for (size_t i = 0; i < prob_pairs.size(); ++i) {
     cumulative += prob_pairs[i].first;
     if (cumulative > p) {
-      // 将剩余的token概率设为0
+      // Set remaining token probabilities to 0
       for (size_t j = i + 1; j < prob_pairs.size(); ++j) {
         logits[prob_pairs[j].second] = -INFINITY;
       }
@@ -327,7 +319,7 @@ void TextGenerator::applyTopP(float *logits, float p) {
   }
 }
 
-// 应用温度采样
+// Apply temperature sampling
 void TextGenerator::applyTemperature(float *logits, float temperature) {
   if (temperature <= 0.0f || !logits)
     return;
@@ -337,7 +329,7 @@ void TextGenerator::applyTemperature(float *logits, float temperature) {
   }
 }
 
-// 检查是否应该停止生成
+// Check if generation should stop
 bool TextGenerator::shouldStop(
     const std::string &generated_text,
     const std::vector<std::string> &stop_sequences) const {
@@ -349,7 +341,7 @@ bool TextGenerator::shouldStop(
   return false;
 }
 
-// 初始化随机数生成器
+// Initialize random number generator
 void TextGenerator::initializeRNG(int64_t seed) {
   if (seed == -1) {
     std::random_device rd;
@@ -359,28 +351,29 @@ void TextGenerator::initializeRNG(int64_t seed) {
   }
 }
 
-std::string TextGenerator::formatQwenChatML(const std::string &user_input, 
-                                            const std::string &system_prompt) const {
-  std::string formatted_prompt;
-  
-  // 如果有系统提示词，先添加系统消息
-  if (!system_prompt.empty()) {
-    formatted_prompt += "<|im_start|>system\n";
-    formatted_prompt += system_prompt;
-    formatted_prompt += "<|im_end|>\n";
+std::string
+TextGenerator::normalizeModelId(const std::string &model_name) const {
+  // Trim whitespace to be consistent with OllamaModelManager
+  auto trim = [](const std::string &s) {
+    auto begin = std::find_if(
+        s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+                 return !std::isspace(ch);
+               }).base();
+    if (begin >= end)
+      return std::string();
+    return std::string(begin, end);
+  };
+  std::string model_id = trim(model_name);
+  // Allow the same character set as OllamaModelManager: alnum, '_', '-', '.',
+  // ':', '/'
+  for (char &c : model_id) {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' &&
+        c != '.' && c != ':' && c != '/') {
+      c = '_';
+    }
   }
-  
-  // 添加用户消息
-  formatted_prompt += "<|im_start|>user\n";
-  formatted_prompt += user_input;
-  formatted_prompt += "<|im_end|>\n";
-  
-  // 添加助手开始标记
-  formatted_prompt += "<|im_start|>assistant\n";
-  
-  std::cout << "[DEBUG] Formatted prompt with ChatML: " << formatted_prompt.substr(0, 100) << "..." << std::endl;
-  
-  return formatted_prompt;
+  return model_id;
 }
 
 } // namespace core

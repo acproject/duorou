@@ -146,4 +146,9 @@ pid.file
 other
 models
 models/**
-logs
+.vs
+llama.cpp
+llama.cpp/**
+third_party/llama.cpp
+third_party/llama.cpp/**
+third_party/llama.cpp/src/**

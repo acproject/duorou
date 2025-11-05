@@ -1,11 +1,12 @@
 #include "application.h"
-// #include "../api/api_server.h"  // 注释：暂时禁用API服务器
+// #include "../api/api_server.h"  // Comment: Temporarily disable API server
 #include "../gui/main_window.h"
 #include "../gui/system_tray.h"
 #include "config_manager.h"
 #include "logger.h"
 #include "model_manager.h"
 #include "workflow_engine.h"
+#include "../extensions/ollama/ollama_model_manager.h"
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #endif
@@ -15,19 +16,27 @@
 #include <cstdlib>
 #include <iostream>
 #include <thread>
-#include <unistd.h> // for getpid
-#include <sys/wait.h> // for waitpid
 
-// 版本定义
+#ifdef _WIN32
+#include <process.h> // for _getpid on Windows
+#define getpid _getpid
+#else
+#include <unistd.h> // for getpid on Unix/Linux
+#include <sys/wait.h> // for waitpid on Unix/Linux
+#endif
+
+// Version definition
 #ifndef DUOROU_VERSION
 #define DUOROU_VERSION "1.0.0"
 #endif
 
-// 条件编译GTK支持
-#ifdef HAVE_GTK
+// Conditional compilation for GTK support with header presence check
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
 #else
-// GTK类型的占位符定义
+#define DUOROU_HAS_GTK 0
+// Placeholder definitions for GTK-related types/macros/functions
 typedef void *GApplication;
 #define G_APPLICATION(x) ((GApplication)(x))
 #define G_APPLICATION_FLAGS_NONE 0
@@ -43,12 +52,19 @@ typedef void *GApplication;
   do {                                                                         \
   } while (0)
 #define gtk_application_new(id, flags) nullptr
+// Missing hold/release helpers when GTK isn't available
+#define g_application_hold(app)                                                \
+  do {                                                                         \
+  } while (0)
+#define g_application_release(app)                                             \
+  do {                                                                         \
+  } while (0)
 #endif
 
 namespace duorou {
 namespace core {
 
-// 静态成员初始化
+// Static member initialization
 Application *Application::instance_ = nullptr;
 
 Application::Application(int argc, char *argv[])
@@ -56,12 +72,12 @@ Application::Application(int argc, char *argv[])
       status_(Status::NotInitialized), service_mode_(false), gtk_app_(nullptr),
       minimemory_running_(false), is_destructing_(false) {
 
-  // 保存命令行参数
+  // Save command line arguments
   for (int i = 0; i < argc; ++i) {
     args_.emplace_back(argv[i]);
   }
 
-  // 检查是否有服务模式参数
+  // Check for service mode parameters
   for (const auto &arg : args_) {
     if (arg == "--service" || arg == "-s" || arg == "--mode=server") {
       service_mode_ = true;
@@ -69,23 +85,23 @@ Application::Application(int argc, char *argv[])
     }
   }
 
-  // 设置MiniMemory可执行文件路径（相对于duorou的build目录）
+  // Set MiniMemory executable path (relative to duorou's build directory)
   minimemory_executable_path_ =
       "../third_party/MiniMemory/build/bin/mini_cache_server";
 
-  // 设置静态实例指针
+  // Set static instance pointer
   instance_ = this;
 
-  // 注册信号处理函数
+  // Register signal handlers
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 }
 
 Application::~Application() {
-  // 设置析构标志
+  // Set destruction flag
   is_destructing_.store(true);
   
-  // 确保MiniMemory服务器被停止
+  // Ensure MiniMemory server is stopped
   stopMiniMemoryServer();
   cleanup();
   instance_ = nullptr;
@@ -103,7 +119,7 @@ bool Application::initialize() {
 
   status_ = Status::Initializing;
 
-  // 在非服务模式下初始化GTK
+  // Initialize GTK in non-service mode
   if (!service_mode_) {
     if (!initializeGtk()) {
       std::cerr << "Failed to initialize GTK" << std::endl;
@@ -114,7 +130,7 @@ bool Application::initialize() {
     std::cout << "Running in service mode (no GUI)" << std::endl;
   }
 
-  // 初始化核心组件
+  // Initialize core components
   if (!initializeComponents()) {
     std::cerr << "Failed to initialize core components" << std::endl;
     status_ = Status::NotInitialized;
@@ -132,10 +148,93 @@ int Application::run() {
   }
 
   if (service_mode_) {
-    // 服务模式：运行服务循环
+    // Service mode: optional one-shot CLI text generation, otherwise run service loop
     std::cout << "Service mode started. Press Ctrl+C to stop." << std::endl;
 
-    // 记录启动信息
+    // Parse one-shot CLI generation params
+    std::string cli_prompt;
+    std::string cli_model;
+    unsigned int cli_max_tokens = 128;
+    float cli_temperature = 0.7f;
+    float cli_top_p = 0.9f;
+
+    auto getValue = [&](const std::string &arg, const std::string &prefix) -> std::optional<std::string> {
+      if (arg.rfind(prefix, 0) == 0) {
+        return arg.substr(prefix.size());
+      }
+      return std::nullopt;
+    };
+
+    for (size_t i = 0; i < args_.size(); ++i) {
+      const auto &arg = args_[i];
+      if (auto v = getValue(arg, "--prompt="); v) {
+        cli_prompt = *v;
+      } else if (arg == "--prompt" && i + 1 < args_.size()) {
+        cli_prompt = args_[++i];
+      } else if (auto v2 = getValue(arg, "--model="); v2) {
+        cli_model = *v2;
+      } else if (arg == "--model" && i + 1 < args_.size()) {
+        cli_model = args_[++i];
+      } else if (auto v3 = getValue(arg, "--max-tokens="); v3) {
+        try { cli_max_tokens = static_cast<unsigned int>(std::stoul(*v3)); } catch (...) {}
+      } else if (auto v4 = getValue(arg, "--temperature="); v4) {
+        try { cli_temperature = std::stof(*v4); } catch (...) {}
+      } else if (auto v5 = getValue(arg, "--top-p="); v5) {
+        try { cli_top_p = std::stof(*v5); } catch (...) {}
+      }
+    }
+
+    if (!cli_prompt.empty()) {
+      // Require model for deterministic behavior
+      if (cli_model.empty()) {
+        std::cerr << "Missing --model for CLI generation. Usage: --service --model <name> --prompt <text> [--max-tokens N --temperature T --top-p P]" << std::endl;
+        status_ = Status::Stopped;
+        return 2;
+      }
+
+      try {
+        auto &global_manager = extensions::ollama::GlobalModelManager::getInstance();
+        // Register by name (will stub if not downloaded)
+        bool registered = global_manager.registerModelByName(cli_model);
+        if (!registered) {
+          std::cerr << "Failed to register model: " << cli_model << std::endl;
+          status_ = Status::Stopped;
+          return 3;
+        }
+
+        std::string normalized_id = global_manager.normalizeModelId(cli_model);
+        bool loaded = global_manager.loadModel(normalized_id);
+        if (!loaded) {
+          std::cerr << "Failed to load model: " << normalized_id << std::endl;
+          status_ = Status::Stopped;
+          return 4;
+        }
+
+        extensions::ollama::InferenceRequest req;
+        req.model_id = normalized_id;
+        req.prompt = cli_prompt;
+        req.max_tokens = cli_max_tokens;
+        req.temperature = cli_temperature;
+        req.top_p = cli_top_p;
+
+        auto resp = global_manager.generateText(req);
+        if (resp.success) {
+          std::cout << resp.generated_text << std::endl;
+          status_ = Status::Stopped;
+          return 0;
+        } else {
+          std::cerr << "Generation error: " << resp.error_message << std::endl;
+          status_ = Status::Stopped;
+          return 5;
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "Exception during CLI generation: " << e.what() << std::endl;
+        status_ = Status::Stopped;
+        return 6;
+      }
+    }
+
+    // Log startup information
     if (logger_) {
       logger_->info("Application started in service mode");
       logger_->info("Version: " + version_);
@@ -143,14 +242,14 @@ int Application::run() {
           "Service mode started (API server disabled for development)");
     }
 
-    // 简单的服务循环
+    // Simple service loop
     while (status_ == Status::Running) {
-      // 这里可以添加定期任务
+      // Periodic tasks can be added here
       std::this_thread::sleep_for(std::chrono::seconds(1));
 
-      // 定期记录状态
+      // Periodically log status
       static int counter = 0;
-      if (++counter % 60 == 0 && logger_) { // 每分钟记录一次
+      if (++counter % 60 == 0 && logger_) { // Log every minute
         logger_->debug("Service running, uptime: " + std::to_string(counter) +
                        " seconds");
       }
@@ -163,8 +262,8 @@ int Application::run() {
     return 0;
   }
 
-  // 运行GTK主循环
-  // 将std::vector<std::string>转换为char**
+  // Run GTK main loop
+  // Convert std::vector<std::string> to char**
   std::vector<char *> argv_ptrs;
   for (auto &arg : args_) {
     argv_ptrs.push_back(const_cast<char *>(arg.c_str()));
@@ -181,7 +280,7 @@ void Application::stop() {
   if (status_ == Status::Running) {
     status_ = Status::Stopping;
 
-    // 调用退出回调函数
+    // Call exit callback functions
     for (auto &callback : exit_callbacks_) {
       try {
         callback();
@@ -190,7 +289,7 @@ void Application::stop() {
       }
     }
 
-    // 停止GTK应用程序
+    // Stop GTK application
     if (gtk_app_) {
       g_application_quit(G_APPLICATION(gtk_app_));
     }
@@ -204,13 +303,13 @@ void Application::registerExitCallback(std::function<void()> callback) {
 }
 
 bool Application::initializeGtk() {
-  // 创建GTK应用程序
+  // Create GTK application
   gtk_app_ = gtk_application_new("com.duorou.app", G_APPLICATION_FLAGS_NONE);
   if (!gtk_app_) {
     return false;
   }
 
-  // 连接信号
+  // Connect signals
   g_signal_connect(gtk_app_, "activate", G_CALLBACK(onActivate), this);
   g_signal_connect(gtk_app_, "shutdown", G_CALLBACK(onShutdown), this);
 
@@ -221,7 +320,7 @@ bool Application::initializeComponents() {
   try {
     std::cout << "Initializing core components..." << std::endl;
 
-    // 初始化日志系统
+    // Initialize logging system
     std::cout << "Creating logger..." << std::endl;
     logger_ = std::make_unique<Logger>();
     std::cout << "Initializing logger..." << std::endl;
@@ -231,7 +330,7 @@ bool Application::initializeComponents() {
     }
     std::cout << "Logger initialized successfully" << std::endl;
 
-    // 初始化配置管理器
+    // Initialize configuration manager
     std::cout << "Creating config manager..." << std::endl;
     config_manager_ = std::make_unique<ConfigManager>();
     std::cout << "Initializing config manager..." << std::endl;
@@ -241,7 +340,7 @@ bool Application::initializeComponents() {
     }
     std::cout << "Config manager initialized successfully" << std::endl;
 
-    // 根据配置设置Logger的文件输出
+    // Set Logger file output based on configuration
     bool file_output = config_manager_->getBool("log.file_output", true);
     if (file_output) {
       std::string log_path = logger_->getDefaultLogPath();
@@ -252,7 +351,7 @@ bool Application::initializeComponents() {
       }
     }
 
-    // 初始化模型管理器
+    // Initialize model manager
     std::cout << "Creating model manager..." << std::endl;
     model_manager_ = std::make_unique<ModelManager>();
     std::cout << "Initializing model manager..." << std::endl;
@@ -262,7 +361,17 @@ bool Application::initializeComponents() {
     }
     std::cout << "Model manager initialized successfully" << std::endl;
 
-    // 初始化工作流引擎
+    // Initialize global model manager
+    std::cout << "Initializing global model manager..." << std::endl;
+    try {
+      extensions::ollama::GlobalModelManager::initialize();
+      std::cout << "Global model manager initialized successfully" << std::endl;
+    } catch (const std::exception& e) {
+      logger_->error("Failed to initialize global model manager: " + std::string(e.what()));
+      return false;
+    }
+
+    // Initialize workflow engine
     std::cout << "Creating workflow engine..." << std::endl;
     workflow_engine_ = std::make_unique<WorkflowEngine>();
     std::cout << "Initializing workflow engine..." << std::endl;
@@ -272,8 +381,8 @@ bool Application::initializeComponents() {
     }
     std::cout << "Workflow engine initialized successfully" << std::endl;
 
-    // 启动API服务器（无论是否服务模式）
-    // 注释：暂时禁用API服务器以解决调试问题
+    // Start API server (regardless of service mode)
+    // Comment: Temporarily disable API server to resolve debugging issues
     /*
     std::cout << "Creating API server..." << std::endl;
     api_server_ = std::make_unique<::duorou::ApiServer>(
@@ -296,8 +405,8 @@ bool Application::initializeComponents() {
     }
     */
 
-    // 初始化系统托盘（仅在非服务模式下）
-    // 暂时禁用系统托盘以调试其他组件的段错误问题
+    // Initialize system tray (only in non-service mode)
+    // Temporarily disable system tray to debug segfault issues in other components
     if (!service_mode_) {
       logger_->info(
           "System tray initialization temporarily disabled for debugging");
@@ -307,7 +416,7 @@ bool Application::initializeComponents() {
       // }
     }
 
-    // 启动MiniMemory服务器
+    // Start MiniMemory server
     std::cout << "Starting MiniMemory server..." << std::endl;
     if (!startMiniMemoryServer()) {
       logger_->error("Failed to start MiniMemory server");
@@ -330,11 +439,11 @@ void Application::cleanup() {
     return;
   }
 
-  // 停止MiniMemory服务器
+  // Stop MiniMemory server
   stopMiniMemoryServer();
 
-  // 停止API服务器
-  // 注释：API服务器已被禁用
+  // Stop API server
+  // Comment: API server has been disabled
   /*
   if (api_server_) {
     api_server_->stop();
@@ -343,21 +452,30 @@ void Application::cleanup() {
   */
 
 #ifdef __APPLE__
-  // 清理 ScreenCaptureKit 资源
+  // Clean up ScreenCaptureKit resources
   duorou::media::cleanup_macos_screen_capture();
 #endif
 
-  // 清理GUI组件
+  // Clean up GUI components
   main_window_.reset();
   system_tray_.reset();
 
-  // 清理核心组件（按相反顺序）
+  // Clean up core components (in reverse order)
   workflow_engine_.reset();
+  
+  // Shutdown global model manager
+  try {
+    extensions::ollama::GlobalModelManager::shutdown();
+  } catch (const std::exception& e) {
+    // Continue cleanup even if errors occur during shutdown
+    std::cerr << "Warning: Failed to shutdown global model manager: " << e.what() << std::endl;
+  }
+  
   model_manager_.reset();
   config_manager_.reset();
   logger_.reset();
 
-  // 清理GTK资源
+  // Clean up GTK resources
   if (gtk_app_) {
     g_object_unref(gtk_app_);
     gtk_app_ = nullptr;
@@ -372,7 +490,7 @@ void Application::onActivate(GtkApplication *app, gpointer user_data) {
     application->logger_->info("Application activated");
   }
 
-  // 创建并显示主窗口
+  // Create and show main window
   if (application && !application->main_window_) {
     application->main_window_ =
         std::make_unique<::duorou::gui::MainWindow>(application);
@@ -381,7 +499,7 @@ void Application::onActivate(GtkApplication *app, gpointer user_data) {
       if (application->logger_) {
         application->logger_->info("Main window created and shown");
       }
-      // 保持应用程序活动状态
+      // Keep application active
       g_application_hold(G_APPLICATION(app));
     } else {
       if (application->logger_) {
@@ -398,29 +516,29 @@ void Application::onShutdown(GtkApplication *app, gpointer user_data) {
       application->logger_->info("Application shutting down");
     }
 
-    // 释放应用程序保持状态
+    // Release application hold state
     g_application_release(G_APPLICATION(app));
 
-    // 停止MiniMemory服务器
+    // Stop MiniMemory server
     if (application->logger_) {
-      application->logger_->info("正在退出MiniMemory服务...");
+      application->logger_->info("Exiting MiniMemory service...");
     }
     application->stopMiniMemoryServer();
 
 #ifdef __APPLE__
-    // 清理 ScreenCaptureKit 资源
+    // Clean up ScreenCaptureKit resources
     if (application->logger_) {
       application->logger_->info("Cleaning up ScreenCaptureKit resources...");
     }
     duorou::media::cleanup_macos_screen_capture();
 #endif
 
-    // 只清理非GTK资源，GTK资源由GTK自动管理
+    // Only clean up non-GTK resources, GTK resources are managed automatically by GTK
     if (application->logger_) {
       application->logger_->info("Cleaning up application resources...");
     }
     
-    // 注释：API服务器已被禁用
+    // Comment: API server has been disabled
     /*
     if (application->api_server_) {
       application->api_server_->stop();
@@ -434,7 +552,7 @@ void Application::onShutdown(GtkApplication *app, gpointer user_data) {
     application->config_manager_.reset();
     
     if (application->logger_) {
-      application->logger_->info("退出Duorou应用程序");
+      application->logger_->info("Exiting Duorou application");
       application->logger_.reset();
     }
     application->status_ = Status::Stopped;
@@ -445,25 +563,25 @@ bool Application::initializeSystemTray() {
   try {
     system_tray_ = std::make_unique<::duorou::gui::SystemTray>();
 
-    // 初始化系统托盘
+    // Initialize system tray
     if (!system_tray_->initialize("Duorou AI Assistant")) {
       logger_->error("Failed to initialize system tray");
       return false;
     }
 
-    // 设置系统托盘属性
+    // Set system tray properties
     system_tray_->setTooltip("Duorou AI Assistant");
     system_tray_->setStatus(::duorou::gui::TrayStatus::Idle);
 
-    // 设置回调函数
+    // Set callback functions
     system_tray_->setLeftClickCallback([this]() { showMainWindow(); });
 
-    // 添加菜单项
+    // Add menu items
     std::vector<::duorou::gui::TrayMenuItem> menu_items;
 
     ::duorou::gui::TrayMenuItem show_item;
     show_item.id = "show";
-    show_item.label = "显示主窗口";
+    show_item.label = "show main windows";
     show_item.callback = [this]() { showMainWindow(); };
     menu_items.push_back(show_item);
 
@@ -473,13 +591,13 @@ bool Application::initializeSystemTray() {
 
     ::duorou::gui::TrayMenuItem exit_item;
     exit_item.id = "exit";
-    exit_item.label = "退出";
+    exit_item.label = "exit";
     exit_item.callback = [this]() { stop(); };
     menu_items.push_back(exit_item);
 
     system_tray_->setMenu(menu_items);
 
-    // 显示系统托盘
+    // Show system tray
     system_tray_->show();
 
     logger_->info("System tray initialized successfully");
@@ -519,7 +637,7 @@ void Application::hideMainWindow() {
 
 void Application::toggleMainWindow() {
   if (main_window_) {
-    // 这里需要检查窗口当前状态，暂时先实现简单的显示逻辑
+    // Need to check current window state, implement simple show logic for now
     main_window_->show();
     if (logger_) {
       logger_->info("Main window toggled");
@@ -550,17 +668,18 @@ bool Application::startMiniMemoryServer() {
   try {
     minimemory_running_.store(true);
 
-    // 创建线程来运行MiniMemory服务器
+    // Create thread to run MiniMemory server
     minimemory_thread_ = std::make_unique<std::thread>([this]() {
-      // 切换到MiniMemory构建目录（相对于duorou的build目录）
+      // Switch to MiniMemory build directory (relative to duorou's build directory)
+      // 指定配置文件，确保端口与密码与 mcs.conf 一致
       std::string command =
-          "cd ../third_party/MiniMemory/build && ./bin/mini_cache_server";
+          "cd ../third_party/MiniMemory/build && ./bin/mini_cache_server --config ../src/conf/mcs.conf";
 
       if (logger_) {
         logger_->info("Starting MiniMemory server with command: " + command);
       }
 
-      // 使用system()执行命令
+      // Execute command using system()
       int result = std::system(command.c_str());
 
       if (logger_) {
@@ -575,7 +694,7 @@ bool Application::startMiniMemoryServer() {
       minimemory_running_.store(false);
     });
 
-    // 等待一小段时间确保服务器启动
+    // Wait a short time to ensure server startup
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     if (logger_) {
@@ -595,128 +714,191 @@ bool Application::startMiniMemoryServer() {
 }
 
 void Application::stopMiniMemoryServer() {
-  if (!minimemory_running_.load()) {
-    return;
-  }
+  // Always attempt to clean up thread even if not running
+  bool currently_running = minimemory_running_.load();
 
   if (logger_) {
-    logger_->info("Stopping MiniMemory server...");
+    if (currently_running) {
+      logger_->info("Stopping MiniMemory server...");
+    } else {
+      logger_->info("MiniMemory not running; cleaning up thread if needed...");
+    }
   }
 
-  // 设置停止标志
+  // Set stop flag to signal thread exit
   minimemory_running_.store(false);
 
-  // 避免使用system调用，直接设置停止标志让线程自然退出
+  // Avoid using system calls, directly set stop flag to let thread exit naturally
   if (logger_) {
     logger_->info("Signaling MiniMemory thread to stop...");
   }
   
-  // 等待一段时间让线程自然结束
+  // Wait for a while to let thread end naturally
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
   
-  // 如果需要强制终止进程，使用更安全的方式
+  // If need to forcefully terminate process, use safer method
   if (logger_) {
     logger_->info("Attempting to terminate MiniMemory process...");
   }
   
-  // 首先检查进程是否存在
-  pid_t check_pid = fork();
-  if (check_pid == 0) {
-    // 子进程：检查进程是否存在
-    execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
-    _exit(1);
-  } else if (check_pid > 0) {
-    int status;
-    waitpid(check_pid, &status, 0);
+#ifdef _WIN32
+  // Windows platform: Use tasklist and taskkill commands
+  if (logger_) {
+    logger_->info("Checking for MiniMemory process on Windows...");
+  }
+  
+  // Check if process exists using tasklist
+  int check_result = std::system("tasklist /FI \"IMAGENAME eq mini_cache_server.exe\" 2>nul | find /I \"mini_cache_server.exe\" >nul");
+  
+  if (check_result == 0) {
+    // Process exists, try to terminate gracefully
+    if (logger_) {
+      logger_->info("Found MiniMemory process, attempting graceful termination...");
+    }
     
-    if (WEXITSTATUS(status) == 0) {
-      // 进程存在，尝试发送SIGINT信号
+    // Try graceful termination first
+    std::system("taskkill /IM mini_cache_server.exe /T >nul 2>&1");
+    
+    // Wait 2 seconds for graceful process exit
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    
+    // Check again if process still exists
+    int recheck_result = std::system("tasklist /FI \"IMAGENAME eq mini_cache_server.exe\" 2>nul | find /I \"mini_cache_server.exe\" >nul");
+    
+    if (recheck_result == 0) {
+      // Process still exists, force terminate
       if (logger_) {
-        logger_->info("Found MiniMemory process, sending SIGINT...");
+        logger_->warning("MiniMemory process still running, forcing termination...");
       }
       
-      pid_t kill_pid = fork();
-      if (kill_pid == 0) {
-        execl("/usr/bin/pkill", "pkill", "-INT", "-f", "mini_cache_server", (char*)NULL);
-        _exit(1);
-      } else if (kill_pid > 0) {
-        waitpid(kill_pid, &status, 0);
-        
-        // 等待2秒让进程优雅退出
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        // 再次检查进程是否还存在
-        pid_t recheck_pid = fork();
-        if (recheck_pid == 0) {
-          execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
-          _exit(1);
-        } else if (recheck_pid > 0) {
-          waitpid(recheck_pid, &status, 0);
-          
-          if (WEXITSTATUS(status) == 0) {
-            // 进程仍然存在，使用SIGKILL强制终止
-            if (logger_) {
-              logger_->warning("MiniMemory process still running, sending SIGKILL...");
-            }
-            
-            pid_t force_kill_pid = fork();
-            if (force_kill_pid == 0) {
-              execl("/usr/bin/pkill", "pkill", "-9", "-f", "mini_cache_server", (char*)NULL);
-              _exit(1);
-            } else if (force_kill_pid > 0) {
-              waitpid(force_kill_pid, &status, 0);
-              
-              // 最后再次确认
-              std::this_thread::sleep_for(std::chrono::milliseconds(500));
-              pid_t final_check_pid = fork();
-              if (final_check_pid == 0) {
-                execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
-                _exit(1);
-              } else if (final_check_pid > 0) {
-                waitpid(final_check_pid, &status, 0);
-                if (WEXITSTATUS(status) == 0) {
-                  if (logger_) {
-                    logger_->error("Failed to terminate MiniMemory process");
-                  }
-                } else {
-                  if (logger_) {
-                    logger_->info("MiniMemory process terminated successfully");
-                  }
-                }
-              }
-            }
-          } else {
-            if (logger_) {
-              logger_->info("MiniMemory process exited gracefully");
-            }
-          }
+      std::system("taskkill /F /IM mini_cache_server.exe /T >nul 2>&1");
+      
+      // Final confirmation
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      int final_check = std::system("tasklist /FI \"IMAGENAME eq mini_cache_server.exe\" 2>nul | find /I \"mini_cache_server.exe\" >nul");
+      
+      if (final_check == 0) {
+        if (logger_) {
+          logger_->error("Failed to terminate MiniMemory process");
+        }
+      } else {
+        if (logger_) {
+          logger_->info("MiniMemory process terminated successfully");
         }
       }
     } else {
       if (logger_) {
-        logger_->info("MiniMemory process not found");
+        logger_->info("MiniMemory process terminated gracefully");
+      }
+    }
+  } else {
+    if (logger_) {
+      logger_->info("No MiniMemory process found");
+    }
+  }
+#else
+  // Unix/Linux platform: Use original fork/exec approach
+  // First check if process exists
+  if (currently_running) {
+    pid_t check_pid = fork();
+    if (check_pid == 0) {
+      // Child process: check if process exists
+      execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+      _exit(1);
+    } else if (check_pid > 0) {
+      int status;
+      waitpid(check_pid, &status, 0);
+      
+      if (WEXITSTATUS(status) == 0) {
+        // Process exists, try sending SIGINT signal
+        if (logger_) {
+          logger_->info("Found MiniMemory process, sending SIGINT...");
+        }
+        
+        pid_t kill_pid = fork();
+        if (kill_pid == 0) {
+          execl("/usr/bin/pkill", "pkill", "-INT", "-f", "mini_cache_server", (char*)NULL);
+          _exit(1);
+        } else if (kill_pid > 0) {
+          waitpid(kill_pid, &status, 0);
+          
+          // Wait 2 seconds for graceful process exit
+          std::this_thread::sleep_for(std::chrono::seconds(2));
+          
+          // Check again if process still exists
+          pid_t recheck_pid = fork();
+          if (recheck_pid == 0) {
+            execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+            _exit(1);
+          } else if (recheck_pid > 0) {
+            waitpid(recheck_pid, &status, 0);
+            
+            if (WEXITSTATUS(status) == 0) {
+              // Process still exists, use SIGKILL to force terminate
+              if (logger_) {
+                logger_->warning("MiniMemory process still running, sending SIGKILL...");
+              }
+              
+              pid_t force_kill_pid = fork();
+              if (force_kill_pid == 0) {
+                execl("/usr/bin/pkill", "pkill", "-9", "-f", "mini_cache_server", (char*)NULL);
+                _exit(1);
+              } else if (force_kill_pid > 0) {
+                waitpid(force_kill_pid, &status, 0);
+                
+                // Final confirmation
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                pid_t final_check_pid = fork();
+                if (final_check_pid == 0) {
+                  execl("/usr/bin/pgrep", "pgrep", "-f", "mini_cache_server", (char*)NULL);
+                  _exit(1);
+                } else if (final_check_pid > 0) {
+                  waitpid(final_check_pid, &status, 0);
+                  if (WEXITSTATUS(status) == 0) {
+                    if (logger_) {
+                      logger_->error("Failed to terminate MiniMemory process");
+                    }
+                  } else {
+                    if (logger_) {
+                      logger_->info("MiniMemory process terminated successfully");
+                    }
+                  }
+                }
+              }
+            } else {
+              if (logger_) {
+                logger_->info("MiniMemory process exited gracefully");
+              }
+            }
+          }
+        }
+      } else {
+        if (logger_) {
+          logger_->info("MiniMemory process not found");
+        }
       }
     }
   }
+#endif
 
-  // 安全地处理线程结束
+  // Safely handle thread termination
   if (minimemory_thread_) {
     if (logger_) {
       logger_->info("Waiting for MiniMemory thread to finish...");
     }
     
     if (is_destructing_.load()) {
-      // 在析构过程中，直接detach避免线程异常
+      // During destruction, directly detach to avoid thread exceptions
       if (logger_) {
         logger_->info("Detaching MiniMemory thread during destruction");
       }
       if (minimemory_thread_->joinable()) {
         minimemory_thread_->detach();
       }
-      // 立即释放线程对象
+      // Immediately release thread object
       minimemory_thread_.reset();
     } else {
-      // 正常停止时，尝试join线程，但设置超时
+      // During normal stop, try to join thread but set timeout
       if (minimemory_thread_->joinable()) {
         std::atomic<bool> join_completed{false};
         std::thread join_thread([this, &join_completed]() {
@@ -724,12 +906,12 @@ void Application::stopMiniMemoryServer() {
             minimemory_thread_->join();
             join_completed.store(true);
           } catch (const std::exception &e) {
-            // join失败
+            // join failed
             join_completed.store(true);
           }
         });
         
-        // 等待最多3秒
+        // Wait for at most 3 seconds
         auto start_time = std::chrono::steady_clock::now();
         while (!join_completed.load() && 
                std::chrono::steady_clock::now() - start_time < std::chrono::seconds(3)) {
@@ -737,7 +919,7 @@ void Application::stopMiniMemoryServer() {
         }
         
         if (!join_completed.load()) {
-          // 超时，强制detach
+          // Timeout, force detach
           if (logger_) {
             logger_->warning("MiniMemory thread join timeout, detaching...");
           }

@@ -223,10 +223,10 @@ void TcpServer::handleClient(int clientSocket) {
   
   // 创建客户端状态
   ClientState state;
+  state.authenticated = password.empty();
   
   // 处理客户端请求
   char buffer[4096];
-  bool authenticated = password.empty(); // 如果没有设置密码，则默认已认证
   
   while (running) {
     // 读取客户端数据
@@ -240,29 +240,32 @@ void TcpServer::handleClient(int clientSocket) {
       // 将读取的数据添加到缓冲区
       state.buffer.append(buffer, bytesRead);
       
-      // 尝试解析RESP协议
-      auto commands = RespParser::parse(state.buffer);
-      
-      if (!commands.empty()) {
+      // 循环解析RESP协议，直到无法再解析
+      while (running) {
+        auto commands = RespParser::parse(state.buffer);
+        if (commands.empty()) break;
+
         // 处理认证
-        if (!authenticated && !commands.empty() && commands[0] == "AUTH") {
+        if (!state.authenticated && !commands.empty() && commands[0] == "AUTH") {
           if (commands.size() >= 2 && commands[1] == password) {
-            authenticated = true;
+            state.authenticated = true;
             send(clientSocket, "+OK\r\n", 5, 0);
           } else {
             send(clientSocket, "-ERR invalid password\r\n", 22, 0);
           }
-        } else if (!authenticated) {
+          continue; // 处理下一个可能的命令
+        }
+
+        if (!state.authenticated && !password.empty()) {
           // 未认证，拒绝命令
           send(clientSocket, "-NOAUTH Authentication required.\r\n", 32, 0);
-        } else {
-          // 已认证，处理命令
-          std::string response = command_handler(commands);
-          send(clientSocket, response.c_str(), response.length(), 0);
+          // 不丢弃缓冲区中未解析的后续数据
+          continue;
         }
-        
-        // 清空缓冲区
-        state.buffer.clear();
+
+        // 已认证，处理命令
+        std::string response = command_handler(commands);
+        send(clientSocket, response.c_str(), response.length(), 0);
       }
     } else if (bytesRead == 0 || (bytesRead < 0 && 
 #ifdef _WIN32
@@ -468,6 +471,7 @@ void TcpServer::handle_client_windows() {
             client_state.wsaBuf.buf = client_state.recvBuffer;
             client_state.wsaBuf.len = sizeof(client_state.recvBuffer);
             client_state.pendingRead = false;
+            client_state.authenticated = password.empty();
             
             {
                 std::lock_guard<std::mutex> lock(clients_mutex);
@@ -515,12 +519,28 @@ void TcpServer::handle_client_windows() {
             // 处理接收到的数据
             client_state.buffer.append(client_state.recvBuffer, bytes_transferred);
             
-            // 解析并处理命令
-            auto commands = RespParser::parse(client_state.buffer);
-            if (!commands.empty()) {
+            // 循环解析并处理命令
+            while (true) {
+                auto commands = RespParser::parse(client_state.buffer);
+                if (commands.empty()) break;
+
+                if (!client_state.authenticated && !commands.empty() && commands[0] == "AUTH") {
+                    if (commands.size() >= 2 && commands[1] == password) {
+                        client_state.authenticated = true;
+                        send(client_fd, "+OK\r\n", 5, 0);
+                    } else {
+                        send(client_fd, "-ERR invalid password\r\n", 22, 0);
+                    }
+                    continue;
+                }
+
+                if (!client_state.authenticated && !password.empty()) {
+                    send(client_fd, "-NOAUTH Authentication required.\r\n", 32, 0);
+                    continue;
+                }
+
                 std::string response = command_handler(commands);
                 send(client_fd, response.c_str(), response.length(), 0);
-                client_state.buffer.clear();
             }
             ZeroMemory(&client_state.overlapped, sizeof(WSAOVERLAPPED));
             
@@ -766,6 +786,7 @@ void TcpServer::accept_connection() {
         fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
         add_to_epoll(client_fd);
         clients[client_fd] = ClientState();
+        clients[client_fd].authenticated = password.empty();
     }
 }
 
@@ -811,19 +832,66 @@ void TcpServer::close_client(int fd) {
 }
 
 void TcpServer::process_buffer(int fd, ClientState &state) {
-    auto cmds = RespParser::parse(state.buffer);
-    if (!cmds.empty()) {
+    while (true) {
+        auto cmds = RespParser::parse(state.buffer);
+        if (cmds.empty()) break;
+
+        if (!state.authenticated && !cmds.empty() && cmds[0] == "AUTH") {
+            if (cmds.size() >= 2 && cmds[1] == password) {
+                state.authenticated = true;
+                send_response(fd, "+OK\r\n");
+            } else {
+                send_response(fd, "-ERR invalid password\r\n");
+            }
+            continue;
+        }
+
+        if (!state.authenticated && !password.empty()) {
+            send_response(fd, "-NOAUTH Authentication required.\r\n");
+            continue;
+        }
+
         auto response = command_handler(cmds);
         send_response(fd, response);
-        state.buffer.clear();
     }
 }
 
 void TcpServer::send_response(int fd, const std::string &resp) {
 #ifdef _WIN32
-    send(fd, resp.c_str(), resp.size(), 0);
+    const char* data = resp.c_str();
+    size_t total = 0;
+    size_t len = resp.size();
+    while (total < len) {
+        int n = send(fd, data + total, static_cast<int>(len - total), 0);
+        if (n > 0) {
+            total += static_cast<size_t>(n);
+            continue;
+        } else {
+            // 发送失败，放弃剩余部分，避免阻塞事件循环
+            break;
+        }
+    }
 #else
-    write(fd, resp.c_str(), resp.size());
+    const char* data = resp.c_str();
+    size_t total = 0;
+    size_t len = resp.size();
+    while (total < len) {
+        ssize_t n = write(fd, data + total, len - total);
+        if (n > 0) {
+            total += static_cast<size_t>(n);
+            continue;
+        }
+        if (n < 0 && (errno == EINTR)) {
+            continue; // 被信号中断，重试
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // 非阻塞且暂时不可写，简单重试一次，防止忙等
+            // 在实际生产环境可配合 epoll 可写事件再写
+            continue;
+        }
+        // 其他错误，放弃剩余写入
+        break;
+    }
 #endif
 }
 #endif

@@ -1,20 +1,38 @@
 #include "session_storage_adapter.h"
 #include <algorithm>
-#include <arpa/inet.h>
 #include <cstring>
 #include <iostream>
-#include <netinet/in.h>
-#include <nlohmann/json.hpp>
+#include <chrono>
+#if __has_include(<nlohmann/json.hpp>)
+#  include <nlohmann/json.hpp>
+#elif __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
+#  include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#else
+#  warning "nlohmann/json.hpp not found; JSON-dependent features may be disabled"
+#endif
 #include <sstream>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int ssize_t;
+#define close closesocket
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+#endif
 
+#if __has_include(<nlohmann/json.hpp>) || __has_include("../../third_party/llama.cpp/vendor/nlohmann/json.hpp")
 using json = nlohmann::json;
+#endif
 
 namespace duorou {
 namespace gui {
 
-// 静态常量定义
+// Static constant definitions
 const std::string SessionStorageAdapter::SESSION_LIST_KEY = "session_list";
 const std::string SessionStorageAdapter::SESSION_DATA_PREFIX = "session_data:";
 
@@ -30,6 +48,26 @@ bool SessionStorageAdapter::initialize(const std::string &server_host,
   server_port_ = server_port;
 
   return connectToServer();
+}
+
+bool SessionStorageAdapter::authenticate(const std::string &password) {
+  if (password.empty()) {
+    return true;
+  }
+  if (!connected_ && !connectToServer()) {
+    return false;
+  }
+  std::string auth_cmd = buildAuthCommand(password);
+  if (!sendCommand(auth_cmd)) {
+    std::cerr << "Failed to send AUTH command" << std::endl;
+    return false;
+  }
+  std::string response = receiveResponse();
+  if (response.find("+OK") != 0) {
+    std::cerr << "AUTH failed: " << response << std::endl;
+    return false;
+  }
+  return true;
 }
 
 bool SessionStorageAdapter::connectToServer() {
@@ -64,6 +102,19 @@ bool SessionStorageAdapter::connectToServer() {
     return false;
   }
 
+  // 设置收发超时，避免在服务器忙于持久化时阻塞
+#ifdef _WIN32
+  int timeout_ms = 2000; // 调高至 2000ms，提升大响应稳定性
+  setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+  setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+#else
+  struct timeval tv;
+  tv.tv_sec = 2;        // 调高至 2s
+  tv.tv_usec = 0;
+  setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+
   connected_ = true;
   std::cout << "Connected to MiniMemory server at " << server_host_ << ":"
             << server_port_ << std::endl;
@@ -85,8 +136,63 @@ bool SessionStorageAdapter::sendCommand(const std::string &command) {
     }
   }
 
-  ssize_t bytes_sent = send(socket_fd_, command.c_str(), command.length(), 0);
-  return bytes_sent == static_cast<ssize_t>(command.length());
+  // 保证完整发送，防止部分发送导致协议错误
+  const char *data = command.c_str();
+  size_t to_send = command.length();
+  size_t sent_total = 0;
+  auto start = std::chrono::steady_clock::now();
+  const auto overall_timeout = std::chrono::seconds(4);
+  while (sent_total < to_send) {
+#ifdef _WIN32
+    int n = send(socket_fd_, data + sent_total, static_cast<int>(to_send - sent_total), 0);
+#else
+    ssize_t n = send(socket_fd_, data + sent_total, to_send - sent_total, 0);
+#endif
+    if (n > 0) {
+      sent_total += static_cast<size_t>(n);
+      continue;
+    }
+    // 处理可重试错误
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    if (err == WSAEINTR) {
+      continue;
+    }
+    if (err == WSAEWOULDBLOCK) {
+      if (std::chrono::steady_clock::now() - start > overall_timeout) return false;
+      continue;
+    }
+    // 连接重置/管道破裂，尝试重连一次
+    if (err == WSAECONNRESET) {
+      disconnectFromServer();
+      if (!connectToServer()) return false;
+      // 重新开始发送
+      sent_total = 0;
+      start = std::chrono::steady_clock::now();
+      continue;
+    }
+    return false;
+#else
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (std::chrono::steady_clock::now() - start > overall_timeout) return false;
+      continue;
+    }
+    if (errno == EPIPE || errno == ECONNRESET) {
+      // 对端关闭，尝试重连一次
+      disconnectFromServer();
+      if (!connectToServer()) return false;
+      // 重新开始发送整个命令
+      sent_total = 0;
+      start = std::chrono::steady_clock::now();
+      continue;
+    }
+    return false;
+#endif
+  }
+  return true;
 }
 
 std::string SessionStorageAdapter::receiveResponse() {
@@ -94,16 +200,122 @@ std::string SessionStorageAdapter::receiveResponse() {
     return "";
   }
 
-  char buffer[4096];
-  ssize_t bytes_received = recv(socket_fd_, buffer, sizeof(buffer) - 1, 0);
+  std::string buf;
+  buf.reserve(4096);
 
-  if (bytes_received <= 0) {
-    disconnectFromServer();
-    return "";
+  auto start = std::chrono::steady_clock::now();
+  const auto overall_timeout = std::chrono::milliseconds(5000); // 调高至 5s，总等待时间上限
+
+  auto is_complete = [&](const std::string &s) -> bool {
+    if (s.size() < 3) return false;
+    char t = s[0];
+    // 简单字符串、错误、整数：以 CRLF 结束
+    if (t == '+' || t == '-' || t == ':') {
+      return s.find("\r\n") != std::string::npos;
+    }
+    // 批量字符串：$<len>\r\n<payload>\r\n
+    if (t == '$') {
+      size_t nl = s.find("\r\n");
+      if (nl == std::string::npos) return false;
+      long long len = 0;
+      try {
+        len = std::stoll(s.substr(1, nl - 1));
+      } catch (...) {
+        return false;
+      }
+      if (len < 0) {
+        // NULL bulk string：只有头就够
+        return true;
+      }
+      size_t need = nl + 2 + static_cast<size_t>(len) + 2;
+      return s.size() >= need;
+    }
+    // 数组：*<n>\r\n 之后跟 n 个 bulk 或其他类型
+    if (t == '*') {
+      size_t pos = s.find("\r\n");
+      if (pos == std::string::npos) return false;
+      long long n = 0;
+      try {
+        n = std::stoll(s.substr(1, pos - 1));
+      } catch (...) {
+        return false;
+      }
+      size_t cur = pos + 2;
+      for (long long i = 0; i < n; ++i) {
+        if (cur >= s.size()) return false;
+        char tt = s[cur];
+        if (tt == '$') {
+          size_t nl2 = s.find("\r\n", cur);
+          if (nl2 == std::string::npos) return false;
+          long long len = 0;
+          try {
+            len = std::stoll(s.substr(cur + 1, nl2 - (cur + 1)));
+          } catch (...) {
+            return false;
+          }
+          cur = nl2 + 2;
+          if (len < 0) {
+            // null bulk
+            continue;
+          }
+          if (s.size() < cur + static_cast<size_t>(len) + 2) return false;
+          cur += static_cast<size_t>(len) + 2;
+        } else if (tt == '+' || tt == '-' || tt == ':') {
+          size_t nl2 = s.find("\r\n", cur);
+          if (nl2 == std::string::npos) return false;
+          cur = nl2 + 2;
+        } else if (tt == '*') {
+          // 递归处理较复杂，这里保守：若遇到嵌套数组但数据未完全，就返回未完成
+          // 简化：要求上游命令不要返回嵌套数组（当前用例不涉及）
+          return false;
+        } else {
+          return false;
+        }
+      }
+      return s.size() >= cur;
+    }
+    return false;
+  };
+
+  while (true) {
+    char tmp[4096];
+#ifdef _WIN32
+    int n = recv(socket_fd_, tmp, sizeof(tmp), 0);
+    if (n > 0) buf.append(tmp, tmp + n);
+    if (n == 0) {
+      disconnectFromServer();
+      return "";
+    }
+    if (n < 0) {
+      // Windows 下已设置超时，直接检查完成或超时
+    }
+#else
+    ssize_t n = recv(socket_fd_, tmp, sizeof(tmp), 0);
+    if (n > 0) buf.append(tmp, tmp + n);
+    if (n == 0) {
+      disconnectFromServer();
+      return "";
+    }
+    if (n < 0) {
+      // EAGAIN/EWOULDBLOCK 表示当前无数据可读
+      if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+        disconnectFromServer();
+        return "";
+      }
+    }
+#endif
+
+    if (is_complete(buf)) {
+      // 若为 bulk 或数组，截断到恰好一条完整响应（多余的属于后续管线，此处不处理）
+      // is_complete 已保证单条完整响应在前缀
+      return buf;
+    }
+
+    if (std::chrono::steady_clock::now() - start > overall_timeout) {
+      // 超时仍未完整，返回已读（可能不完整）以避免卡死
+      return buf;
+    }
   }
-
-  buffer[bytes_received] = '\0';
-  return std::string(buffer);
 }
 
 std::string SessionStorageAdapter::buildSetCommand(const std::string &key,
@@ -127,12 +339,16 @@ std::string SessionStorageAdapter::buildExistsCommand(const std::string &key) {
          key + "\r\n";
 }
 
+std::string SessionStorageAdapter::buildAuthCommand(const std::string &password) {
+  return "*2\r\n$4\r\nAUTH\r\n$" + std::to_string(password.length()) + "\r\n" + password + "\r\n";
+}
+
 bool SessionStorageAdapter::saveSession(const ChatSession &session) {
   try {
-    // 序列化会话数据
+    // Serialize session data
     std::string json_data = serializeSession(session);
 
-    // 保存会话数据
+    // Save session data
     std::string session_key = getSessionKey(session.get_id());
     std::string set_cmd = buildSetCommand(session_key, json_data);
 
@@ -147,13 +363,13 @@ bool SessionStorageAdapter::saveSession(const ChatSession &session) {
       return false;
     }
 
-    // 更新会话列表
+    // Update session list
     std::vector<std::string> session_ids = getAllSessionIds();
     if (std::find(session_ids.begin(), session_ids.end(), session.get_id()) ==
         session_ids.end()) {
       session_ids.push_back(session.get_id());
 
-      // 将会话ID列表序列化为JSON
+      // Serialize session ID list to JSON
       json session_list_json = session_ids;
       std::string list_cmd =
           buildSetCommand(SESSION_LIST_KEY, session_list_json.dump());
@@ -163,7 +379,7 @@ bool SessionStorageAdapter::saveSession(const ChatSession &session) {
         return false;
       }
 
-      receiveResponse(); // 消费响应
+      receiveResponse(); // Consume response
     }
 
     return true;
@@ -186,18 +402,18 @@ SessionStorageAdapter::loadSession(const std::string &session_id) {
 
     std::string response = receiveResponse();
 
-    // 解析Redis响应格式
+    // Parse Redis response format
     if (response.empty() ||
-        response[0] == '$' && response.find("-1") != std::string::npos) {
-      return nullptr; // 键不存在
+        (response[0] == '$' && response.find("-1") != std::string::npos)) {
+      return nullptr; // Key does not exist
     }
 
-    // 提取实际数据（跳过Redis协议头）
+    // Extract actual data (skip Redis protocol header)
     size_t data_start = response.find("\r\n");
     if (data_start != std::string::npos) {
       data_start += 2;
       std::string json_data = response.substr(data_start);
-      // 移除末尾的\r\n
+      // Remove trailing \r\n
       if (json_data.length() >= 2 &&
           json_data.substr(json_data.length() - 2) == "\r\n") {
         json_data = json_data.substr(0, json_data.length() - 2);
@@ -214,7 +430,7 @@ SessionStorageAdapter::loadSession(const std::string &session_id) {
 
 bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
   try {
-    // 删除会话数据
+    // Delete session data
     std::string session_key = getSessionKey(session_id);
     std::string del_cmd = buildDelCommand(session_key);
 
@@ -222,15 +438,15 @@ bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
       return false;
     }
 
-    receiveResponse(); // 消费响应
+    receiveResponse(); // Consume response
 
-    // 从会话列表中移除
+    // Remove from session list
     std::vector<std::string> session_ids = getAllSessionIds();
     auto it = std::find(session_ids.begin(), session_ids.end(), session_id);
     if (it != session_ids.end()) {
       session_ids.erase(it);
 
-      // 更新会话列表
+      // Update session list
       json session_list_json = session_ids;
       std::string set_cmd =
           buildSetCommand(SESSION_LIST_KEY, session_list_json.dump());
@@ -239,7 +455,7 @@ bool SessionStorageAdapter::deleteSession(const std::string &session_id) {
         return false;
       }
 
-      receiveResponse(); // 消费响应
+      receiveResponse(); // Consume response
     }
 
     return true;
@@ -259,24 +475,27 @@ std::vector<std::string> SessionStorageAdapter::getAllSessionIds() {
 
     std::string response = receiveResponse();
 
-    // 解析Redis响应
+    // Parse Redis response
     if (response.empty() ||
-        response[0] == '$' && response.find("-1") != std::string::npos) {
-      return {}; // 键不存在，返回空列表
+        (response[0] == '$' && response.find("-1") != std::string::npos)) {
+      return {}; // Key does not exist, return empty list
     }
 
-    // 提取JSON数据
+    // Extract JSON data
     size_t data_start = response.find("\r\n");
     if (data_start != std::string::npos) {
       data_start += 2;
       std::string json_data = response.substr(data_start);
-      // 移除末尾的\r\n
+      // Remove trailing \r\n
       if (json_data.length() >= 2 &&
           json_data.substr(json_data.length() - 2) == "\r\n") {
         json_data = json_data.substr(0, json_data.length() - 2);
       }
 
-      json session_list_json = json::parse(json_data);
+      json session_list_json = json::parse(json_data, nullptr, /*allow_exceptions=*/false);
+      if (session_list_json.is_discarded()) {
+        return {};
+      }
       return session_list_json.get<std::vector<std::string>>();
     }
 
@@ -305,12 +524,12 @@ bool SessionStorageAdapter::sessionExists(const std::string &session_id) {
 }
 
 bool SessionStorageAdapter::saveToFile() {
-  // 网络模式下，数据已经持久化到服务器
+  // In network mode, data is already persisted to server
   return true;
 }
 
 bool SessionStorageAdapter::loadFromFile() {
-  // 网络模式下，数据从服务器加载
+  // In network mode, data is loaded from server
   return true;
 }
 
@@ -322,13 +541,13 @@ bool SessionStorageAdapter::clearAllSessions() {
       deleteSession(session_id);
     }
 
-    // 清空会话列表
+    // Clear session list
     std::string set_cmd = buildSetCommand(SESSION_LIST_KEY, "[]");
     if (!sendCommand(set_cmd)) {
       return false;
     }
 
-    receiveResponse(); // 消费响应
+    receiveResponse(); // Consume response
     return true;
   } catch (const std::exception &e) {
     std::cerr << "Error clearing all sessions: " << e.what() << std::endl;
@@ -347,7 +566,7 @@ SessionStorageAdapter::serializeSession(const ChatSession &session) {
   session_json["title"] = session.get_title();
   session_json["custom_name"] = session.get_custom_name();
 
-  // 转换时间点为时间戳
+  // Convert time point to timestamp
   auto created_time = session.get_created_time();
   auto last_updated = session.get_last_updated();
   session_json["created_at"] = std::chrono::duration_cast<std::chrono::seconds>(
@@ -377,19 +596,19 @@ SessionStorageAdapter::serializeSession(const ChatSession &session) {
 std::unique_ptr<ChatSession>
 SessionStorageAdapter::deserializeSession(const std::string &json_data) {
   try {
-    json session_json = json::parse(json_data);
+    json session_json = json::parse(json_data, nullptr, /*allow_exceptions=*/false);
 
-    // 从JSON中提取基本信息
+    // Extract basic information from JSON
     std::string id = session_json["id"].get<std::string>();
     std::string title = session_json["title"].get<std::string>();
     
-    // 提取自定义名称（向后兼容，如果不存在则为空字符串）
+    // Extract custom name (backward compatible, empty string if not exists)
     std::string custom_name = "";
     if (session_json.contains("custom_name")) {
       custom_name = session_json["custom_name"].get<std::string>();
     }
 
-    // 转换时间戳为时间点
+    // Convert timestamp to time point
     auto created_timestamp = session_json["created_at"].get<int64_t>();
     auto last_updated_timestamp = session_json["last_updated"].get<int64_t>();
 
@@ -398,11 +617,11 @@ SessionStorageAdapter::deserializeSession(const std::string &json_data) {
     auto last_updated =
         std::chrono::system_clock::from_time_t(last_updated_timestamp);
 
-    // 使用包含自定义名称的反序列化构造函数创建会话
+    // Create session using deserialization constructor with custom name
     auto session =
         std::make_unique<ChatSession>(id, title, custom_name, created_time, last_updated);
 
-    // 反序列化消息列表
+    // Deserialize message list
     if (session_json.contains("messages") &&
         session_json["messages"].is_array()) {
       for (const auto &msg_json : session_json["messages"]) {
