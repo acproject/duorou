@@ -58,7 +58,8 @@ public:
     ModelDownloader(const std::string& base_url = "https://registry.ollama.ai",
                    const std::string& model_dir = 
 #ifdef _WIN32
-                   std::string(getenv("USERPROFILE")) + "/.ollama/models"
+                //    std::string(getenv("USERPROFILE")) + "/.ollama/models"
+                std::string("C:\\Users\\Admin\\.ollama\\models")
 #else
                    "~/.ollama/models"
 #endif
