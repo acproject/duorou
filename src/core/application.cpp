@@ -671,8 +671,9 @@ bool Application::startMiniMemoryServer() {
     // Create thread to run MiniMemory server
     minimemory_thread_ = std::make_unique<std::thread>([this]() {
       // Switch to MiniMemory build directory (relative to duorou's build directory)
+      // 指定配置文件，确保端口与密码与 mcs.conf 一致
       std::string command =
-          "cd ../third_party/MiniMemory/build && ./bin/mini_cache_server";
+          "cd ../third_party/MiniMemory/build && ./bin/mini_cache_server --config ../src/conf/mcs.conf";
 
       if (logger_) {
         logger_->info("Starting MiniMemory server with command: " + command);

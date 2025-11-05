@@ -53,8 +53,15 @@ public:
     }
 
     static bool rewritePlainResp(DataStore& store, const std::string& outPath) {
+        // 在重写期间抑制 on_apply 以避免污染现有 AOF
+        bool prevLoading = store.isLoading();
+        store.setLoading(true);
+
         std::ofstream ofs(outPath, std::ios::binary | std::ios::trunc);
-        if (!ofs) return false;
+        if (!ofs) {
+            store.setLoading(prevLoading);
+            return false;
+        }
         auto writeResp = [&](const std::vector<std::string>& args){
             ofs << "*" << args.size() << "\r\n";
             for (const auto& a : args) {
@@ -88,6 +95,8 @@ public:
         }
         store.select(current);
         ofs.flush();
+        // 恢复 loading 状态
+        store.setLoading(prevLoading);
         return true;
     }
 

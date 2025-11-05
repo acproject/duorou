@@ -1,6 +1,8 @@
 #ifndef SESSION_STORAGE_ADAPTER_H
 #define SESSION_STORAGE_ADAPTER_H
 
+#ifdef __cplusplus
+
 #include "chat_session.h"
 #include <memory>
 #include <string>
@@ -21,6 +23,9 @@ public:
   // Initialize storage connection
   bool initialize(const std::string &server_host = "localhost",
                   int server_port = 6379);
+
+  // Authenticate with server if requirepass is set
+  bool authenticate(const std::string &password);
 
   // Save single session
   bool saveSession(const duorou::gui::ChatSession &session);
@@ -83,9 +88,12 @@ private:
   std::string buildGetCommand(const std::string &key);
   std::string buildDelCommand(const std::string &key);
   std::string buildExistsCommand(const std::string &key);
+  std::string buildAuthCommand(const std::string &password);
 };
 
 } // namespace gui
 } // namespace duorou
+
+#endif // __cplusplus
 
 #endif // SESSION_STORAGE_ADAPTER_H

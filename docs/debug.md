@@ -95,6 +95,9 @@ Thought
 
   额外说明
 
+  - 如果未来仍偶发空响应（网络抖动极端情况），可以在 saveSession 收到空响应时，主动重连并重试一次该条 SET（我可以再补一个小重试器）。
+- 若你的 Key-Value 服务启用了密码，可在存储适配器里加一个 AUTH 初始化流程（目前默认无需认证端口）。
+
 - 我将之前避免“完全收起”的最小宽度限制移除了，因为现在有按钮可以恢复，用户可自由拖到 0。
 - 当前按钮文字是英文，如需中文显示/国际化可告知。
 - 如果你更喜欢按钮放在右上角（靠近最小化/关闭按钮），我也可以改为另一种摆放方式（例如用 gtk_header_bar_pack_end 或改造 title_widget 布局）。
@@ -214,3 +217,46 @@ Thought
 - 热度动态化（访问计数/最近访问时间自动衰减），并按热度驱动冷热数据迁移策略。
 - 对象化元信息规范化（哈希校验、尺寸/时长等标准字段约定）。
 另外如何让冷热数据来辅助模型理解呢，是否需要在用户的提示词中增加一些系统的（通过上面的功能来实现）
+
+
+
+我已定位并修复你遇到的“SET command failed”和“只保存第一轮对话”的核心原因，并加固了网络通信的稳定性。
+
+关键问题与修复
+
+- 根因：并发使用同一个 TCP 连接
+  - UI 在添加消息时会开启一个后台线程做异步保存；退出时 save_sessions() 又会遍历所有会话同步保存。两者未串行化，导致多个线程同时往同一套接字写入/读取 RESP，出现响应错位、空响应，从而打印“SET command failed: ”（后面为空字符串）。
+- 修复点一（最关键）：将所有存储操作串行化
+  - 在 ChatSessionManager 里，对所有会话存储相关操作统一加互斥锁（create/delete/rename/save_sessions/load_sessions 以及磁盘保存），确保单连接的命令-响应成对、顺序执行，不会相互串台。
+- 修复点二：提升网络稳定性和容错
+  - 将 SessionStorageAdapter 的收发超时从 500ms 提升到 2s，并将 receiveResponse 总等待从 1.5s 提升到 5s，避免在 I/O 压力下误判超时。
+  - sendCommand 增强为健壮循环发送：处理 EINTR/EAGAIN/EWOULDBLOCK 重试，遇到 EPIPE/ECONNRESET 主动重连一次并重发，整体发送窗口 4s，避免短写或瞬时重置导致的失败。
+变更摘要
+
+- chat_session_manager.cpp
+  - create_new_session、delete_session、set_session_title、set_session_custom_name、save_sessions、load_sessions 等对存储的调用均包裹 storage_mutex_ ，保证命令与响应的顺序一致性。
+- session_storage_adapter.cpp
+  - connectToServer : SO_RCVTIMEO / SO_SNDTIMEO 提升到 2s。
+  - sendCommand : 循环短写，重试 EINTR/EAGAIN/EWOULDBLOCK ，遇到 EPIPE/ECONNRESET 自动断开重连并重发；总超时 4s。
+  - receiveResponse : 总超时提升到 5s，减少空响应情况。
+- 项目已成功编译通过。
+这会如何解决你的现象
+
+- “SET command failed:”出现空响应，通常由两个线程交叉抢读同一响应或服务器略慢导致超时。现在已串行化访问，并把时间窗口加大，避免了协议错位与误超时。
+- “只保存第一轮对话”：后续每轮消息保存会和退出保存互相打架，导致保存失败。加锁后保存按顺序执行，后续对话能稳定写入。
+如何验证
+
+- 重新运行应用，按下面步骤：
+  - 新建会话，连续发2-3轮消息。
+  - 观察终端日志，确认不再出现“SET command failed”。
+  - 退出应用（会打印 [MainWindow] Saving session data）。
+  - 重启应用，确认该会话包含第二轮及之后的消息。
+- 如果你之前看到的“decode: failed to find a memory slot for batch of size 4”是推理侧显存不够，这与存储无关，不影响现在的存储修复。若继续出现，可降低批大小或模型上下文大小。
+可能的后续增强（可选）
+
+- 如果未来仍偶发空响应（网络抖动极端情况），可以在 saveSession 收到空响应时，主动重连并重试一次该条 SET（我可以再补一个小重试器）。
+- 若你的 Key-Value 服务启用了密码，可在存储适配器里加一个 AUTH 初始化流程（目前默认无需认证端口）。
+已做的工作已编译通过。请你更新后重跑试试：看是否不再出现“SET command failed”，并且能持久化第二轮及之后的对话。如果还有问题，我会继续跟进。
+
+
+增加一个会话检索的功能（先完成文字版本的）

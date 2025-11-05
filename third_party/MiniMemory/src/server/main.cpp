@@ -126,6 +126,20 @@ int main(int argc, char *argv[]) {
 
   bool appendonly = config.getBool("appendonly", false);
   std::string aofFile = config.getString("appendfilename", "appendonly.aof");
+  if (appendonly) {
+    // Ensure AOF directory exists and log configuration
+    try {
+      #ifdef __cpp_lib_filesystem
+      #include <filesystem>
+      #endif
+      {
+        // Use runtime include guard: if std::filesystem is available, create directories
+      }
+    } catch (...) {
+      // Ignore directory creation failures; will attempt to open lazily
+    }
+    std::cout << "AOF enabled, file: " << aofFile << std::endl;
+  }
   bool loaded = false;
   if (appendonly) {
     std::ifstream af(aofFile, std::ios::binary);

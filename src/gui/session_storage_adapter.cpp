@@ -50,6 +50,26 @@ bool SessionStorageAdapter::initialize(const std::string &server_host,
   return connectToServer();
 }
 
+bool SessionStorageAdapter::authenticate(const std::string &password) {
+  if (password.empty()) {
+    return true;
+  }
+  if (!connected_ && !connectToServer()) {
+    return false;
+  }
+  std::string auth_cmd = buildAuthCommand(password);
+  if (!sendCommand(auth_cmd)) {
+    std::cerr << "Failed to send AUTH command" << std::endl;
+    return false;
+  }
+  std::string response = receiveResponse();
+  if (response.find("+OK") != 0) {
+    std::cerr << "AUTH failed: " << response << std::endl;
+    return false;
+  }
+  return true;
+}
+
 bool SessionStorageAdapter::connectToServer() {
   if (connected_) {
     return true;
@@ -84,13 +104,13 @@ bool SessionStorageAdapter::connectToServer() {
 
   // 设置收发超时，避免在服务器忙于持久化时阻塞
 #ifdef _WIN32
-  int timeout_ms = 500; // 500ms 超时
+  int timeout_ms = 2000; // 调高至 2000ms，提升大响应稳定性
   setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
   setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
 #else
   struct timeval tv;
-  tv.tv_sec = 0;
-  tv.tv_usec = 500000; // 500ms
+  tv.tv_sec = 2;        // 调高至 2s
+  tv.tv_usec = 0;
   setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
@@ -120,6 +140,8 @@ bool SessionStorageAdapter::sendCommand(const std::string &command) {
   const char *data = command.c_str();
   size_t to_send = command.length();
   size_t sent_total = 0;
+  auto start = std::chrono::steady_clock::now();
+  const auto overall_timeout = std::chrono::seconds(4);
   while (sent_total < to_send) {
 #ifdef _WIN32
     int n = send(socket_fd_, data + sent_total, static_cast<int>(to_send - sent_total), 0);
@@ -130,8 +152,45 @@ bool SessionStorageAdapter::sendCommand(const std::string &command) {
       sent_total += static_cast<size_t>(n);
       continue;
     }
-    // 遇到超时或错误时停止，避免长时间阻塞
+    // 处理可重试错误
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    if (err == WSAEINTR) {
+      continue;
+    }
+    if (err == WSAEWOULDBLOCK) {
+      if (std::chrono::steady_clock::now() - start > overall_timeout) return false;
+      continue;
+    }
+    // 连接重置/管道破裂，尝试重连一次
+    if (err == WSAECONNRESET) {
+      disconnectFromServer();
+      if (!connectToServer()) return false;
+      // 重新开始发送
+      sent_total = 0;
+      start = std::chrono::steady_clock::now();
+      continue;
+    }
     return false;
+#else
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (std::chrono::steady_clock::now() - start > overall_timeout) return false;
+      continue;
+    }
+    if (errno == EPIPE || errno == ECONNRESET) {
+      // 对端关闭，尝试重连一次
+      disconnectFromServer();
+      if (!connectToServer()) return false;
+      // 重新开始发送整个命令
+      sent_total = 0;
+      start = std::chrono::steady_clock::now();
+      continue;
+    }
+    return false;
+#endif
   }
   return true;
 }
@@ -145,7 +204,7 @@ std::string SessionStorageAdapter::receiveResponse() {
   buf.reserve(4096);
 
   auto start = std::chrono::steady_clock::now();
-  const auto overall_timeout = std::chrono::milliseconds(1500); // 总等待时间上限
+  const auto overall_timeout = std::chrono::milliseconds(5000); // 调高至 5s，总等待时间上限
 
   auto is_complete = [&](const std::string &s) -> bool {
     if (s.size() < 3) return false;
@@ -278,6 +337,10 @@ std::string SessionStorageAdapter::buildDelCommand(const std::string &key) {
 std::string SessionStorageAdapter::buildExistsCommand(const std::string &key) {
   return "*2\r\n$6\r\nEXISTS\r\n$" + std::to_string(key.length()) + "\r\n" +
          key + "\r\n";
+}
+
+std::string SessionStorageAdapter::buildAuthCommand(const std::string &password) {
+  return "*2\r\n$4\r\nAUTH\r\n$" + std::to_string(password.length()) + "\r\n" + password + "\r\n";
 }
 
 bool SessionStorageAdapter::saveSession(const ChatSession &session) {
