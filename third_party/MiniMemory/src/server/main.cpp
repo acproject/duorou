@@ -119,33 +119,51 @@ int main(int argc, char *argv[]) {
 
   // 获取保存条件
   auto saveConditions = config.getSaveConditions();
+  // 是否在每次变更后立即保存快照（写盘），默认关闭
+  bool saveImmediate = config.getBool("save_immediate", false);
 
   // 创建数据存储
   DataStore store;
   CommandHandler handler(store);
 
   bool appendonly = config.getBool("appendonly", false);
-  std::string aofFile = config.getString("appendfilename", "appendonly.aof");
-  if (appendonly) {
-    // Ensure AOF directory exists and log configuration
-    try {
-      #ifdef __cpp_lib_filesystem
-      #include <filesystem>
-      #endif
-      {
-        // Use runtime include guard: if std::filesystem is available, create directories
-      }
-    } catch (...) {
-      // Ignore directory creation failures; will attempt to open lazily
+  // 解析数据文件路径为与配置文件同目录的绝对路径，避免工作目录变化导致无法找到文件
+  std::string aofFileConf = config.getString("appendfilename", "appendonly.aof");
+  std::string aofPathResolvedStr = aofFileConf;
+  std::string mcdbPathResolvedStr = "dump.mcdb";
+#ifndef _WIN32
+  {
+    std::filesystem::path configDir = std::filesystem::path(configPath).parent_path();
+    std::filesystem::path aofPathResolved = std::filesystem::path(aofFileConf);
+    if (!aofPathResolved.is_absolute()) {
+      aofPathResolved = configDir / aofPathResolved;
     }
-    std::cout << "AOF enabled, file: " << aofFile << std::endl;
+    aofPathResolvedStr = aofPathResolved.string();
+    mcdbPathResolvedStr = (configDir / std::filesystem::path("dump.mcdb")).string();
+  }
+#endif
+  std::cout << "Resolved data paths: AOF=" << aofPathResolvedStr
+            << ", MCDB=" << mcdbPathResolvedStr << std::endl;
+  if (appendonly) {
+    // 确保 AOF 目录存在，避免因目录缺失导致 AOF 未写入
+    try {
+      std::filesystem::path aofPath(aofPathResolvedStr);
+      auto aofDir = aofPath.parent_path();
+      if (!aofDir.empty() && !std::filesystem::exists(aofDir)) {
+        std::filesystem::create_directories(aofDir);
+        std::cout << "Created AOF directory: " << aofDir.string() << std::endl;
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "Failed to ensure AOF directory: " << e.what() << std::endl;
+    }
+    std::cout << "AOF enabled, file: " << aofPathResolvedStr << std::endl;
   }
   bool loaded = false;
   if (appendonly) {
-    std::ifstream af(aofFile, std::ios::binary);
+    std::ifstream af(aofPathResolvedStr, std::ios::binary);
     if (af.good()) {
       std::cout << "Found AOF file, attempting to replay..." << std::endl;
-      if (AofWriter::replay(aofFile, store)) {
+      if (AofWriter::replay(aofPathResolvedStr, store)) {
         std::cout << "Successfully loaded AOF file" << std::endl;
         loaded = true;
       } else {
@@ -154,12 +172,11 @@ int main(int argc, char *argv[]) {
     }
   }
   if (!loaded) {
-    std::string mcdbFile = "dump.mcdb";
-    std::ifstream testFile(mcdbFile, std::ios::binary);
+    std::ifstream testFile(mcdbPathResolvedStr, std::ios::binary);
     if (testFile.good()) {
       std::cout << "Found MCDB file, attempting to load..." << std::endl;
-      if (store.loadMCDB(mcdbFile)) {
-        std::cout << "Successfully loaded MCDB file" << std::endl;
+      if (store.loadMCDB(mcdbPathResolvedStr)) {
+        std::cout << "Successfully loaded MCDB file: " << mcdbPathResolvedStr << std::endl;
         loaded = true;
       } else {
         std::cout << "Failed to load MCDB file, starting with empty database"
@@ -173,8 +190,17 @@ int main(int argc, char *argv[]) {
 
   std::unique_ptr<AofWriter> aof;
   if (appendonly) {
-    aof.reset(new AofWriter(aofFile));
-    store.setApplyCallback([&aof](const std::vector<std::string>& args){ if (aof) aof->append(args); });
+    aof.reset(new AofWriter(aofPathResolvedStr));
+    store.setApplyCallback([&aof, &store, saveImmediate, mcdbPathResolvedStr](const std::vector<std::string>& args){
+      if (aof) aof->append(args);
+      if (saveImmediate) {
+        // 可选：在每次变更后立即保存 MCDB（性能开销较大）
+        store.saveMCDB(mcdbPathResolvedStr);
+      }
+    });
+    if (saveImmediate) {
+      std::cout << "Immediate MCDB save is ENABLED (save_immediate = yes)" << std::endl;
+    }
   }
 
   // 创建服务器
@@ -204,24 +230,30 @@ int main(int argc, char *argv[]) {
     }
   });
 
-  // 设置自动保存
-  std::thread autosave_thread([&store, &saveConditions]() {
+  // 设置自动保存（基于变更次数 + 时间条件）
+  std::thread autosave_thread([&store, &saveConditions, mcdbPathResolvedStr]() {
     std::unordered_map<int, std::chrono::steady_clock::time_point>
         lastSaveTimes;
-    std::unordered_map<int, int> changesSinceSave;
 
     for (const auto &condition : saveConditions) {
       lastSaveTimes[condition.first] = std::chrono::steady_clock::now();
-      changesSinceSave[condition.first] = 0;
+    }
+
+    // 动态调整检查间隔：若存在 seconds == 0 的条件，则缩短为 100ms
+    int minSeconds = 1000000;
+    for (const auto &condition : saveConditions) {
+      if (condition.first < minSeconds) minSeconds = condition.first;
     }
 
     while (g_running) {
       auto now = std::chrono::steady_clock::now();
+      // 从数据存储读取自上次检查以来的变更次数，并重置计数
+      int changes = store.getAndResetChangeCount();
 
       // 检查每个保存条件
       for (const auto &condition : saveConditions) {
         int seconds = condition.first;
-        int changes = condition.second;
+        int requiredChanges = condition.second;
 
         // 检查时间条件
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
@@ -229,27 +261,32 @@ int main(int argc, char *argv[]) {
                            .count();
 
         // 如果时间已到并且有足够的更改，执行保存
-        if (elapsed >= seconds) {
-          // 这里简化处理，实际应该检查变更次数
+        if (elapsed >= seconds && changes >= requiredChanges) {
           std::cout << "Auto-save triggered: " << seconds
-                    << " seconds have passed" << std::endl;
+                    << " seconds have passed with " << changes << " changes" << std::endl;
 
-          if (store.saveMCDB("dump.mcdb")) {
+          if (store.saveMCDB(mcdbPathResolvedStr)) {
             std::cout << "Auto-save succeeded" << std::endl;
           } else {
             std::cerr << "Auto-save failed" << std::endl;
           }
 
-          // 重置计时器
-          lastSaveTimes[seconds] = now;
+          // 重置所有计时器，避免短时间内重复触发
+          for (auto &pair : lastSaveTimes) {
+            pair.second = now;
+          }
 
           // 一旦保存，跳出循环
           break;
         }
       }
 
-      // 每秒检查一次
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+      // 若配置存在 seconds == 0 的条件，则缩短为 100ms；否则 1s
+      if (minSeconds == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      } else {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
     }
   });
 
@@ -261,7 +298,7 @@ int main(int argc, char *argv[]) {
 
   // 在退出前保存数据
   std::cout << "Saving data to MCDB file..." << std::endl;
-  store.saveMCDB("dump.mcdb");
+  store.saveMCDB(mcdbPathResolvedStr);
 
   std::cout << "Server has been shut down" << std::endl;
   return 0;

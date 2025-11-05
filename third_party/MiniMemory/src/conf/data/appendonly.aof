@@ -1,0 +1,75 @@
+*3
+$3
+SET
+$36
+session_data:chat_1762330420579_3988
+$136
+{"created_at":1762330420,"custom_name":"","id":"chat_1762330420579_3988","last_updated":1762330420,"messages":[],"title":"Welcome Chat"}
+*3
+$3
+SET
+$12
+session_list
+$27
+["chat_1762330420579_3988"]
+*3
+$3
+SET
+$36
+session_data:chat_1762330420579_3988
+$136
+{"created_at":1762330420,"custom_name":"","id":"chat_1762330420579_3988","last_updated":1762330420,"messages":[],"title":"Welcome Chat"}
+*3
+$3
+SET
+$36
+session_data:chat_1762330420579_3988
+$136
+{"created_at":1762330420,"custom_name":"","id":"chat_1762330420579_3988","last_updated":1762330420,"messages":[],"title":"Welcome Chat"}
+*3
+$3
+SET
+$36
+session_data:chat_1762330420579_3988
+$136
+{"created_at":1762330420,"custom_name":"","id":"chat_1762330420579_3988","last_updated":1762330420,"messages":[],"title":"Welcome Chat"}
+*2
+$3
+DEL
+$36
+session_data:chat_1762330420579_3988
+*3
+$3
+SET
+$12
+session_list
+$2
+[]
+*3
+$3
+SET
+$36
+session_data:chat_1762331654980_9725
+$132
+{"created_at":1762331654,"custom_name":"","id":"chat_1762331654980_9725","last_updated":1762331654,"messages":[],"title":"New Chat"}
+*3
+$3
+SET
+$12
+session_list
+$27
+["chat_1762331654980_9725"]
+*3
+$3
+SET
+$36
+session_data:chat_1762331654980_9725
+$132
+{"created_at":1762331654,"custom_name":"","id":"chat_1762331654980_9725","last_updated":1762331654,"messages":[],"title":"New Chat"}
+*3
+$3
+SET
+$36
+session_data:chat_1762331654980_9725
+$132
+{"created_at":1762331654,"custom_name":"","id":"chat_1762331654980_9725","last_updated":1762331654,"messages":[],"title":"New Chat"}

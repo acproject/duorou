@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <process.h> // for _getpid on Windows
@@ -85,9 +86,10 @@ Application::Application(int argc, char *argv[])
     }
   }
 
-  // Set MiniMemory executable path (relative to duorou's build directory)
+  // Set MiniMemory executable path default; actual path resolved at runtime
+  // Prefer project-root relative form to避免运行目录差异造成误判
   minimemory_executable_path_ =
-      "../third_party/MiniMemory/build/bin/mini_cache_server";
+      "third_party/MiniMemory/build/bin/mini_cache_server";
 
   // Set static instance pointer
   instance_ = this;
@@ -670,10 +672,56 @@ bool Application::startMiniMemoryServer() {
 
     // Create thread to run MiniMemory server
     minimemory_thread_ = std::make_unique<std::thread>([this]() {
-      // Switch to MiniMemory build directory (relative to duorou's build directory)
-      // 指定配置文件，确保端口与密码与 mcs.conf 一致
-      std::string command =
-          "cd ../third_party/MiniMemory/build && ./bin/mini_cache_server --config ../src/conf/mcs.conf";
+      // 以当前工作目录为基准，尝试两种候选路径（从项目根或从 build 目录）
+      const auto cwd = std::filesystem::current_path();
+
+      const std::filesystem::path bin_candidate_root =
+          cwd / "third_party/MiniMemory/build/bin/mini_cache_server";
+      const std::filesystem::path bin_candidate_build =
+          cwd / "../third_party/MiniMemory/build/bin/mini_cache_server";
+
+      const std::filesystem::path cfg_candidate_root =
+          cwd / "third_party/MiniMemory/src/conf/mcs.conf";
+      const std::filesystem::path cfg_candidate_build =
+          cwd / "../third_party/MiniMemory/src/conf/mcs.conf";
+
+      std::filesystem::path mini_bin;
+      std::filesystem::path mini_cfg;
+
+      if (std::filesystem::exists(bin_candidate_root)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_root);
+      } else if (std::filesystem::exists(bin_candidate_build)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_build);
+      }
+
+      if (std::filesystem::exists(cfg_candidate_root)) {
+        mini_cfg = std::filesystem::canonical(cfg_candidate_root);
+      } else if (std::filesystem::exists(cfg_candidate_build)) {
+        mini_cfg = std::filesystem::canonical(cfg_candidate_build);
+      }
+
+      if (mini_bin.empty() || mini_cfg.empty()) {
+        if (logger_) {
+          logger_->error(
+              std::string("MiniMemory paths not found. cwd=") + cwd.string());
+          logger_->error(std::string("Checked bin: ") + bin_candidate_root.string() +
+                         ", " + bin_candidate_build.string());
+          logger_->error(std::string("Checked cfg: ") + cfg_candidate_root.string() +
+                         ", " + cfg_candidate_build.string());
+          logger_->error(
+              "Hint: build MiniMemory then run from project root or build dir: \n"
+              "  cmake -S third_party/MiniMemory -B third_party/MiniMemory/build\n"
+              "  cmake --build third_party/MiniMemory/build --target mini_cache_server");
+        }
+        minimemory_running_.store(false);
+        return; // 无法找到路径，直接退出线程
+      }
+
+      // 更新可执行路径成员，便于后续诊断
+      minimemory_executable_path_ = mini_bin.string();
+
+      // 直接使用绝对路径启动，避免对工作目录的依赖
+      std::string command = mini_bin.string() + " --config " + mini_cfg.string();
 
       if (logger_) {
         logger_->info("Starting MiniMemory server with command: " + command);
