@@ -16,6 +16,25 @@
 #include <iostream>
 #include <thread>
 #include <cstdlib>
+#include <string>
+
+// Cross-platform environment variable helpers
+#ifdef _WIN32
+static inline int setenv_compat(const char *name, const char *value, int /*overwrite*/) {
+  return _putenv_s(name, value);
+}
+static inline int unsetenv_compat(const char *name) {
+  std::string assignment(std::string(name) + "=");
+  return _putenv(assignment.c_str());
+}
+#else
+static inline int setenv_compat(const char *name, const char *value, int overwrite) {
+  return ::setenv(name, value, overwrite);
+}
+static inline int unsetenv_compat(const char *name) {
+  return ::unsetenv(name);
+}
+#endif
 
 namespace duorou {
 namespace gui {
@@ -1936,9 +1955,9 @@ std::string ChatView::generate_ai_response(const std::string &message) {
   if (config_manager_) {
     bool force_llama = config_manager_->getBool("model.force_llama", false);
     if (force_llama) {
-      setenv("DUOROU_FORCE_LLAMA", "1", 1);
+      setenv_compat("DUOROU_FORCE_LLAMA", "1", 1);
     } else {
-      unsetenv("DUOROU_FORCE_LLAMA");
+      unsetenv_compat("DUOROU_FORCE_LLAMA");
     }
     std::cout << "[DEBUG] ChatView: DUOROU_FORCE_LLAMA " << (force_llama ? "enabled" : "disabled") << " via config" << std::endl;
   } else {
@@ -2078,9 +2097,9 @@ void ChatView::stream_ai_response(const std::string &message) {
   if (config_manager_) {
     bool force_llama = config_manager_->getBool("model.force_llama", false);
     if (force_llama) {
-      setenv("DUOROU_FORCE_LLAMA", "1", 1);
+      setenv_compat("DUOROU_FORCE_LLAMA", "1", 1);
     } else {
-      unsetenv("DUOROU_FORCE_LLAMA");
+      unsetenv_compat("DUOROU_FORCE_LLAMA");
     }
   }
 

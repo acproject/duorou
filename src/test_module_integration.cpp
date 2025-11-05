@@ -18,7 +18,7 @@
 using namespace duorou::extensions::ollama;
 
 // 测试输入文本
-const std::string TEST_INPUT = "你好，你有名字吗？";
+const std::string TEST_INPUT = "Hello, do you have a name?";
 
 // 默认的 Hugging Face 模型目录（作为未设置 OVERRIDE_MODEL_DIR 时的默认值）
 static constexpr const char * DEFAULT_OVERRIDE_MODEL_DIR = 
@@ -131,7 +131,7 @@ static void dump_gguf_metadata(const std::string & model_path) {
   // 可选：开启mmap读取以提升读取性能
   parser.setUseMmap(true);
   if (!parser.parseFile(model_path)) {
-    std::cerr << "GGUF 解析失败：" << model_path << std::endl;
+    std::cerr << "GGUF parser failed: " << model_path << std::endl;
     return;
   }
 
@@ -190,6 +190,7 @@ static void dump_gguf_metadata(const std::string & model_path) {
       break;
     }
   }
+#ifndef _WIN32
   if (!found_dimension_sections) {
     std::cout << "Missing key: '<arch>.rope.dimension_sections' (尝试架构：";
     for (size_t i = 0; i < candidate_arches.size(); ++i) {
@@ -198,6 +199,7 @@ static void dump_gguf_metadata(const std::string & model_path) {
     }
     std::cout << ")" << std::endl;
   }
+#endif
 
   // 额外打印与RoPE相关的其他键，便于诊断
   const std::vector<std::string> rope_related_keys = {
@@ -248,13 +250,14 @@ int main() {
   std::cout << "Using model: " << model_path << std::endl;
 
   // 如果是 safetensors，提示用户先转换为 GGUF 并退出
+#ifndef _WIN32
   if (!model_path.empty()) {
     std::filesystem::path mp(model_path);
     if (mp.has_extension() && mp.extension() == ".safetensors") {
       const std::string dir = mp.parent_path().string();
       std::cerr << "\n检测到 Hugging Face safetensors 权重，llama.cpp 不能直接加载。" << std::endl;
       std::cerr << "请先转换为 GGUF 格式。推荐命令如下：" << std::endl;
-      std::cerr << "\n  python3 third_party/llama.cpp/convert_hf_to_gguf.py \"" << dir << "\" \\\n+  --outfile \"" << dir << "/gguf\" \\\n+  --outtype f16" << std::endl;
+      std::cerr << "\n  python3 third_party/llama.cpp/convert_hf_to_gguf.py \"" << dir << "\" \\\n  --outfile \"" << dir << "/gguf\" \\\n  --outtype f16" << std::endl;
       std::cerr << "\n说明：" << std::endl;
       std::cerr << "- 将在 \"" << dir << "/gguf\" 目录下生成文本模型 GGUF 和 mmproj GGUF" << std::endl;
       std::cerr << "- 转换脚本会自动为 Qwen3-VL 写入必需的 qwen3vl.rope.dimension_sections 元数据" << std::endl;
@@ -263,7 +266,7 @@ int main() {
       return 2;
     }
   }
-
+#endif
   // 在加载模型前先dump一次GGUF元数据，便于诊断
   dump_gguf_metadata(model_path);
 

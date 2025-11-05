@@ -234,10 +234,10 @@ std::vector<std::string> GGUFKeyValue::asStringArray() const {
       std::memcpy(&str_length, ptr, 8);
       ptr += 8;
 
-      // 检查单个字符串长度是否合理
-      const uint64_t MAX_STRING_LENGTH = 1000000; // 单个字符串最大1MB
+      // 单个字符串最大1MB
+      const uint64_t MAX_STRING_LENGTH = 1000000; 
       if (str_length > MAX_STRING_LENGTH || ptr + str_length > end) {
-        break; // 字符串过长或数据不足
+        break; 
       }
 
       // 读取字符串内容
