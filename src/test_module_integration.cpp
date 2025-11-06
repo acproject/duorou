@@ -430,10 +430,19 @@ int main() {
     if (!mctx) {
       std::cerr << "mtmd_init_from_file 失败，回退到纯文本推理" << std::endl;
     } else {
-      // 构造带媒体标记的提示词：确保末尾有文本，以便计算 logits
+      // 构造带媒体标记的提示词：支持环境变量 OVERRIDE_IMAGE_PROMPT 覆盖
       const char *marker = mtmd_default_marker();
-      prompt_media = std::string("请详细用中文描述这张图片：") + marker +
-                     std::string("。要求简洁准确。");
+      const char *env_prompt = std::getenv("OVERRIDE_IMAGE_PROMPT");
+      if (env_prompt && *env_prompt) {
+        prompt_media = std::string(env_prompt);
+        // 若用户提示未包含媒体标记，则追加标记以确保图片被注入
+        if (prompt_media.find(marker) == std::string::npos) {
+          prompt_media += marker;
+        }
+      } else {
+        prompt_media = std::string("请详细用中文描述这张图片：") + marker +
+                       std::string("。要求简洁准确。");
+      }
 
       mtmd_bitmap *bitmap =
           mtmd_helper_bitmap_init_from_file(mctx, image_path.c_str());

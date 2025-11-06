@@ -289,10 +289,75 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
       return response;
     }
 
-    // // 执行文本生成
-    std::string generated_text = inference_engine->generateText(
-        request.prompt, request.max_tokens, request.temperature,
-        request.top_p);
+    // 在文本路径中检查是否为纯图像引用，如果是且模型具备视觉能力，则走多模态生成
+    auto trim_copy = [](const std::string &s) -> std::string {
+      size_t start = 0, end = s.size();
+      while (start < end && std::isspace(static_cast<unsigned char>(s[start])))
+        ++start;
+      while (end > start &&
+             std::isspace(static_cast<unsigned char>(s[end - 1])))
+        --end;
+      return s.substr(start, end - start);
+    };
+
+    auto is_markdown_image_line = [](const std::string &s) -> bool {
+      static const std::regex re("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
+      return std::regex_match(s, re);
+    };
+
+    auto looks_like_url = [&](const std::string &s) -> bool {
+      const std::string t = trim_copy(s);
+      static const std::regex re_scheme("^([a-zA-Z][a-zA-Z0-9+.-]*):\\/\\/");
+      if (std::regex_search(t, re_scheme))
+        return true;
+      static const std::regex re_data("^data:image/[^;]+;base64,");
+      if (std::regex_search(t, re_data))
+        return true;
+      return false;
+    };
+
+    auto looks_like_image_reference = [&](const std::string &s) -> bool {
+      const std::string t = trim_copy(s);
+      if (t.empty())
+        return false;
+      if (is_markdown_image_line(t))
+        return true;
+      if (looks_like_url(t)) {
+        static const std::regex re_img_ext(
+            "\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)(\\?.*)?$",
+            std::regex::icase);
+        return std::regex_search(t, re_img_ext) ||
+               t.rfind("data:image/", 0) == 0;
+      }
+      static const std::regex re_local_img(
+          "\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)$", std::regex::icase);
+      if (std::regex_search(t, re_local_img)) {
+        if (t.find('/') != std::string::npos ||
+            t.find('\\') != std::string::npos) {
+          return t.find_first_of(" \t\r\n") == std::string::npos;
+        }
+      }
+      return false;
+    };
+
+    std::string generated_text;
+    const bool has_vision = model_info && model_info->has_vision;
+    const bool is_media_only = looks_like_image_reference(request.prompt);
+
+    if (has_vision && is_media_only) {
+      std::cout
+          << "[DEBUG] Media-only prompt detected; routing to multimodal path"
+          << std::endl;
+      // 允许空 image_features，由引擎内部进行图像注入
+      generated_text = inference_engine->generateTextWithImages(
+          request.prompt, /*image_features*/ {}, request.max_tokens,
+          request.temperature, request.top_p);
+    } else {
+      // 走普通文本路径
+      generated_text =
+          inference_engine->generateText(request.prompt, request.max_tokens,
+                                         request.temperature, request.top_p);
+    }
 
     // 计算推理时间
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -302,7 +367,8 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
     // 设置响应
     response.success = true;
     response.generated_text = generated_text;
-    response.tokens_generated = static_cast<unsigned int>(generated_text.length() / 4 + 1); // 简单估算
+    response.tokens_generated =
+        static_cast<unsigned int>(generated_text.length() / 4 + 1); // 简单估算
     response.inference_time_ms = static_cast<float>(duration.count());
 
     // Text generation completed successfully
@@ -317,7 +383,8 @@ OllamaModelManager::generateText(const InferenceRequest &request) {
 
 InferenceResponse
 OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
-  std::cout << "[DEBUG] OllamaModelManager::generateTextWithImages called with model: "
+  std::cout << "[DEBUG] OllamaModelManager::generateTextWithImages called with "
+               "model: "
             << request.model_id << std::endl;
   InferenceResponse response;
   auto start_time = std::chrono::high_resolution_clock::now();
@@ -374,8 +441,8 @@ OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
     }
 
     if (!model_info->has_vision) {
-      response.error_message = "Model does not support vision: " +
-                               normalized_model_id;
+      response.error_message =
+          "Model does not support vision: " + normalized_model_id;
       response.success = false;
       return response;
     }
@@ -392,21 +459,18 @@ OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
     InferenceEngine *inference_engine = engine_it->second.get();
 
     if (!inference_engine || !inference_engine->isReady()) {
-      std::cout << "[ERROR] Inference engine not ready: "
-                << normalized_model_id << std::endl;
+      std::cout << "[ERROR] Inference engine not ready: " << normalized_model_id
+                << std::endl;
       response.error_message =
           "Inference engine not ready: " + normalized_model_id;
       response.success = false;
       return response;
     }
 
-    if (request.image_features.empty()) {
-      response.error_message = "No image features provided";
-      response.success = false;
-      return response;
-    }
+    // 允许空的 image_features：由引擎在检测到媒体引用时自行处理图像注入
 
-    // Validate each image feature vector length is aligned with model embedding dim
+    // Validate each image feature vector length is aligned with model embedding
+    // dim
     const int32_t embd_dim = inference_engine->getEmbeddingDim();
     if (embd_dim <= 0) {
       response.error_message = "Embedding dimension unavailable or invalid";
@@ -418,8 +482,7 @@ OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
       if (!feat.empty() && (feat.size() % embd_dim != 0)) {
         std::ostringstream oss;
         oss << "Image feature vector " << i
-            << " length mismatch: " << feat.size()
-            << " vs n_embd=" << embd_dim;
+            << " length mismatch: " << feat.size() << " vs n_embd=" << embd_dim;
         response.error_message = oss.str();
         response.success = false;
         return response;
@@ -508,13 +571,17 @@ bool OllamaModelManager::validateModel(const std::string &gguf_file_path,
     // 额外检查：qwen2vl/qwen3vl 必须包含 rope.dimension_sections
     const std::string arch_name = architecture.name;
     if (arch_name == "qwen2vl" || arch_name == "qwen3vl") {
-      const std::string dim_sections_key = arch_name + ".rope.dimension_sections";
+      const std::string dim_sections_key =
+          arch_name + ".rope.dimension_sections";
       if (parser.getMetadata(dim_sections_key) == nullptr) {
         // 提供明确的诊断信息与修复建议
-        error_message =
-            "Missing required GGUF metadata key: '" + dim_sections_key +
-            "'. This model file is likely converted with an older script that did not emit RoPE dimension sections. "
-            "Please re-download or re-convert the model to GGUF with the latest tools so that '" + dim_sections_key + "' exists.";
+        error_message = "Missing required GGUF metadata key: '" +
+                        dim_sections_key +
+                        "'. This model file is likely converted with an older "
+                        "script that did not emit RoPE dimension sections. "
+                        "Please re-download or re-convert the model to GGUF "
+                        "with the latest tools so that '" +
+                        dim_sections_key + "' exists.";
         return false;
       }
     }
@@ -585,16 +652,18 @@ bool OllamaModelManager::loadModelInternal(const std::string &model_id) {
 
   try {
     // 在创建推理引擎之前先验证 GGUF 文件的关键元数据是否齐全
-    const std::string & gguf_path = model_it->second.file_path;
+    const std::string &gguf_path = model_it->second.file_path;
     if (!gguf_path.empty()) {
       std::string validate_error;
       if (!validateModel(gguf_path, validate_error)) {
-        log("ERROR", "GGUF validation failed for '" + gguf_path + "': " + validate_error);
+        log("ERROR", "GGUF validation failed for '" + gguf_path +
+                         "': " + validate_error);
         model_states_[model_id] = ModelLoadState::LOAD_ERROR;
         return false;
       }
     } else {
-      log("WARNING", "Model has no GGUF path recorded (stub registration): " + model_id);
+      log("WARNING",
+          "Model has no GGUF path recorded (stub registration): " + model_id);
     }
 
     // 创建推理引擎
@@ -676,10 +745,14 @@ bool OllamaModelManager::parseModelInfo(const std::string &gguf_file_path,
     model_info.vocab_size = 151936; // Qwen2.5VL默认值
 
     // 针对 qwen2vl/qwen3vl，额外记录并提示 rope.dimension_sections 键的存在情况
-    if (model_info.architecture == "qwen2vl" || model_info.architecture == "qwen3vl") {
-      const std::string dim_sections_key = model_info.architecture + ".rope.dimension_sections";
+    if (model_info.architecture == "qwen2vl" ||
+        model_info.architecture == "qwen3vl") {
+      const std::string dim_sections_key =
+          model_info.architecture + ".rope.dimension_sections";
       if (parser.getMetadata(dim_sections_key) == nullptr) {
-        log("WARNING", "GGUF missing key: '" + dim_sections_key + "'. Inference with llama.cpp will fail to load. Please re-download or re-convert this model.");
+        log("WARNING", "GGUF missing key: '" + dim_sections_key +
+                           "'. Inference with llama.cpp will fail to load. "
+                           "Please re-download or re-convert this model.");
       } else {
         log("DEBUG", "GGUF contains required key: '" + dim_sections_key + "'");
       }
@@ -711,7 +784,8 @@ OllamaModelManager::createInferenceEngine(const std::string &model_id) {
   }
 
   try {
-    auto engine = std::make_unique<MLInferenceEngine>(model_id, model_info->file_path);
+    auto engine =
+        std::make_unique<MLInferenceEngine>(model_id, model_info->file_path);
     if (!engine->initialize()) {
       log("ERROR", "Failed to initialize inference engine for: " + model_id);
       return nullptr;

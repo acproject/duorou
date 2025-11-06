@@ -10,8 +10,8 @@
 #include <vector>
 
 // llama.cpp & mtmd 头文件
-#include "../../third_party/llama.cpp/ggml/include/ggml-backend.h"
-#include "../../third_party/llama.cpp/include/llama.h"
+#include "../extensions/ggml/ggml-backend.h"
+#include "llama.h"
 #include "../../third_party/llama.cpp/tools/mtmd/mtmd.h"
 #include "../../third_party/llama.cpp/tools/mtmd/mtmd-helper.h"
 
@@ -347,7 +347,15 @@ int run_mtmd_demo() {
       std::cerr << "mtmd_init_from_file 失败，回退到纯文本推理" << std::endl;
     } else {
       const char * marker = mtmd_default_marker();
-      prompt_media = std::string("请详细用中文描述这张图片：") + marker + std::string("。要求简洁准确。");
+      const char * env_prompt = std::getenv("OVERRIDE_IMAGE_PROMPT");
+      if (env_prompt && *env_prompt) {
+        prompt_media = std::string(env_prompt);
+        if (prompt_media.find(marker) == std::string::npos) {
+          prompt_media += marker;
+        }
+      } else {
+        prompt_media = std::string("请详细用中文描述这张图片：") + marker + std::string("。要求简洁准确。");
+      }
 
       mtmd_bitmap * bitmap = mtmd_helper_bitmap_init_from_file(mctx, image_path.c_str());
       if (!bitmap) {
