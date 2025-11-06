@@ -148,20 +148,9 @@ public:
 
     std::string prompt_effective = trim_copy(prompt);
     const bool prompt_is_media_ref = looks_like_image_reference(prompt_effective);
-    if (prompt_is_media_ref || prompt_effective.empty()) {
-      const char *env_prompt = std::getenv("OVERRIDE_IMAGE_PROMPT");
-      if (env_prompt && *env_prompt) {
-        prompt_effective = env_prompt;
-      } else {
-        static constexpr const char * media_marker = "<__media__>";
-        prompt_effective = std::string("请详细用中文描述这张图片：") + media_marker +
-                           std::string("。要求简洁准确。");
-      }
-      // Ensure marker for downstream special token parsing
-      static constexpr const char * media_marker = "<__media__>";
-      if (prompt_effective.find(media_marker) == std::string::npos) {
-        prompt_effective += media_marker;
-      }
+    // 如果提示中包含图片引用，转到 generateTextWithImages（空特征将触发 mtmd 注入逻辑）
+    if (prompt_is_media_ref) {
+      return generateTextWithImages(prompt, /*image_features=*/{}, max_tokens, temperature, top_p);
     }
 
     // 打印原始与处理后的提示词，便于诊断
@@ -277,9 +266,9 @@ public:
       return std::string("[Vocab error] ") + prompt;
     }
 
-    if (!llama_model_has_encoder(model_)) {
-      return std::string("[No encoder - vision unsupported] ") + prompt;
-    }
+    const bool has_encoder = llama_model_has_encoder(model_);
+    // 允许在无视觉编码器的情况下走 MTMD 注入路径；
+    // 仅当用户提供图像特征时才需要视觉编码器。
 
     const int32_t embd_dim = llama_model_n_embd(model_);
 
@@ -345,14 +334,27 @@ public:
           media_path = m[1].str();
         }
       }
-      if (media_path.empty() || !std::filesystem::exists(media_path)) {
+      // 对本地路径执行存在性校验；对 http(s)/data URI 不进行文件系统校验
+      if (media_path.empty()) {
         return std::string("[Media path invalid or not found] ") + media_path;
+      }
+      const bool is_http = media_path.rfind("http://", 0) == 0 || media_path.rfind("https://", 0) == 0;
+      const bool is_data = media_path.rfind("data:image/", 0) == 0;
+      if (!is_http && !is_data) {
+        std::string local_path = media_path;
+        if (local_path.rfind("file://", 0) == 0) {
+          local_path = local_path.substr(7);
+        }
+        if (!std::filesystem::exists(local_path)) {
+          return std::string("[Media path invalid or not found] ") + media_path;
+        }
       }
 
       // Build effective prompt with media marker (allow override, use mtmd default marker)
       std::string prompt_media;
       const char *marker = mtmd_default_marker();
-      const char *env_prompt = media_path.c_str();
+      // 支持通过环境变量覆盖图片描述模板
+      const char *env_prompt = std::getenv("OVERRIDE_IMAGE_PROMPT");
       if (env_prompt && *env_prompt) {
         prompt_media = std::string(env_prompt);
         // 若用户提示未包含媒体标记，则追加标记以确保图片被注入
@@ -584,6 +586,10 @@ public:
     }
 
     // -------- Features provided path (original flow) --------
+    // 当用户直接提供图像特征时，必须有视觉编码器
+    if (!has_encoder) {
+      return std::string("[No encoder - vision unsupported for feature input] ") + prompt;
+    }
     // Concatenate all image feature vectors, ensuring they align with embd_dim
     std::vector<float> visual_concat;
     int32_t total_img_tokens = 0;
