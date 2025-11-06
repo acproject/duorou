@@ -11,6 +11,8 @@
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #endif
+#include <gio/gio.h>
+#include "../utils/object_store.h"
 
 #include <chrono>
 #include <iostream>
@@ -19,6 +21,22 @@
 
 namespace duorou {
 namespace gui {
+
+// 将本地文件路径转换为 file:// URI，失败时回退为直接拼接前缀
+static std::string path_to_file_uri(const std::string &path) {
+  if (path.empty()) return "";
+  GError *err = nullptr;
+  char *uri = g_filename_to_uri(path.c_str(), nullptr, &err);
+  if (uri) {
+    std::string out(uri);
+    g_free(uri);
+    return out;
+  }
+  if (err) {
+    g_error_free(err);
+  }
+  return std::string("file://") + path;
+}
 
 ChatView::ChatView()
     : main_widget_(nullptr), chat_scrolled_(nullptr), chat_box_(nullptr),
@@ -686,17 +704,19 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       chat_view->welcome_cleared_ = true;
     }
 
-    // Build complete message
-    std::string full_message = message_text;
+  // Build complete message
+  std::string full_message = message_text;
 
-    // Add image information
-    if (has_image) {
-      if (!full_message.empty())
-        full_message += "\n";
-      full_message +=
-          "Image: " + std::string(g_path_get_basename(
-                            chat_view->selected_image_path_.c_str()));
-    }
+  // Add image information
+  if (has_image) {
+      const std::string file_uri = duorou::utils::ObjectStore::to_file_uri(chat_view->selected_image_path_);
+      // 若用户未在输入框中插入过该图片，则追加 Markdown 图片标签
+      if (full_message.find(file_uri) == std::string::npos) {
+        if (!full_message.empty()) full_message += "\n";
+        // 使用文件名作为可读的 alt 文本
+        full_message += "![" + std::string(g_path_get_basename(chat_view->selected_image_path_.c_str())) + "](" + file_uri + ")";
+      }
+  }
 
     // Add document information
     if (has_file) {
@@ -748,17 +768,17 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       chat_view->welcome_cleared_ = true;
     }
 
-    // Build complete message
-    std::string full_message = message_text;
+  // Build complete message
+  std::string full_message = message_text;
 
-    // Add image information
-    if (has_image) {
-      if (!full_message.empty())
-        full_message += "\n";
-      full_message +=
-          "Image: " + std::string(g_path_get_basename(
-                            chat_view->selected_image_path_.c_str()));
-    }
+  // Add image information
+  if (has_image) {
+      const std::string file_uri = duorou::utils::ObjectStore::to_file_uri(chat_view->selected_image_path_);
+      if (full_message.find(file_uri) == std::string::npos) {
+        if (!full_message.empty()) full_message += "\n";
+        full_message += "![" + std::string(g_path_get_basename(chat_view->selected_image_path_.c_str())) + "](" + file_uri + ")";
+      }
+  }
 
     // Add document information
     if (has_file) {
@@ -859,17 +879,32 @@ void ChatView::on_image_dialog_response(GtkDialog *dialog, gint response_id,
     GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
     GFile *file = gtk_file_chooser_get_file(chooser);
 
-    if (file) {
+  if (file) {
       char *filename = g_file_get_path(file);
       if (filename) {
-        // Store selected image path, don't send directly
-        chat_view->selected_image_path_ = std::string(filename);
+        // 对图片进行对象化存储，记录稳定路径
+        std::string stored = duorou::utils::ObjectStore::store_file(std::string(filename));
+        chat_view->selected_image_path_ = stored.empty() ? std::string(filename) : stored;
 
         // Update upload button tooltip text or style to indicate file selected
         gtk_widget_set_tooltip_text(
             chat_view->upload_image_button_,
             ("Image selected: " + std::string(g_path_get_basename(filename)))
                 .c_str());
+
+        // 将 Markdown 图片标签追加到输入框末尾，便于用户在 Send Message 中直观看到附件
+        if (chat_view->input_entry_) {
+          const char *curr = gtk_editable_get_text(GTK_EDITABLE(chat_view->input_entry_));
+          std::string curr_text = curr ? std::string(curr) : std::string();
+          std::string file_uri = duorou::utils::ObjectStore::to_file_uri(chat_view->selected_image_path_);
+          std::string tag = "![" + std::string(g_path_get_basename(chat_view->selected_image_path_.c_str())) + "](" + file_uri + ")";
+          // 避免重复插入同一个 URI
+          if (curr_text.find(file_uri) == std::string::npos) {
+            if (!curr_text.empty() && curr_text.back() != ' ') curr_text += ' ';
+            curr_text += tag;
+            gtk_editable_set_text(GTK_EDITABLE(chat_view->input_entry_), curr_text.c_str());
+          }
+        }
 
         g_free(filename);
       }
@@ -1965,7 +2000,8 @@ std::string ChatView::generate_ai_response(const std::string &message) {
 
   // Get selected model
   const auto& selected_model = available_models[selected_index];
-  std::string model_id = selected_model.name;
+  // Use the stable model identifier for loading and generator lookup
+  std::string model_id = selected_model.id;
   std::cout << "[DEBUG] ChatView: Selected model ID: " << model_id << std::endl;
 
   try {
@@ -2097,7 +2133,8 @@ void ChatView::stream_ai_response(const std::string &message) {
   }
 
   const auto &selected_model = available_models[selected_index];
-  std::string model_id = selected_model.name;
+  // Use the model's unique identifier for loading
+  std::string model_id = selected_model.id;
 
   try {
     if (!model_manager_->loadModel(model_id)) {

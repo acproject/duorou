@@ -5,14 +5,17 @@
 #include "../core/model_manager.h"
 
 #include <iostream>
-#ifdef HAVE_GTK
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAS_GTK 1
+#else
+#define DUOROU_HAS_GTK 0
 #endif
 
 namespace duorou {
 namespace gui {
 
-#ifdef HAVE_GTK
+#if DUOROU_HAS_GTK
 
 SettingsDialog::SettingsDialog()
     : dialog_(nullptr)
@@ -75,16 +78,16 @@ bool SettingsDialog::initialize() {
     // Set dialog properties
     gtk_window_set_title(GTK_WINDOW(dialog_), "Settings");
     gtk_window_set_default_size(GTK_WINDOW(dialog_), 600, 500);
-    gtk_window_set_modal(GTK_WINDOW(dialog_), TRUE);
-    gtk_window_set_resizable(GTK_WINDOW(dialog_), TRUE);
+    gtk_window_set_modal(GTK_WINDOW(dialog_), true);
+    gtk_window_set_resizable(GTK_WINDOW(dialog_), true);
 
     // Get dialog content area
     GtkWidget* content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog_));
     
     // Create notebook for tabs
     notebook_ = gtk_notebook_new();
-    gtk_widget_set_vexpand(notebook_, TRUE);
-    gtk_widget_set_hexpand(notebook_, TRUE);
+    gtk_widget_set_vexpand(notebook_, true);
+    gtk_widget_set_hexpand(notebook_, true);
     
     // Create settings pages
     create_general_page();
@@ -116,7 +119,7 @@ void SettingsDialog::show(GtkWidget* parent) {
         }
         
         // Ensure dialog is shown on top
-        gtk_window_set_modal(GTK_WINDOW(dialog_), TRUE);
+        gtk_window_set_modal(GTK_WINDOW(dialog_), true);
         
         // Show dialog and ensure it gets focus
         gtk_widget_show(dialog_);
@@ -157,11 +160,9 @@ void SettingsDialog::create_general_page() {
     gtk_widget_set_size_request(theme_label, 100, -1);
     gtk_widget_set_halign(theme_label, GTK_ALIGN_START);
     
-    theme_combo_ = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(theme_combo_), "Light");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(theme_combo_), "Dark");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(theme_combo_), "Auto");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
+    // Replace GtkComboBoxText with GtkDropDown
+    const char* theme_options[] = {"Light", "Dark", "Auto", NULL};
+    theme_combo_ = gtk_drop_down_new_from_strings(theme_options);
     
     gtk_box_append(GTK_BOX(theme_box), theme_label);
     gtk_box_append(GTK_BOX(theme_box), theme_combo_);
@@ -175,10 +176,9 @@ void SettingsDialog::create_general_page() {
     gtk_widget_set_size_request(language_label, 100, -1);
     gtk_widget_set_halign(language_label, GTK_ALIGN_START);
     
-    language_combo_ = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language_combo_), "English");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language_combo_), "中文");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
+    // Replace GtkComboBoxText with GtkDropDown
+    const char* language_options[] = {"English", "中文", NULL};
+    language_combo_ = gtk_drop_down_new_from_strings(language_options);
     
     gtk_box_append(GTK_BOX(language_box), language_label);
     gtk_box_append(GTK_BOX(language_box), language_combo_);
@@ -222,7 +222,8 @@ void SettingsDialog::create_model_page() {
     gtk_widget_set_size_request(llama_combo_label, 120, -1);
     gtk_widget_set_halign(llama_combo_label, GTK_ALIGN_START);
     
-    llama_model_combo_ = gtk_combo_box_text_new();
+    // Use GTK4 DropDown for model selection (aligned with ChatView)
+    llama_model_combo_ = gtk_drop_down_new_from_strings(NULL);
     gtk_widget_set_hexpand(llama_model_combo_, TRUE);
     
     gtk_box_append(GTK_BOX(llama_combo_box), llama_combo_label);
@@ -451,8 +452,8 @@ void SettingsDialog::load_settings() {
     if (!application_) {
         std::cout << "Warning: Application instance not available, using default values" << std::endl;
         // Set default values
-        gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(theme_combo_), 0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo_), 0);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(gpu_check_), FALSE);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), 4);
@@ -464,8 +465,8 @@ void SettingsDialog::load_settings() {
     if (!config_manager) {
         std::cout << "Warning: ConfigManager not available, using default values" << std::endl;
         // Set default values
-        gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(theme_combo_), 0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo_), 0);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
         gtk_check_button_set_active(GTK_CHECK_BUTTON(gpu_check_), FALSE);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), 4);
@@ -496,8 +497,8 @@ void SettingsDialog::load_settings() {
     std::string ollama_path = config_manager->getString("models.ollama_path", "");
     
     // Set UI control values
-    gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), theme_index);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), language_index);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(theme_combo_), theme_index);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo_), language_index);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), startup_minimize);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(gpu_check_), gpu_enabled);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), threads);
@@ -525,23 +526,22 @@ void SettingsDialog::load_settings() {
     
     // If there's a saved model selection, try to set it in the dropdown
     if (!llama_selected.empty() && llama_model_combo_) {
-        // Find matching model option
-        GtkTreeModel* model = gtk_combo_box_get_model(GTK_COMBO_BOX(llama_model_combo_));
-        GtkTreeIter iter;
-        gboolean valid = gtk_tree_model_get_iter_first(model, &iter);
-        int index = 0;
-        
-        while (valid) {
-            gchar* text;
-            gtk_tree_model_get(model, &iter, 0, &text, -1);
-            if (text && llama_selected == text) {
-                gtk_combo_box_set_active(GTK_COMBO_BOX(llama_model_combo_), index);
-                g_free(text);
-                break;
+        GListModel* model = gtk_drop_down_get_model(GTK_DROP_DOWN(llama_model_combo_));
+        if (model) {
+            guint n = g_list_model_get_n_items(model);
+            for (guint i = 0; i < n; ++i) {
+                gpointer item = g_list_model_get_item(model, i);
+                const char* text = nullptr;
+                if (GTK_IS_STRING_OBJECT(item)) {
+                    text = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+                }
+                if (text && llama_selected == text) {
+                    gtk_drop_down_set_selected(GTK_DROP_DOWN(llama_model_combo_), i);
+                    g_object_unref(item);
+                    break;
+                }
+                g_object_unref(item);
             }
-            if (text) g_free(text);
-            valid = gtk_tree_model_iter_next(model, &iter);
-            index++;
         }
     }
     
@@ -561,17 +561,28 @@ void SettingsDialog::save_settings() {
     }
     
     // Get current setting values
-    int theme_index = gtk_combo_box_get_active(GTK_COMBO_BOX(theme_combo_));
-    int language_index = gtk_combo_box_get_active(GTK_COMBO_BOX(language_combo_));
+    int theme_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(theme_combo_));
+    int language_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(language_combo_));
     gboolean startup_minimize = gtk_check_button_get_active(GTK_CHECK_BUTTON(startup_check_));
     gboolean gpu_enabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(gpu_check_));
     int threads = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(threads_spin_));
     int memory_limit = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(memory_spin_));
     
-    // Get selected LLaMA model
-    gchar* selected_model = nullptr;
+    // Get selected LLaMA model (GtkDropDown)
+    std::string selected_model_str;
     if (llama_model_combo_) {
-        selected_model = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(llama_model_combo_));
+        int idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(llama_model_combo_));
+        if (idx >= 0) {
+            GListModel* model = gtk_drop_down_get_model(GTK_DROP_DOWN(llama_model_combo_));
+            if (model) {
+                gpointer item = g_list_model_get_item(model, idx);
+                if (GTK_IS_STRING_OBJECT(item)) {
+                    const char* s = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+                    if (s) selected_model_str = s;
+                }
+                g_object_unref(item);
+            }
+        }
     }
     
     const char* sd_path = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(sd_model_entry_)));
@@ -589,8 +600,8 @@ void SettingsDialog::save_settings() {
     config_manager->setInt("performance.threads", threads);
     config_manager->setInt("performance.memory_limit", memory_limit);
     
-    if (selected_model) {
-        config_manager->setString("models.llama_selected", selected_model);
+    if (!selected_model_str.empty()) {
+        config_manager->setString("models.llama_selected", selected_model_str);
     }
     
     if (sd_path && strlen(sd_path) > 0) {
@@ -624,9 +635,7 @@ void SettingsDialog::save_settings() {
         std::cout << "Error: Failed to save settings" << std::endl;
     }
 
-    if (selected_model) {
-        g_free(selected_model);
-    }
+    // no g_free needed for std::string
 
     // 保存后立即应用路径到 ModelManager 并刷新列表
     auto model_manager = application_->getModelManager();
@@ -646,8 +655,8 @@ void SettingsDialog::reset_to_defaults() {
     std::cout << "Resetting settings to default values..." << std::endl;
     
     // Reset UI controls to default values
-    gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo_), 0);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(language_combo_), 0);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(theme_combo_), 0);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(language_combo_), 0);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(startup_check_), FALSE);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(gpu_check_), FALSE);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(threads_spin_), 4);
@@ -655,7 +664,7 @@ void SettingsDialog::reset_to_defaults() {
     
     // Reset model selection
     if (llama_model_combo_) {
-        gtk_combo_box_set_active(GTK_COMBO_BOX(llama_model_combo_), 0);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(llama_model_combo_), 0);
     }
     
     gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(sd_model_entry_)), "", 0);
@@ -698,44 +707,45 @@ void SettingsDialog::refresh_model_list() {
     if (!llama_model_combo_ || !application_) {
         return;
     }
-    
-    // Clear existing options
-    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(llama_model_combo_));
-    
+
+    // Prepare model list for GtkDropDown
+    GtkStringList* list = gtk_string_list_new(NULL);
+
     // Get real available model list from ModelManager
     auto model_manager = application_->getModelManager();
     if (model_manager) {
         std::vector<duorou::core::ModelManagerInfo> models = model_manager->getAllModels();
-        
-        // 筛选语言模型
+
+        // 筛选语言模型，并在名称上标注 mmproj
         std::vector<std::string> language_model_names;
         for (const auto &info : models) {
             if (info.type == duorou::core::ModelType::LANGUAGE_MODEL) {
-                // 优先展示 name，其次 id
-                if (!info.name.empty()) {
-                    language_model_names.push_back(info.name);
-                } else if (!info.id.empty()) {
-                    language_model_names.push_back(info.id);
+                std::string display_name = !info.name.empty() ? info.name : info.id;
+                if (!info.description.empty() && info.description.find("mmproj detected") != std::string::npos) {
+                    display_name += " (mmproj)";
+                }
+                if (!display_name.empty()) {
+                    language_model_names.push_back(display_name);
                 }
             }
         }
 
         if (language_model_names.empty()) {
-            // If no local models, add hint information
-            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), "No models found");
+            gtk_string_list_append(list, "No models found");
         } else {
-            // Add all local models
             for (const auto& name : language_model_names) {
-                gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), name.c_str());
+                gtk_string_list_append(list, name.c_str());
             }
         }
     } else {
-        // If ModelManager is unavailable, show error message
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(llama_model_combo_), "Model manager unavailable");
+        gtk_string_list_append(list, "Model manager unavailable");
     }
-    
-    // Set default selection
-    gtk_combo_box_set_active(GTK_COMBO_BOX(llama_model_combo_), 0);
+
+    // Apply list to dropdown and select first item
+    gtk_drop_down_set_model(GTK_DROP_DOWN(llama_model_combo_), G_LIST_MODEL(list));
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(llama_model_combo_), 0);
+    // Drop our ref; dropdown holds its own reference
+    g_object_unref(list);
 }
 
 // Llama models are now selected through dropdown, no longer need file dialog
@@ -967,7 +977,7 @@ void SettingsDialog::on_dialog_response(GtkDialog* dialog, gint response_id, gpo
     }
 }
 
-#else // HAVE_GTK
+#else // DUOROU_HAS_GTK
 
 SettingsDialog::SettingsDialog()
     : dialog_(nullptr)
@@ -1047,7 +1057,7 @@ void SettingsDialog::on_ollama_path_dialog_response(GtkNativeDialog* /*dialog*/,
 void SettingsDialog::on_ollama_path_browse_clicked(GtkWidget* /*widget*/, gpointer /*user_data*/) {}
 void SettingsDialog::on_dialog_response(GtkDialog* /*dialog*/, gint /*response_id*/, gpointer /*user_data*/) {}
 
-#endif // HAVE_GTK
+#endif // DUOROU_HAS_GTK
 
 } // namespace gui
 } // namespace duorou

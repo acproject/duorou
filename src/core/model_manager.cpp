@@ -45,21 +45,43 @@ public:
 
     // Use new ollama extension architecture with global manager
     // First register the model by name (supports Ollama model names), then load it
-    // Store the original model name, not the converted ID
-    model_id_ = model_path;  // Keep original model name
+    // Detect whether input is an Ollama model name or a direct GGUF file path
 
     // Get global OllamaModelManager instance
     auto& global_manager = duorou::extensions::ollama::GlobalModelManager::getInstance();
+    bool registered = false;
+    std::string normalized_id;
 
-    bool registered = global_manager.registerModelByName(model_path);
-    if (!registered) {
-      std::cerr << "[ERROR] Failed to register Ollama model: " << model_path
-                << std::endl;
+    // If it's a GGUF file path, register directly with file path
+    try {
+      std::filesystem::path p(model_path);
+      std::string ext = p.extension().string();
+      std::string filename = p.filename().string();
+      bool is_mmproj = filename.find("mmproj") != std::string::npos;
+      if (!ext.empty() && ext == ".gguf" && std::filesystem::exists(p) && !is_mmproj) {
+        // Generate a friendly model id from file name, then normalize
+        std::string base_id = std::filesystem::path(model_path).stem().string();
+        normalized_id = global_manager.normalizeModelId(base_id);
+        registered = global_manager.registerModel(normalized_id, model_path);
+        if (!registered) {
+          std::cerr << "[ERROR] Failed to register GGUF model: " << model_path << std::endl;
+          return false;
+        }
+      } else {
+        // Treat as Ollama model name and register by name
+        registered = global_manager.registerModelByName(model_path);
+        if (!registered) {
+          std::cerr << "[ERROR] Failed to register Ollama model: " << model_path
+                    << std::endl;
+          return false;
+        }
+        // Normalize the id based on model name
+        normalized_id = global_manager.normalizeModelId(model_path);
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "[ERROR] Exception while registering model: " << e.what() << std::endl;
       return false;
     }
-
-    // Use the same normalization logic as registerModelByName
-    std::string normalized_id = global_manager.normalizeModelId(model_path);
     
     bool success = global_manager.loadModel(normalized_id);
     if (!success) {
@@ -68,6 +90,8 @@ public:
       return false;
     }
 
+    // Store normalized id for future unload and generation
+    model_id_ = normalized_id;
     loaded_ = true;
     memory_usage_ = 1024 * 1024 * 1024; // 1GB estimate
     model_info_.status = duorou::core::ModelStatus::LOADED;
@@ -560,7 +584,40 @@ std::vector<ModelManagerInfo> ModelManager::getAllModels() const {
   // Add registered models
   
   for (const auto &pair : registered_models_) {
-    models.push_back(pair.second);
+    ModelManagerInfo info = pair.second;
+    // 检查是否已有 mmproj 关联（只读，不写缓存，以避免在 const 方法中修改状态）
+    bool has_mmproj = (mmproj_paths_.find(pair.first) != mmproj_paths_.end());
+    if (!has_mmproj) {
+      // 回退：在同目录尝试发现 mmproj（不更新缓存）
+      try {
+        if (!info.path.empty()) {
+          std::filesystem::path mp(info.path);
+          std::filesystem::path dir = mp.parent_path();
+          if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
+            for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+              if (!entry.is_regular_file()) continue;
+              if (entry.path().extension() != ".gguf") continue;
+              std::string fname = entry.path().filename().string();
+              if (fname.rfind("mmproj-", 0) == 0 || fname.find("-mmproj-") != std::string::npos) {
+                std::string stem = info.name;
+                if (!stem.empty() && fname.find(stem) != std::string::npos) {
+                  has_mmproj = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (...) {}
+    }
+    if (has_mmproj) {
+      if (info.description.empty()) {
+        info.description = "mmproj detected";
+      } else {
+        info.description += " | mmproj detected";
+      }
+    }
+    models.push_back(info);
   }
 
   // Add ollama models
@@ -579,6 +636,37 @@ std::vector<ModelManagerInfo> ModelManager::getAllModels() const {
         ollama_model.memory_usage = 0;
         ollama_model.status = duorou::core::ModelStatus::NOT_LOADED;
         ollama_model.description = "Ollama model: " + model_name;
+        // 尝试以注册时的ID格式检查 mmproj（扫描阶段为 llm_<stem>），只读检查
+        std::string registered_id = std::string("llm_") + model_name;
+        if (mmproj_paths_.find(registered_id) != mmproj_paths_.end()) {
+          ollama_model.description += " | mmproj detected";
+        } else {
+          // 如果已注册模型存在，回退扫描同目录（不更新缓存）
+          auto mit = registered_models_.find(registered_id);
+          if (mit != registered_models_.end()) {
+            const auto &info = mit->second;
+            try {
+              if (!info.path.empty()) {
+                std::filesystem::path mp(info.path);
+                std::filesystem::path dir = mp.parent_path();
+                if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
+                  for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+                    if (!entry.is_regular_file()) continue;
+                    if (entry.path().extension() != ".gguf") continue;
+                    std::string fname = entry.path().filename().string();
+                    if (fname.rfind("mmproj-", 0) == 0 || fname.find("-mmproj-") != std::string::npos) {
+                      std::string stem = info.name;
+                      if (!stem.empty() && fname.find(stem) != std::string::npos) {
+                        ollama_model.description += " | mmproj detected";
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (...) {}
+          }
+        }
         models.push_back(ollama_model);
         
       }
@@ -938,12 +1026,21 @@ ModelManager::createModel(const ModelManagerInfo &model_info) {
         model_info.name.find("registry.ollama.ai") != std::string::npos ||
         model_info.name.find("ollama") != std::string::npos;
     
+    // Additionally, support direct .gguf file path
+    bool isGGUFPath = false;
+    bool is_mmproj = false;
+    if (!model_info.path.empty()) {
+      std::filesystem::path p(model_info.path);
+      isGGUFPath = (p.extension().string() == ".gguf");
+      is_mmproj = p.filename().string().find("mmproj") != std::string::npos;
+    }
 
-    if ((model_downloader_ && isOllama) || hasOllamaPattern) {
+    if ((model_downloader_ && isOllama) || hasOllamaPattern || (isGGUFPath && !is_mmproj)) {
       
       duorou::core::Logger logger;
     logger.info("Creating Ollama model for: " + model_info.name);
-      auto model = std::make_shared<OllamaModelImpl>(model_info.name);
+      // For GGUF direct path, pass the path; otherwise pass the name
+      auto model = std::make_shared<OllamaModelImpl>(isGGUFPath ? model_info.path : model_info.name);
       
       return model;
     } else {
@@ -987,16 +1084,46 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
         info.name = entry.path().stem().string();
         info.status = ModelStatus::NOT_LOADED;
 
-        if (extension == ".gguf" || extension == ".bin") {
-          // LLaMA model file
-          info.id = "llama_" + info.name;
-          info.type = ModelType::LANGUAGE_MODEL;
-          info.description = "Language model (LLaMA)";
-        } else if (extension == ".safetensors" || extension == ".ckpt") {
+        // Register diffusion and local GGUF language models here
+        if (extension == ".safetensors" || extension == ".ckpt") {
           // Stable Diffusion model file
           info.id = "sd_" + info.name;
           info.type = ModelType::DIFFUSION_MODEL;
           info.description = "Diffusion model (Stable Diffusion)";
+        } else if (extension == ".gguf") {
+          // 处理 .gguf：既包含 LLM，也可能是 mmproj 投影权重
+          std::string filename = entry.path().filename().string();
+          bool is_mmproj = (filename.find("mmproj-") == 0) || (filename.find("-mmproj-") != std::string::npos);
+
+          if (is_mmproj) {
+            // 解析 mmproj 关联的 LLM 名称：
+            // 约定文件名形如：mmproj-<stem>.gguf 或 mmproj-<stem>-<dtype>.gguf
+            std::string stem = info.name; // 带有前缀的文件名去掉扩展
+            // 去除前缀 "mmproj-"
+            if (stem.rfind("mmproj-", 0) == 0) {
+              stem = stem.substr(std::string("mmproj-").size());
+            } else {
+              // 尝试从中间形态提取，如：qwen3-vl-4b-instruct-mmproj-f16
+              // 简化处理：去掉 "mmproj-" 及其前缀部分
+              auto pos = stem.find("mmproj-");
+              if (pos != std::string::npos) {
+                // 取 mmproj- 前面的部分作为 LLM 名称基干
+                stem = stem.substr(0, pos - 1); // 去掉连接符
+              }
+            }
+
+            std::string llm_model_id = "llm_" + stem;
+            // 注意：调用方已持有 mutex_，此处不要重复加锁，避免死锁
+            mmproj_paths_[llm_model_id] = path;
+            std::cout << "Associated mmproj found for " << llm_model_id << ": " << path << std::endl;
+            // mmproj 不注册为模型条目
+            continue;
+          } else {
+            // 本地 LLM GGUF 文件
+            info.id = "llm_" + info.name;
+            info.type = ModelType::LANGUAGE_MODEL;
+            info.description = "Local GGUF language model";
+          }
         } else {
           continue; // Skip unsupported file types
         }
@@ -1012,6 +1139,49 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
   } catch (const std::exception &e) {
     std::cerr << "Error scanning model directory: " << e.what() << std::endl;
   }
+}
+
+std::optional<std::string> ModelManager::getAssociatedMmprojPath(const std::string &model_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // 1) 直接命中缓存（只读）
+  if (auto it = mmproj_paths_.find(model_id); it != mmproj_paths_.end()) {
+    return it->second;
+  }
+
+  // 2) 回退：基于已注册模型的路径在同级目录查找 mmproj gguf（不更新缓存）
+  auto mit = registered_models_.find(model_id);
+  if (mit == registered_models_.end()) {
+    return std::nullopt;
+  }
+
+  const auto &info = mit->second;
+  if (info.path.empty()) {
+    return std::nullopt;
+  }
+
+  try {
+    std::filesystem::path mp(info.path);
+    std::filesystem::path dir = mp.parent_path();
+    if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
+      for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".gguf") continue;
+        std::string fname = entry.path().filename().string();
+        if (fname.rfind("mmproj-", 0) == 0 || fname.find("-mmproj-") != std::string::npos) {
+          std::string stem = info.name;
+          if (!stem.empty() && fname.find(stem) != std::string::npos) {
+            std::string found = entry.path().string();
+            std::cout << "Associated mmproj discovered via fallback for " << model_id << ": " << found << std::endl;
+            return found;
+          }
+        }
+      }
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "Error locating mmproj via fallback: " << e.what() << std::endl;
+  }
+
+  return std::nullopt;
 }
 
 } // namespace core

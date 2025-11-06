@@ -97,14 +97,22 @@ std::vector<std::string> OllamaModelLoader::listAvailableModels() {
             std::string repository = matches[3].str();
             std::string tag = matches[4].str();
 
-            // 过滤视觉/多模态模型（例如 qwen3-vl、*.vision、*.multimodal 等）
+            // 过滤视觉/多模态模型（例如 qwen3-vl、llava、glm-4v、phi-3-vision 等）
             auto is_vision_like = [](const std::string &repo) {
                 std::string s = repo;
                 std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-                if (s.find("-vl") != std::string::npos) return true;
-                if (s.find("vl") != std::string::npos) return true;
-                if (s.find("vision") != std::string::npos) return true;
-                if (s.find("multimodal") != std::string::npos) return true;
+
+                const std::vector<std::string> keywords = {
+                    // 通用
+                    "-vl", "vl", "vision", "multimodal",
+                    // 常见模型族
+                    "llava", "bakllava", "glm-4v", "4v", "phi-3-vision",
+                    "moondream", "minicpm", "cogvlm"
+                };
+
+                for (const auto &k : keywords) {
+                    if (s.find(k) != std::string::npos) return true;
+                }
                 return false;
             };
 

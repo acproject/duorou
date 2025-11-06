@@ -406,6 +406,26 @@ OllamaModelManager::generateTextWithImages(const InferenceRequest &request) {
       return response;
     }
 
+    // Validate each image feature vector length is aligned with model embedding dim
+    const int32_t embd_dim = inference_engine->getEmbeddingDim();
+    if (embd_dim <= 0) {
+      response.error_message = "Embedding dimension unavailable or invalid";
+      response.success = false;
+      return response;
+    }
+    for (size_t i = 0; i < request.image_features.size(); ++i) {
+      const auto &feat = request.image_features[i];
+      if (!feat.empty() && (feat.size() % embd_dim != 0)) {
+        std::ostringstream oss;
+        oss << "Image feature vector " << i
+            << " length mismatch: " << feat.size()
+            << " vs n_embd=" << embd_dim;
+        response.error_message = oss.str();
+        response.success = false;
+        return response;
+      }
+    }
+
     // 执行多模态文本生成
     std::string generated_text = inference_engine->generateTextWithImages(
         request.prompt, request.image_features, request.max_tokens,

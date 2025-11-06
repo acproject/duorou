@@ -1,5 +1,9 @@
 #pragma once
 
+// 该头文件仅用于 C++ 代码；当被 C 源文件误包含时，
+// 跳过内容以避免出现 <string> 不存在与 namespace 解析错误。
+#ifdef __cplusplus
+
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -7,6 +11,7 @@
 #include <mutex>
 #include <functional>
 #include <future>
+#include <optional>
 #include "text_generator.h"
 #include "image_generator.h"
 #include "model_downloader.h"
@@ -307,6 +312,13 @@ public:
      * @param directory 目录路径
      */
     void rescanModelDirectory(const std::string& directory);
+
+    /**
+     * @brief 获取与指定 LLM 关联的 mmproj 路径（如存在）
+     * @param model_id LLM 的模型 ID（例如 `llm_qwen3-vl-4b-instruct-f16`）
+     * @return 路径（可选）。未找到则为 std::nullopt
+     */
+    std::optional<std::string> getAssociatedMmprojPath(const std::string& model_id) const;
     
 private:
     /**
@@ -328,7 +340,7 @@ private:
      * @param directory Directory path
      */
     void scanModelDirectory(const std::string& directory);
-    
+
 private:
     std::unordered_map<std::string, ModelManagerInfo> registered_models_;     ///< Registered models
     std::unordered_map<std::string, std::shared_ptr<BaseModel>> loaded_models_;  ///< Loaded models
@@ -339,7 +351,12 @@ private:
     bool auto_memory_management_;                                      ///< Automatic memory management
     std::unique_ptr<ModelDownloader> model_downloader_;               ///< Model downloader
     std::function<void(const std::string&, bool)> load_callback_;     ///< Model load callback function
+
+    // 记录与本地 LLM 关联的 mmproj 文件路径，键为 LLM 的 model_id（如 llm_<stem>）
+    std::unordered_map<std::string, std::string> mmproj_paths_;
 };
 
 } // namespace core
 } // namespace duorou
+
+#endif // __cplusplus

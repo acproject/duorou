@@ -403,6 +403,8 @@ endif()
 
 # 添加子项目
 add_subdirectory(third_party/llama.cpp)
+# Ensure mtmd library (multimodal tools) is available for linking
+add_subdirectory(third_party/llama.cpp/tools/mtmd EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/stable-diffusion.cpp)
 add_subdirectory(src/model)
 if(TARGET duorou_model)
@@ -456,6 +458,8 @@ set(DUOROU_SOURCES_LIST
     src/core/image_generator.cpp
     src/core/stb_impl.cpp
     src/core/model_downloader.cpp
+
+    src/core/mtmd_demo.cpp
 
     src/core/ollama_model_loader.cpp
     src/core/modelfile_parser.cpp
@@ -581,6 +585,7 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     # 链接库（GTK4 按条件链接）
     target_link_libraries(duorou
         llama
+        mtmd
         stable-diffusion
         duorou_ollama_extension
         duorou_model

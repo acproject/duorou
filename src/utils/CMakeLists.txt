@@ -2,6 +2,7 @@
 add_library(duorou_utils STATIC
     string_utils.cpp
     ../core/logger.cpp
+    object_store.cpp
 )
 
 target_include_directories(duorou_utils PUBLIC

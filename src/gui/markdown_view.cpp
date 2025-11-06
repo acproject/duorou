@@ -204,7 +204,14 @@ void MarkdownView::set_markdown(const std::string &markdown) {
                      "pre{padding:8px;overflow:auto;} blockquote{color:#6a737d;border-left:4px solid #dfe2e5;padding:0 1em;}" \
                      "table{border-collapse:collapse;} th,td{border:1px solid #dfe2e5;padding:6px 13px;}" \
                      "</style></head><body>" + html + "</body></html>";
-  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_), full.c_str(), nullptr);
+  // 提供本地基础URI，便于加载相对路径和 file:// 资源
+  char *cwd = g_get_current_dir();
+  GError *uri_err = nullptr;
+  char *base_uri = g_filename_to_uri(cwd, nullptr, &uri_err);
+  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_), full.c_str(), base_uri ? base_uri : nullptr);
+  if (base_uri) g_free(base_uri);
+  if (cwd) g_free(cwd);
+  if (uri_err) g_error_free(uri_err);
 #else
   // Fallback: show raw markdown text in read-only text view (selectable)
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(content_));

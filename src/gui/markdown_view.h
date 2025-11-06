@@ -6,7 +6,71 @@
 #ifndef DUOROU_GUI_MARKDOWN_VIEW_H
 #define DUOROU_GUI_MARKDOWN_VIEW_H
 
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#else
+// Minimal GTK stubs to reduce editor diagnostics when GTK headers are unavailable.
+typedef void GtkWidget; typedef void GtkButton; typedef void GtkTextView; typedef void GtkCssProvider; typedef void GtkStyleContext; typedef void GtkWindow; typedef void GtkEntry;
+typedef int gint; typedef void* gpointer;
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#ifndef GTK_ORIENTATION_VERTICAL
+#define GTK_ORIENTATION_VERTICAL 0
+#endif
+#ifndef GTK_ORIENTATION_HORIZONTAL
+#define GTK_ORIENTATION_HORIZONTAL 1
+#endif
+#ifndef GTK_ALIGN_END
+#define GTK_ALIGN_END 1
+#endif
+#ifndef GTK_WRAP_WORD_CHAR
+#define GTK_WRAP_WORD_CHAR 0
+#endif
+#ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+#define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
+#endif
+// Common GTK functions used in MarkdownView; define as no-ops/dummies for indexing.
+#ifndef gtk_box_new
+#define gtk_box_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_box_append
+#define gtk_box_append(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_halign
+#define gtk_widget_set_halign(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_hexpand
+#define gtk_widget_set_hexpand(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_vexpand
+#define gtk_widget_set_vexpand(...) ((void)0)
+#endif
+#ifndef gtk_text_view_new
+#define gtk_text_view_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_text_view_set_wrap_mode
+#define gtk_text_view_set_wrap_mode(...) ((void)0)
+#endif
+#ifndef gtk_text_view_set_editable
+#define gtk_text_view_set_editable(...) ((void)0)
+#endif
+#ifndef gtk_text_view_set_cursor_visible
+#define gtk_text_view_set_cursor_visible(...) ((void)0)
+#endif
+#ifndef gtk_button_new_with_label
+#define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_style_context_add_provider
+#define gtk_style_context_add_provider(...) ((void)0)
+#endif
+#ifndef gtk_widget_get_style_context
+#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
+#endif
+#endif
 #include <string>
 
 namespace duorou {

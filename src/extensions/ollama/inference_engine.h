@@ -7,10 +7,11 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
-// llama.cpp headers (relative to project root)
-#include "../../third_party/llama.cpp/src/models/models.h"
-#include "../../third_party/llama.cpp/include/llama.h"
+// llama.cpp & ggml headers (resolved via target include directories)
+#include <llama.h>
+#include <ggml-backend.h>
 
 namespace duorou {
 namespace extensions {
@@ -24,12 +25,14 @@ public:
   virtual std::string generateText(const std::string &prompt,
                                    unsigned int max_tokens,
                                    float temperature,
-                                   float top_p) = 0;\
+                                   float top_p) = 0;
   virtual std::string generateTextWithImages(const std::string &prompt,
                                            const std::vector<std::vector<float>> &image_features,
                                            unsigned int max_tokens,
                                            float temperature,
                                            float top_p) = 0;
+  // Expose embedding dimension for pre-validation at manager level
+  virtual int32_t getEmbeddingDim() const = 0;
 };
 
 class MLInferenceEngine : public InferenceEngine {
@@ -64,8 +67,9 @@ public:
     }
 
     llama_context_params cparams = llama_context_default_params();
+    // Increase batch to accommodate prompt + last-logits without assert
     cparams.n_ctx = 2048; // Default context size
-    cparams.n_batch = 64; // Reasonable batch size
+    cparams.n_batch = 512; // Larger batch to avoid n_tokens + n_outputs overflow
     cparams.no_perf = true; // Disable perf logs in production path
 
     ctx_ = llama_init_from_model(model_, cparams);
@@ -107,9 +111,10 @@ public:
       return std::string("[Tokenize error] ") + prompt;
     }
 
-    // Build batch from prompt
+    // Build batch from prompt; request logits only for last token by default
     llama_batch batch =
         llama_batch_get_one(prompt_tokens.data(), (int)prompt_tokens.size());
+    batch.logits = nullptr; // ensure only last token outputs logits
 
     // If the model has an encoder, run encode first
     if (llama_model_has_encoder(model_)) {
@@ -124,6 +129,7 @@ public:
       std::vector<llama_token> token_buf(1);
       token_buf[0] = decoder_start_token_id;
       batch = llama_batch_get_one(token_buf.data(), 1);
+      batch.logits = nullptr; // single-token decode outputs logits for that token
     }
 
     // Initialize sampler chain per call so temperature/top_p can vary
@@ -178,6 +184,7 @@ public:
       static thread_local std::vector<llama_token> next_token_buf(1);
       next_token_buf[0] = new_token_id;
       batch = llama_batch_get_one(next_token_buf.data(), 1);
+      batch.logits = nullptr; // ensure single-token decode outputs logits
       produced += 1;
     }
 
@@ -284,6 +291,7 @@ public:
 
     llama_batch dec_batch = llama_batch_get_one(dec_init_tokens.data(),
                                                 (int32_t)dec_init_tokens.size());
+    dec_batch.logits = nullptr; // only last token logits by default
 
     // Initialize sampler chain per call so temperature/top_p can vary
     auto sparams = llama_sampler_chain_default_params();
@@ -331,6 +339,7 @@ public:
       static thread_local std::vector<llama_token> next_token_buf(1);
       next_token_buf[0] = new_token_id;
       llama_batch next_batch = llama_batch_get_one(next_token_buf.data(), 1);
+      next_batch.logits = nullptr;
 
       if (llama_decode(ctx_, next_batch)) {
         break;
@@ -342,6 +351,10 @@ public:
 
     llama_sampler_free(sampler);
     return output.empty() ? std::string("") : output;
+  }
+
+  int32_t getEmbeddingDim() const override {
+    return model_ ? llama_model_n_embd(model_) : 0;
   }
 
 private:

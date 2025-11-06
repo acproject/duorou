@@ -7,7 +7,54 @@
 #include "video_source_dialog.h"
 #include "../core/model_manager.h"
 #include <chrono>
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#else
+// Lightweight GTK/GLib stubs to help indexers that lack GTK headers.
+// They do not change runtime behavior; real builds still use GTK.
+typedef void GtkWidget; typedef void GtkDialog; typedef void GtkButton; typedef void GtkToggleButton; typedef void GtkStyleContext; typedef void GtkCssProvider;
+typedef int gint; typedef void* gpointer;
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#ifndef GTK_ORIENTATION_VERTICAL
+#define GTK_ORIENTATION_VERTICAL 0
+#endif
+#ifndef GTK_ORIENTATION_HORIZONTAL
+#define GTK_ORIENTATION_HORIZONTAL 1
+#endif
+#ifndef GTK_ALIGN_END
+#define GTK_ALIGN_END 1
+#endif
+#ifndef GTK_WRAP_WORD_CHAR
+#define GTK_WRAP_WORD_CHAR 0
+#endif
+#ifndef G_SOURCE_REMOVE
+#define G_SOURCE_REMOVE 0
+#endif
+// Common GTK calls used in sources; macro stubs to avoid undeclared identifiers
+#ifndef gtk_box_new
+#define gtk_box_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_box_append
+#define gtk_box_append(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_halign
+#define gtk_widget_set_halign(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_hexpand
+#define gtk_widget_set_hexpand(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_vexpand
+#define gtk_widget_set_vexpand(...) ((void)0)
+#endif
+#ifndef gtk_frame_new
+#define gtk_frame_new(...) ((GtkWidget*)nullptr)
+#endif
+#endif
 #include <memory>
 #include <string>
 #include <vector>

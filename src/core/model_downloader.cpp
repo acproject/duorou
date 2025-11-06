@@ -490,13 +490,21 @@ std::vector<std::string> ModelDownloader::getLocalModels() {
 
     // 过滤规则：仅保留文本模型，排除包含 "vl" 或明显视觉/多模态标记的仓库名
     auto is_vision_like = [](const std::string &repository) {
-        std::string repo_lower = repository;
-        std::transform(repo_lower.begin(), repo_lower.end(), repo_lower.begin(), ::tolower);
-        // 常见视觉/多模态模型命名中包含 "-vl" 或 "vl"，以及 "vision"、"multimodal" 等
-        if (repo_lower.find("-vl") != std::string::npos) return true;
-        if (repo_lower.find("vl") != std::string::npos) return true;
-        if (repo_lower.find("vision") != std::string::npos) return true;
-        if (repo_lower.find("multimodal") != std::string::npos) return true;
+        std::string s = repository;
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+
+        // 视觉/多模态模型常见关键词与约定
+        const std::vector<std::string> keywords = {
+            // 通用标识
+            "-vl", "vl", "vision", "multimodal",
+            // 常见模型族
+            "llava", "bakllava", "glm-4v", "4v", "phi-3-vision",
+            "moondream", "minicpm", "cogvlm"
+        };
+
+        for (const auto &k : keywords) {
+            if (s.find(k) != std::string::npos) return true;
+        }
         return false;
     };
 

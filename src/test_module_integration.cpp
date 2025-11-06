@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -10,8 +12,10 @@
 #include <vector>
 
 // 包含 ollama 扩展的头文件
-#include "../../third_party/llama.cpp/src/models/models.h"
 #include "../../third_party/llama.cpp/include/llama.h"
+#include "../../third_party/llama.cpp/src/models/models.h"
+#include "../../third_party/llama.cpp/tools/mtmd/mtmd-helper.h"
+#include "../../third_party/llama.cpp/tools/mtmd/mtmd.h"
 #include "extensions/ollama/gguf_parser.h"
 #include "extensions/ollama/ollama_model_manager.h"
 #include "extensions/ollama/ollama_path_resolver.h"
@@ -21,8 +25,52 @@ using namespace duorou::extensions::ollama;
 const std::string TEST_INPUT = "你好，你有名字吗？";
 
 // 默认的 Hugging Face 模型目录（作为未设置 OVERRIDE_MODEL_DIR 时的默认值）
-static constexpr const char * DEFAULT_OVERRIDE_MODEL_DIR = 
-    "/Volumes/data/models/qwen3-vl-4b-instruct/";
+static constexpr const char *DEFAULT_OVERRIDE_MODEL_DIR =
+    "/Users/acproject/workspace/cpp_projects/duorou/models/"
+    "qwen3-vl-4b-instruct";
+
+// 查找 mmproj GGUF（用于视觉投影权重）
+static bool filename_is_mmproj(const std::string &filename) {
+  std::string lower = filename;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  // 支持前缀形态 mmproj-<stem> 与中缀形态
+  // <stem>-mmproj-<dtype>，以及通用包含判断
+  return lower.rfind("mmproj-", 0) == 0 ||
+         lower.find("-mmproj-") != std::string::npos ||
+         lower.find("mmproj") != std::string::npos;
+}
+
+static std::string
+find_first_mmproj_gguf_in_dir(const std::filesystem::path &dir) {
+  if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+    return std::string();
+  }
+  try {
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(
+             dir,
+             std::filesystem::directory_options::follow_directory_symlink)) {
+      if (entry.is_regular_file()) {
+        const auto &p = entry.path();
+        std::string ext =
+            p.has_extension() ? p.extension().string() : std::string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (!ext.empty() && ext == ".gguf") {
+          const std::string fname = p.filename().string();
+          // 选择 mmproj 文件（更健壮的文件名匹配）
+          if (filename_is_mmproj(fname)) {
+            return p.string();
+          }
+        }
+      }
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "扫描目录失败: " << dir << ", error: " << e.what()
+              << std::endl;
+  }
+  return std::string();
+}
 
 // 模型文件路径
 static std::string find_first_gguf_in_dir(const std::filesystem::path &dir) {
@@ -31,13 +79,19 @@ static std::string find_first_gguf_in_dir(const std::filesystem::path &dir) {
   }
   // 递归查找首个 .gguf 文件
   try {
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(dir)) {
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(
+             dir,
+             std::filesystem::directory_options::follow_directory_symlink)) {
       if (entry.is_regular_file()) {
         const auto &p = entry.path();
-        if (p.has_extension() && p.extension() == ".gguf") {
+        std::string ext =
+            p.has_extension() ? p.extension().string() : std::string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (!ext.empty() && ext == ".gguf") {
           // 跳过 mmproj 文件（多模态视觉投影权重），避免误选
           const std::string fname = p.filename().string();
-          if (fname.find("mmproj") != std::string::npos) {
+          if (filename_is_mmproj(fname)) {
             continue;
           }
           return p.string();
@@ -45,18 +99,21 @@ static std::string find_first_gguf_in_dir(const std::filesystem::path &dir) {
       }
     }
   } catch (const std::exception &e) {
-    std::cerr << "扫描目录失败: " << dir << ", error: " << e.what() << std::endl;
+    std::cerr << "扫描目录失败: " << dir << ", error: " << e.what()
+              << std::endl;
   }
   return std::string();
 }
 
 // 查找 safetensors（HF 原始权重），用于提示用户转换到 GGUF
-static std::string find_first_safetensors_in_dir(const std::filesystem::path &dir) {
+static std::string
+find_first_safetensors_in_dir(const std::filesystem::path &dir) {
   if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
     return std::string();
   }
   try {
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(dir)) {
+    for (const auto &entry :
+         std::filesystem::recursive_directory_iterator(dir)) {
       if (entry.is_regular_file()) {
         const auto &p = entry.path();
         if (p.has_extension() && p.extension() == ".safetensors") {
@@ -65,13 +122,15 @@ static std::string find_first_safetensors_in_dir(const std::filesystem::path &di
       }
     }
   } catch (const std::exception &e) {
-    std::cerr << "扫描目录失败: " << dir << ", error: " << e.what() << std::endl;
+    std::cerr << "扫描目录失败: " << dir << ", error: " << e.what()
+              << std::endl;
   }
   return std::string();
 }
 
 static std::string getModelPath() {
-  // 优先读取 OVERRIDE_MODEL_PATH。如果它是文件，直接返回；如果是目录，扫描 .gguf 文件。
+  // 优先读取 OVERRIDE_MODEL_PATH。如果它是文件，直接返回；如果是目录，扫描
+  // .gguf 文件。
   if (const char *env = std::getenv("OVERRIDE_MODEL_PATH")) {
     std::filesystem::path p(env);
     if (std::filesystem::exists(p)) {
@@ -80,10 +139,12 @@ static std::string getModelPath() {
       }
       if (std::filesystem::is_directory(p)) {
         std::string found = find_first_gguf_in_dir(p);
-        if (!found.empty()) return found;
+        if (!found.empty())
+          return found;
         // 如果没有 gguf，尝试找到 safetensors 以提示转换
         std::string hf = find_first_safetensors_in_dir(p);
-        if (!hf.empty()) return hf;
+        if (!hf.empty())
+          return hf;
       }
     }
   }
@@ -92,9 +153,11 @@ static std::string getModelPath() {
   if (const char *env_dir = std::getenv("OVERRIDE_MODEL_DIR")) {
     std::filesystem::path d(env_dir);
     std::string found = find_first_gguf_in_dir(d);
-    if (!found.empty()) return found;
+    if (!found.empty())
+      return found;
     std::string hf = find_first_safetensors_in_dir(d);
-    if (!hf.empty()) return hf;
+    if (!hf.empty())
+      return hf;
   }
 
   // 若未设置环境变量 OVERRIDE_MODEL_DIR，则使用默认目录
@@ -102,20 +165,75 @@ static std::string getModelPath() {
     std::filesystem::path d(DEFAULT_OVERRIDE_MODEL_DIR);
     if (std::filesystem::exists(d) && std::filesystem::is_directory(d)) {
       std::string found = find_first_gguf_in_dir(d);
-      if (!found.empty()) return found;
+      if (!found.empty())
+        return found;
       std::string hf = find_first_safetensors_in_dir(d);
-      if (!hf.empty()) return hf;
+      if (!hf.empty())
+        return hf;
     }
   }
 
   // 默认为当前硬编码的 Ollama 路径
-  return std::string(
-      "/Users/acproject/.ollama/models/blobs/"
-      "sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f" /** qwen3:8b */
+  return std::string("/Users/acproject/.ollama/models/blobs/"
+                     "sha256-"
+                     "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0"
+                     "b8e686f" /** qwen3:8b */
   );
 }
 
-static void print_piece(const llama_vocab * vocab, llama_token id) {
+static std::string getMmprojPathFallback(const std::string &model_path) {
+  // 优先读取 OVERRIDE_MMPROJ_PATH，如果指向文件直接返回；如果是目录，递归查找
+  // mmproj gguf
+  if (const char *env = std::getenv("OVERRIDE_MMPROJ_PATH")) {
+    std::filesystem::path p(env);
+    if (std::filesystem::exists(p)) {
+      if (std::filesystem::is_regular_file(p)) {
+        return p.string();
+      }
+      if (std::filesystem::is_directory(p)) {
+        std::string found = find_first_mmproj_gguf_in_dir(p);
+        if (!found.empty())
+          return found;
+      }
+    }
+  }
+
+  // 如果模型路径是文件，尝试其父目录；如果是目录则直接扫描
+  std::filesystem::path mp(model_path);
+  std::filesystem::path d =
+      std::filesystem::is_regular_file(mp) ? mp.parent_path() : mp;
+  if (std::filesystem::exists(d) && std::filesystem::is_directory(d)) {
+    std::string found = find_first_mmproj_gguf_in_dir(d);
+    if (!found.empty())
+      return found;
+  }
+
+  // 尝试 DEFAULT_OVERRIDE_MODEL_DIR
+  {
+    std::filesystem::path d2(DEFAULT_OVERRIDE_MODEL_DIR);
+    if (std::filesystem::exists(d2) && std::filesystem::is_directory(d2)) {
+      std::string found = find_first_mmproj_gguf_in_dir(d2);
+      if (!found.empty())
+        return found;
+    }
+  }
+
+  return std::string();
+}
+
+static std::string getImagePath() {
+  // 从环境读取图片路径
+  if (const char *env = std::getenv("OVERRIDE_IMAGE_PATH")) {
+    std::filesystem::path p(env);
+    if (std::filesystem::exists(p) && std::filesystem::is_regular_file(p)) {
+      return p.string();
+    }
+  }
+  // 不提供默认图片，提醒用户设置环境变量；返回空表示不进行图片推理
+  return std::string();
+}
+
+static void print_piece(const llama_vocab *vocab, llama_token id) {
   char buf[256];
   const int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
   if (n > 0) {
@@ -125,7 +243,7 @@ static void print_piece(const llama_vocab * vocab, llama_token id) {
 }
 
 // 简单的GGUF元数据dump，重点打印架构与RoPE相关键
-static void dump_gguf_metadata(const std::string & model_path) {
+static void dump_gguf_metadata(const std::string &model_path) {
   std::cout << "\n[GGUF Metadata Dump]" << std::endl;
   GGUFParser parser(true);
   // 可选：开启mmap读取以提升读取性能
@@ -135,26 +253,27 @@ static void dump_gguf_metadata(const std::string & model_path) {
     return;
   }
 
-  const auto & header = parser.getHeader();
+  const auto &header = parser.getHeader();
   std::cout << "Header: version=" << header.version
             << ", tensors=" << header.tensor_count
             << ", kv_count=" << header.metadata_kv_count << std::endl;
 
-  const auto & arch = parser.getArchitecture();
+  const auto &arch = parser.getArchitecture();
   std::cout << "Architecture: name='" << arch.name << "'"
             << ", ctx_len=" << arch.context_length
             << ", emb_len=" << arch.embedding_length
             << ", blocks=" << arch.block_count
             << ", rope_dim_cnt=" << arch.rope_dimension_count
-            << ", rope_freq_base=" << arch.rope_freq_base
-            << std::endl;
+            << ", rope_freq_base=" << arch.rope_freq_base << std::endl;
 
   // 打印RoPE分段信息
-  std::cout << "RoPE dimension sections (" << arch.rope_dimension_sections.size() << ") : ";
+  std::cout << "RoPE dimension sections ("
+            << arch.rope_dimension_sections.size() << ") : ";
   if (!arch.rope_dimension_sections.empty()) {
     for (size_t i = 0; i < arch.rope_dimension_sections.size(); ++i) {
       std::cout << arch.rope_dimension_sections[i];
-      if (i + 1 < arch.rope_dimension_sections.size()) std::cout << ",";
+      if (i + 1 < arch.rope_dimension_sections.size())
+        std::cout << ",";
     }
   } else {
     std::cout << "<empty>";
@@ -164,26 +283,25 @@ static void dump_gguf_metadata(const std::string & model_path) {
   if (arch.has_vision) {
     std::cout << "Vision: patch_size=" << arch.vision_patch_size
               << ", spatial_patch_size=" << arch.vision_spatial_patch_size
-              << ", fullatt_blocks=" << arch.vision_fullatt_block_indexes.size() << std::endl;
+              << ", fullatt_blocks=" << arch.vision_fullatt_block_indexes.size()
+              << std::endl;
   }
 
   // 关键键存在性检查
   // 优先按架构名组装目标键，其次兼容常见别名
   const std::vector<std::string> candidate_arches = {
-    arch.name,
-    std::string("qwen3vl"),
-    std::string("qwen2vl"),
-    std::string("qwen25vl")
-  };
+      arch.name, std::string("qwen3vl"), std::string("qwen2vl"),
+      std::string("qwen25vl")};
   bool found_dimension_sections = false;
-  for (const auto & a : candidate_arches) {
+  for (const auto &a : candidate_arches) {
     const std::string key = a + ".rope.dimension_sections";
-    if (const GGUFKeyValue * kv = parser.getMetadata(key)) {
+    if (const GGUFKeyValue *kv = parser.getMetadata(key)) {
       std::cout << "Found key: '" << key << "' -> [";
       auto arr = kv->asUInt64Array();
       for (size_t i = 0; i < arr.size(); ++i) {
         std::cout << arr[i];
-        if (i + 1 < arr.size()) std::cout << ",";
+        if (i + 1 < arr.size())
+          std::cout << ",";
       }
       std::cout << "]" << std::endl;
       found_dimension_sections = true;
@@ -194,19 +312,19 @@ static void dump_gguf_metadata(const std::string & model_path) {
     std::cout << "Missing key: '<arch>.rope.dimension_sections' (尝试架构：";
     for (size_t i = 0; i < candidate_arches.size(); ++i) {
       std::cout << candidate_arches[i];
-      if (i + 1 < candidate_arches.size()) std::cout << ",";
+      if (i + 1 < candidate_arches.size())
+        std::cout << ",";
     }
     std::cout << ")" << std::endl;
   }
 
   // 额外打印与RoPE相关的其他键，便于诊断
   const std::vector<std::string> rope_related_keys = {
-    "rope.dimension_count",
-    "rope.freq_base",
-    "rope.mrope_section", // 一些旧转换脚本可能写这个
+      "rope.dimension_count", "rope.freq_base",
+      "rope.mrope_section", // 一些旧转换脚本可能写这个
   };
-  for (const auto & rk : rope_related_keys) {
-    if (const GGUFKeyValue * kv = parser.getMetadata(rk)) {
+  for (const auto &rk : rope_related_keys) {
+    if (const GGUFKeyValue *kv = parser.getMetadata(rk)) {
       std::cout << "Found key: '" << rk << "'";
       if (rk == "rope.dimension_count") {
         std::cout << " -> " << kv->asUInt32();
@@ -217,7 +335,8 @@ static void dump_gguf_metadata(const std::string & model_path) {
         std::cout << " -> [";
         for (size_t i = 0; i < arr.size(); ++i) {
           std::cout << arr[i];
-          if (i + 1 < arr.size()) std::cout << ",";
+          if (i + 1 < arr.size())
+            std::cout << ",";
         }
         std::cout << "]";
       }
@@ -233,7 +352,8 @@ static void dump_gguf_metadata(const std::string & model_path) {
     std::cout << "Sample keys (" << print_n << ") : ";
     for (size_t i = 0; i < print_n; ++i) {
       std::cout << keys[i];
-      if (i + 1 < print_n) std::cout << ", ";
+      if (i + 1 < print_n)
+        std::cout << ", ";
     }
     std::cout << std::endl;
   }
@@ -252,14 +372,24 @@ int main() {
     std::filesystem::path mp(model_path);
     if (mp.has_extension() && mp.extension() == ".safetensors") {
       const std::string dir = mp.parent_path().string();
-      std::cerr << "\n检测到 Hugging Face safetensors 权重，llama.cpp 不能直接加载。" << std::endl;
+      std::cerr
+          << "\n检测到 Hugging Face safetensors 权重，llama.cpp 不能直接加载。"
+          << std::endl;
       std::cerr << "请先转换为 GGUF 格式。推荐命令如下：" << std::endl;
-      std::cerr << "\n  python3 third_party/llama.cpp/convert_hf_to_gguf.py \"" << dir << "\" \\\n+  --outfile \"" << dir << "/gguf\" \\\n+  --outtype f16" << std::endl;
+      std::cerr << "\n  python3 third_party/llama.cpp/convert_hf_to_gguf.py \""
+                << dir << "\" \\\n+  --outfile \"" << dir
+                << "/gguf\" \\\n+  --outtype f16" << std::endl;
       std::cerr << "\n说明：" << std::endl;
-      std::cerr << "- 将在 \"" << dir << "/gguf\" 目录下生成文本模型 GGUF 和 mmproj GGUF" << std::endl;
-      std::cerr << "- 转换脚本会自动为 Qwen3-VL 写入必需的 qwen3vl.rope.dimension_sections 元数据" << std::endl;
-      std::cerr << "- 生成后，使用： OVERRIDE_MODEL_DIR=\"" << dir << "/gguf\" ./module_integration_test" << std::endl;
-      std::cerr << "\n如果希望更小体积，可将 --outtype 改为 q8_0（精度稍降）。" << std::endl;
+      std::cerr << "- 将在 \"" << dir
+                << "/gguf\" 目录下生成文本模型 GGUF 和 mmproj GGUF"
+                << std::endl;
+      std::cerr << "- 转换脚本会自动为 Qwen3-VL 写入必需的 "
+                   "qwen3vl.rope.dimension_sections 元数据"
+                << std::endl;
+      std::cerr << "- 生成后，使用： OVERRIDE_MODEL_DIR=\"" << dir
+                << "/gguf\" ./module_integration_test" << std::endl;
+      std::cerr << "\n如果希望更小体积，可将 --outtype 改为 q8_0（精度稍降）。"
+                << std::endl;
       return 2;
     }
   }
@@ -271,40 +401,98 @@ int main() {
   // 可选：将部分层下放到GPU（根据环境调整）
   mparams.n_gpu_layers = 99;
 
-  llama_model * model = llama_model_load_from_file(model_path.c_str(), mparams);
+  llama_model *model = llama_model_load_from_file(model_path.c_str(), mparams);
   if (!model) {
     std::cerr << "Failed to load model from: " << model_path << std::endl;
     return 1;
   }
 
-  const llama_vocab * vocab = llama_model_get_vocab(model);
+  const llama_vocab *vocab = llama_model_get_vocab(model);
 
-  // 处理提示词：中文诗歌请求
-  const std::string prompt = TEST_INPUT;
+  // 根据是否提供图片与 mmproj，决定是否走多模态路径
+  std::string mmproj_path = getMmprojPathFallback(model_path);
+  std::string image_path = getImagePath();
+  bool use_mtmd = false;
+  mtmd_context *mctx = nullptr;
+  mtmd_input_chunks *mm_chunks = nullptr;
+  std::string prompt_media;
+  llama_pos mm_required_pos = 0;
 
-  // 计算提示词的 token 数量
-  const int n_prompt = -llama_tokenize(vocab, prompt.c_str(), (int)prompt.size(), nullptr, 0, /*add_special=*/true, /*parse_special=*/true);
-  if (n_prompt <= 0) {
-    std::cerr << "Tokenization returned invalid length: " << n_prompt << std::endl;
-    llama_model_free(model);
-    return 1;
-  }
+  if (!mmproj_path.empty() && !image_path.empty()) {
+    std::cout << "Using mmproj: " << mmproj_path << std::endl;
+    std::cout << "Using image : " << image_path << std::endl;
 
-  std::vector<llama_token> prompt_tokens(n_prompt);
-  const int n_tok = llama_tokenize(vocab, prompt.c_str(), (int)prompt.size(), prompt_tokens.data(), (int)prompt_tokens.size(), /*add_special=*/true, /*parse_special=*/true);
-  if (n_tok < 0) {
-    std::cerr << "Failed to tokenize prompt" << std::endl;
-    llama_model_free(model);
-    return 1;
+    auto mparams_mtmd = mtmd_context_params_default();
+    mparams_mtmd.use_gpu = true; // 如果可用，尽量使用GPU
+    mparams_mtmd.media_marker = mtmd_default_marker();
+
+    mctx = mtmd_init_from_file(mmproj_path.c_str(), model, mparams_mtmd);
+    if (!mctx) {
+      std::cerr << "mtmd_init_from_file 失败，回退到纯文本推理" << std::endl;
+    } else {
+      // 构造带媒体标记的提示词：确保末尾有文本，以便计算 logits
+      const char *marker = mtmd_default_marker();
+      prompt_media = std::string("请详细用中文描述这张图片：") + marker +
+                     std::string("。要求简洁准确。");
+
+      mtmd_bitmap *bitmap =
+          mtmd_helper_bitmap_init_from_file(mctx, image_path.c_str());
+      if (!bitmap) {
+        std::cerr << "加载图片失败，回退到纯文本推理" << std::endl;
+        mtmd_free(mctx);
+        mctx = nullptr;
+      } else {
+        mm_chunks = mtmd_input_chunks_init();
+        mtmd_input_text txt{prompt_media.c_str(), /*add_special=*/true,
+                            /*parse_special=*/true};
+        const mtmd_bitmap *bitmaps[1] = {bitmap};
+        int32_t tok_res = mtmd_tokenize(mctx, mm_chunks, &txt, bitmaps, 1);
+        mtmd_bitmap_free(bitmap);
+        if (tok_res != 0) {
+          std::cerr << "mtmd_tokenize 失败（返回码 " << tok_res
+                    << ")，回退到纯文本推理" << std::endl;
+          mtmd_input_chunks_free(mm_chunks);
+          mm_chunks = nullptr;
+          mtmd_free(mctx);
+          mctx = nullptr;
+        } else {
+          use_mtmd = true;
+          mm_required_pos = mtmd_helper_get_n_pos(mm_chunks);
+        }
+      }
+    }
+  } else {
+    if (mmproj_path.empty()) {
+      std::cout << "未找到 mmproj GGUF，保持纯文本推理。可设置 "
+                   "OVERRIDE_MMPROJ_PATH 或将 mmproj 放在模型目录。"
+                << std::endl;
+    }
+    if (image_path.empty()) {
+      std::cout << "未设置图片路径。请通过 OVERRIDE_IMAGE_PATH "
+                   "提供图片文件（jpg/png/gif/bmp）。"
+                << std::endl;
+    }
   }
 
   // 初始化上下文参数
   llama_context_params cparams = llama_context_default_params();
-  cparams.n_ctx = std::max(1024, n_prompt + 128);
-  cparams.n_batch = std::max(32, n_prompt);
+  if (use_mtmd) {
+    // 为图片+文本上下文预留更多位置
+    const int n_predict = 64; // 下面生成环节会使用
+    cparams.n_ctx = std::max(2048, (int)mm_required_pos + n_predict + 128);
+    cparams.n_batch = 512; // 适当放大以提升图片批处理吞吐
+  } else {
+    // 纯文本路径：先基于 TEST_INPUT 估计
+    const std::string prompt = TEST_INPUT;
+    const int n_prompt =
+        -llama_tokenize(vocab, prompt.c_str(), (int)prompt.size(), nullptr, 0,
+                        /*add_special=*/true, /*parse_special=*/true);
+    cparams.n_ctx = std::max(1024, n_prompt + 128);
+    cparams.n_batch = std::max(32, n_prompt);
+  }
   cparams.no_perf = false;
 
-  llama_context * ctx = llama_init_from_model(model, cparams);
+  llama_context *ctx = llama_init_from_model(model, cparams);
   if (!ctx) {
     std::cerr << "Failed to create llama_context" << std::endl;
     llama_model_free(model);
@@ -314,57 +502,101 @@ int main() {
   // 初始化采样器（贪心或可配置）
   auto sparams = llama_sampler_chain_default_params();
   sparams.no_perf = false;
-  llama_sampler * smpl = llama_sampler_chain_init(sparams);
+  llama_sampler *smpl = llama_sampler_chain_init(sparams);
   llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
 
-  // 打印提示词原文（按 token）
-  std::cout << "Prompt: ";
-  for (auto id : prompt_tokens) {
-    print_piece(vocab, id);
-  }
-  std::cout << std::endl;
+  // 生成参数
+  const int n_predict = 64;
+  std::vector<llama_token> token_buf(1); // 持久 token 缓冲
+  llama_batch batch = {};
 
-  // 为提示词创建 batch
-  llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int)prompt_tokens.size());
+  if (use_mtmd) {
+    // 多模态路径：先评估文本+图片的所有 chunk
+    std::cout << "Prompt: " << prompt_media << std::endl;
 
-  // 如果模型包含编码器，先进行 encode，然后从解码器开始符号继续
-  // 使用持久 token 缓冲，避免传入局部变量地址导致悬空指针
-  std::vector<llama_token> token_buf(1);
-
-  if (llama_model_has_encoder(model)) {
-    if (llama_encode(ctx, batch)) {
-      std::cerr << "llama_encode failed" << std::endl;
+    llama_pos n_past_out = 0;
+    int32_t eval_res =
+        mtmd_helper_eval_chunks(mctx, ctx, mm_chunks,
+                                /*n_past=*/0,
+                                /*seq_id=*/0,
+                                /*n_batch=*/cparams.n_batch,
+                                /*logits_last=*/true, &n_past_out);
+    if (eval_res != 0) {
+      std::cerr << "mtmd_helper_eval_chunks 失败（返回码 " << eval_res << ")"
+                << std::endl;
+      if (mm_chunks)
+        mtmd_input_chunks_free(mm_chunks);
+      if (mctx)
+        mtmd_free(mctx);
       llama_sampler_free(smpl);
       llama_free(ctx);
       llama_model_free(model);
       return 1;
     }
 
-    llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
-    if (decoder_start_token_id == LLAMA_TOKEN_NULL) {
-      decoder_start_token_id = llama_vocab_bos(vocab);
+    // 基于最后一个文本位置进行采样，得到第一个生成 token
+    llama_token first_token = llama_sampler_sample(smpl, ctx, -1);
+    if (llama_vocab_is_eog(vocab, first_token)) {
+      // 如果直接结束，打印并退出
+      std::cout << "\n<eog>" << std::endl;
+      if (mm_chunks)
+        mtmd_input_chunks_free(mm_chunks);
+      if (mctx)
+        mtmd_free(mctx);
+      llama_sampler_free(smpl);
+      llama_free(ctx);
+      llama_model_free(model);
+      return 0;
     }
-    token_buf[0] = decoder_start_token_id;
+    print_piece(vocab, first_token);
+    std::fflush(stdout);
+    token_buf[0] = first_token;
     batch = llama_batch_get_one(token_buf.data(), 1);
+  } else {
+    // 纯文本路径：按原逻辑准备提示词并创建初始 batch
+    const std::string prompt = TEST_INPUT;
+    const int n_prompt =
+        -llama_tokenize(vocab, prompt.c_str(), (int)prompt.size(), nullptr, 0,
+                        /*add_special=*/true, /*parse_special=*/true);
+    std::vector<llama_token> prompt_tokens(n_prompt);
+    const int n_tok =
+        llama_tokenize(vocab, prompt.c_str(), (int)prompt.size(),
+                       prompt_tokens.data(), (int)prompt_tokens.size(),
+                       /*add_special=*/true, /*parse_special=*/true);
+    if (n_tok < 0) {
+      std::cerr << "Failed to tokenize prompt" << std::endl;
+      llama_sampler_free(smpl);
+      llama_free(ctx);
+      llama_model_free(model);
+      return 1;
+    }
+
+    std::cout << "Prompt: ";
+    for (auto id : prompt_tokens) {
+      print_piece(vocab, id);
+    }
+    std::cout << std::endl;
+
+    batch =
+        llama_batch_get_one(prompt_tokens.data(), (int)prompt_tokens.size());
+
+    // 纯文本路径不应调用 encoder；直接进入 decode 以获得提示词末尾的 logits
+    // llama_batch_get_one 已将 logits 置为 nullptr，llama_decode 会只对最后一个
+    // token 输出 logits
   }
 
   // 主生成循环
   const auto t_start = ggml_time_us();
-  int n_decode = 0;
-  const int n_predict = 64;
+  int n_decode = use_mtmd ? 1 : 0; // 多模态路径已先采样一个 token
   std::cout << "\nOutput: ";
 
-  for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + n_predict; ) {
+  for (; n_decode < n_predict;) {
     if (llama_decode(ctx, batch)) {
       std::cerr << "llama_decode failed" << std::endl;
       break;
     }
 
-    n_pos += batch.n_tokens;
-
-    // 采样下一个 token：取当前 batch 中被标记输出的最后一个位置
-    // 初次解码（提示词）仅为最后一个token计算logits，因此需要使用 n_tokens-1
-    llama_token new_token_id = llama_sampler_sample(smpl, ctx, batch.n_tokens - 1);
+    llama_token new_token_id = llama_sampler_sample(smpl, ctx, -1);
     if (llama_vocab_is_eog(vocab, new_token_id)) {
       break;
     }
@@ -372,7 +604,6 @@ int main() {
     print_piece(vocab, new_token_id);
     std::fflush(stdout);
 
-    // 为下一个循环构造 batch（使用持久缓冲）
     token_buf[0] = new_token_id;
     batch = llama_batch_get_one(token_buf.data(), 1);
     n_decode += 1;
@@ -380,7 +611,8 @@ int main() {
 
   const auto t_end = ggml_time_us();
   const float dt = (t_end - t_start) / 1000000.0f;
-  std::cout << "\n\nDecoded " << n_decode << " tokens in " << dt << " s" << std::endl;
+  std::cout << "\n\nDecoded " << n_decode << " tokens in " << dt << " s"
+            << std::endl;
 
   // 性能数据输出
   llama_perf_sampler_print(smpl);
@@ -389,6 +621,10 @@ int main() {
   // 清理资源
   llama_sampler_free(smpl);
   llama_free(ctx);
+  if (mm_chunks)
+    mtmd_input_chunks_free(mm_chunks);
+  if (mctx)
+    mtmd_free(mctx);
   llama_model_free(model);
 
   return 0;
