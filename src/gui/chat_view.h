@@ -7,12 +7,13 @@
 #include "video_source_dialog.h"
 #include "../core/model_manager.h"
 #include <chrono>
-#if __has_include(<gtk/gtk.h>)
+#if defined(__has_include) && __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
 #else
 // Lightweight GTK/GLib stubs to help indexers that lack GTK headers.
 // They do not change runtime behavior; real builds still use GTK.
 typedef void GtkWidget; typedef void GtkDialog; typedef void GtkButton; typedef void GtkToggleButton; typedef void GtkStyleContext; typedef void GtkCssProvider;
+typedef void GtkEntry; typedef void GtkScrolledWindow; typedef void GtkDropDown; typedef void GtkLabel; typedef void GtkImage;
 typedef int gint; typedef void* gpointer;
 #ifndef TRUE
 #define TRUE 1
@@ -26,8 +27,17 @@ typedef int gint; typedef void* gpointer;
 #ifndef GTK_ORIENTATION_HORIZONTAL
 #define GTK_ORIENTATION_HORIZONTAL 1
 #endif
+#ifndef GTK_ALIGN_START
+#define GTK_ALIGN_START 0
+#endif
 #ifndef GTK_ALIGN_END
 #define GTK_ALIGN_END 1
+#endif
+#ifndef GTK_ALIGN_CENTER
+#define GTK_ALIGN_CENTER 2
+#endif
+#ifndef GTK_ALIGN_FILL
+#define GTK_ALIGN_FILL 3
 #endif
 #ifndef GTK_WRAP_WORD_CHAR
 #define GTK_WRAP_WORD_CHAR 0
@@ -35,12 +45,28 @@ typedef int gint; typedef void* gpointer;
 #ifndef G_SOURCE_REMOVE
 #define G_SOURCE_REMOVE 0
 #endif
+// Additional common constants
+#ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+#define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
+#endif
+#ifndef GTK_POLICY_AUTOMATIC
+#define GTK_POLICY_AUTOMATIC 1
+#endif
+#ifndef GTK_INPUT_PURPOSE_FREE_FORM
+#define GTK_INPUT_PURPOSE_FREE_FORM 0
+#endif
+#ifndef GTK_INPUT_HINT_NONE
+#define GTK_INPUT_HINT_NONE 0
+#endif
 // Common GTK calls used in sources; macro stubs to avoid undeclared identifiers
 #ifndef gtk_box_new
 #define gtk_box_new(...) ((GtkWidget*)nullptr)
 #endif
 #ifndef gtk_box_append
 #define gtk_box_append(...) ((void)0)
+#endif
+#ifndef GTK_BOX
+#define GTK_BOX(x) (x)
 #endif
 #ifndef gtk_widget_set_halign
 #define gtk_widget_set_halign(...) ((void)0)
@@ -53,6 +79,83 @@ typedef int gint; typedef void* gpointer;
 #endif
 #ifndef gtk_frame_new
 #define gtk_frame_new(...) ((GtkWidget*)nullptr)
+#endif
+// Widget traversal helpers
+#ifndef gtk_widget_get_first_child
+#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_get_next_sibling
+#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_get_last_child
+#define gtk_widget_get_last_child(...) ((GtkWidget*)nullptr)
+#endif
+// Scrolled window/dropdown/label/entry stubs
+#ifndef gtk_scrolled_window_new
+#define gtk_scrolled_window_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef GTK_SCROLLED_WINDOW
+#define GTK_SCROLLED_WINDOW(x) (x)
+#endif
+#ifndef gtk_drop_down_new_from_strings
+#define gtk_drop_down_new_from_strings(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_label_new
+#define gtk_label_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_entry_new
+#define gtk_entry_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef GTK_ENTRY
+#define GTK_ENTRY(x) (x)
+#endif
+// CSS provider helpers
+#ifndef gtk_css_provider_new
+#define gtk_css_provider_new(...) ((GtkCssProvider*)nullptr)
+#endif
+#ifndef gtk_style_context_add_provider
+#define gtk_style_context_add_provider(...) ((void)0)
+#endif
+#ifndef gtk_widget_get_style_context
+#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
+#endif
+#ifndef gtk_css_provider_load_from_string
+#define gtk_css_provider_load_from_string(...) ((void)0)
+#endif
+// Generic signal/idle helpers
+#ifndef g_signal_connect
+#define g_signal_connect(...) ((void)0)
+#endif
+#ifndef g_idle_add
+#define g_idle_add(...) (0)
+#endif
+// Geometry helpers
+#ifndef gtk_widget_get_allocated_width
+#define gtk_widget_get_allocated_width(...) (0)
+#endif
+#ifndef gtk_widget_set_size_request
+#define gtk_widget_set_size_request(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_valign
+#define gtk_widget_set_valign(...) ((void)0)
+#endif
+#ifndef gtk_widget_add_css_class
+#define gtk_widget_add_css_class(...) ((void)0)
+#endif
+#ifndef gtk_widget_remove_css_class
+#define gtk_widget_remove_css_class(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_margin_top
+#define gtk_widget_set_margin_top(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_margin_bottom
+#define gtk_widget_set_margin_bottom(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_margin_start
+#define gtk_widget_set_margin_start(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_margin_end
+#define gtk_widget_set_margin_end(...) ((void)0)
 #endif
 #endif
 #include <memory>
@@ -288,6 +391,10 @@ private:
   void reset_state();
 
 private:
+  // Recompute and apply bubble max-width based on right area width (70%)
+  void update_bubble_max_width();
+  // Callback when the scrolled window gets a new size allocation
+  static void on_scrolled_size_allocate(GtkWidget *widget, gpointer allocation, gpointer user_data);
 };
 
 } // namespace gui

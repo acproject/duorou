@@ -2,10 +2,9 @@
 
 /* Welcome Screen Styles */
 .welcome-icon {
-    min-width: 40px;
-    min-height: 40px;
-    width: 300px;
-    height: 300px;
+    /* GTK 不支持 width/height，用 min-* 指定尺寸 */
+    min-width: 300px;
+    min-height: 300px;
     margin-bottom: 20px;
 }
 
@@ -58,7 +57,6 @@
     border-radius: 6px;
     padding: 8px 12px;
     margin-bottom: 4px;
-    text-align: left;
     color: #2d3748;
     font-size: 14px;
 }
@@ -128,7 +126,8 @@
 
 .send-button:disabled {
     background: #cbd5e0;
-    cursor: not-allowed;
+    /* GTK 不支持 cursor，用透明度传达禁用状态 */
+    opacity: 0.6;
 }
 
 .clear-button {
@@ -204,14 +203,10 @@ label.assistant-message {
 
 /* 消息容器样式 */
 .user-message-container {
-    display: flex;
-    justify-content: flex-end;
     margin: 8px 0;
 }
 
 .assistant-message-container {
-    display: flex;
-    justify-content: flex-start;
     margin: 8px 0;
 }
 
