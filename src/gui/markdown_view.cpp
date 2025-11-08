@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <regex>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
@@ -441,6 +442,31 @@ static std::string extract_first_url(const std::string &s) {
   return std::string();
 }
 
+// 提取 Markdown 图片语法中的 URL，例如 ![](file:///path/img.png) 或 ![alt](./img.jpg)
+static std::string extract_md_image_url(const std::string &s) {
+  size_t bang = s.find('!');
+  if (bang == std::string::npos) return std::string();
+  size_t lb = s.find('[', bang);
+  if (lb == std::string::npos) return std::string();
+  size_t rb = s.find(']', lb);
+  if (rb == std::string::npos) return std::string();
+  size_t lp = s.find('(', rb);
+  if (lp == std::string::npos) return std::string();
+  // 支持行内多个图片语法的第一个匹配
+  size_t rp = s.find(')', lp);
+  if (rp == std::string::npos || rp <= lp + 1) return std::string();
+  std::string url = trim(s.substr(lp + 1, rp - lp - 1));
+  if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
+    url = trim(url.substr(1, url.size() - 2));
+  }
+  // 简单过滤，避免把标题等误识别为URL
+  std::string lower = to_lower(url);
+  if (lower.rfind("file://", 0) == 0 || is_probable_url(lower) || has_image_extension(lower)) {
+    return url;
+  }
+  return std::string();
+}
+
 // Detect typical markdown table separator line: "| --- | :---: | --- |"
 static bool is_md_table_separator(const std::string &line) {
   std::string t = trim(line);
@@ -558,6 +584,17 @@ void MarkdownView::build_ui() {
   content_view_ = webkit_web_view_new();
   gtk_widget_set_hexpand(content_view_, TRUE);
   gtk_widget_set_vexpand(content_view_, TRUE);
+  // 允许从 file:// 页面访问本地文件资源，确保 Markdown 中的本地图片正常加载
+  {
+    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(content_view_));
+    if (settings) {
+      // 打开文件访问与跨文件访问（不同目录的 file://）
+      webkit_settings_set_allow_file_access_from_file_urls(settings, TRUE);
+      webkit_settings_set_allow_universal_access_from_file_urls(settings, TRUE);
+      // 保持常见功能开启（某些 Markdown 插件或高亮脚本可能需要）
+      webkit_settings_set_enable_javascript(settings, TRUE);
+    }
+  }
   gtk_box_append(GTK_BOX(content_), content_view_);
 #else
   content_view_ = nullptr; // non-WebKit: we will add labels/pictures directly under content_
@@ -705,7 +742,15 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   char *cwd = g_get_current_dir();
   GError *uri_err = nullptr;
   char *base_uri = g_filename_to_uri(cwd, nullptr, &uri_err);
-  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_view_), full.c_str(), base_uri ? base_uri : nullptr);
+  // 如果转换失败，使用一个稳健的回退：尝试使用 HOME 目录作为 file:// 基础
+  const char *fallback_home = g_get_home_dir();
+  std::string base_for_load;
+  if (base_uri && *base_uri) {
+    base_for_load.assign(base_uri);
+  } else if (fallback_home && *fallback_home) {
+    base_for_load = std::string("file://") + fallback_home;
+  }
+  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_view_), full.c_str(), base_for_load.empty() ? nullptr : base_for_load.c_str());
   if (base_uri) g_free(base_uri);
   if (cwd) g_free(cwd);
   if (uri_err) g_error_free(uri_err);
@@ -852,6 +897,17 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       // no url found, show as text
       append_text(line);
       continue;
+    }
+
+    // Case 1.5: 仅当整行就是一个 markdown 图片语法时，作为纯图片行处理
+    {
+      static const std::regex re_md_pure_line("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
+      std::smatch m;
+      if (std::regex_match(line, m, re_md_pure_line) && m.size() >= 2) {
+        std::string img_url = trim(m[1].str());
+        append_picture(img_url);
+        continue;
+      }
     }
 
     // Case 1: whole-line is an image URL (with common extensions)

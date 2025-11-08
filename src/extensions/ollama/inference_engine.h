@@ -107,7 +107,7 @@ public:
       return std::string("[Vocab error] ") + prompt;
     }
 
-    // --------- Prompt heuristics for text path (handle media-only input) ---------
+    // --------- Prompt heuristics for text path (handle media inlined with text) ---------
     auto trim_copy = [](const std::string &s) -> std::string {
       size_t start = 0, end = s.size();
       while (start < end && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
@@ -115,41 +115,31 @@ public:
       return s.substr(start, end - start);
     };
 
-    auto is_markdown_image_line = [](const std::string &s) -> bool {
-      static const std::regex re("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
-      return std::regex_match(s, re);
+    auto contains_md_image_any = [](const std::string &s) -> bool {
+      static const std::regex re("!\\[[^\\]]*\\]\\(([^)]+)\\)");
+      return std::regex_search(s, re);
     };
 
-    auto looks_like_url = [&](const std::string &s) -> bool {
-      const std::string t = trim_copy(s);
-      static const std::regex re_scheme("^([a-zA-Z][a-zA-Z0-9+.-]*):\\/\\/");
-      if (std::regex_search(t, re_scheme)) return true;
-      static const std::regex re_data("^data:image/[^;]+;base64,");
-      if (std::regex_search(t, re_data)) return true;
-      return false;
+    auto contains_data_image = [](const std::string &s) -> bool {
+      static const std::regex re_data("data:image/[^;]+;base64,");
+      return std::regex_search(s, re_data);
     };
 
-    auto looks_like_image_reference = [&](const std::string &s) -> bool {
-      const std::string t = trim_copy(s);
-      if (t.empty()) return false;
-      if (is_markdown_image_line(t)) return true;
-      if (looks_like_url(t)) {
-        static const std::regex re_img_ext("\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)(\\?.*)?$", std::regex::icase);
-        return std::regex_search(t, re_img_ext) || t.rfind("data:image/", 0) == 0;
-      }
-      static const std::regex re_local_img("\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)$", std::regex::icase);
-      if (std::regex_search(t, re_local_img)) {
-        if (t.find('/') != std::string::npos || t.find('\\') != std::string::npos) {
-          return t.find_first_of(" \t\r\n") == std::string::npos;
-        }
-      }
-      return false;
+    auto contains_file_url = [](const std::string &s) -> bool {
+      static const std::regex re_file("file://[^\\s)]+");
+      return std::regex_search(s, re_file);
+    };
+
+    auto contains_http_image_url = [](const std::string &s) -> bool {
+      static const std::regex re_http_img("https?://[^\\s)]+\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)(\\?[^\\s)]*)?", std::regex::icase);
+      return std::regex_search(s, re_http_img);
     };
 
     std::string prompt_effective = trim_copy(prompt);
-    const bool prompt_is_media_ref = looks_like_image_reference(prompt_effective);
-    // 如果提示中包含图片引用，转到 generateTextWithImages（空特征将触发 mtmd 注入逻辑）
-    if (prompt_is_media_ref) {
+    const bool prompt_contains_media = contains_md_image_any(prompt) || contains_data_image(prompt) ||
+                                       contains_file_url(prompt) || contains_http_image_url(prompt);
+    // 如果提示中包含任何图片引用（即便混合文本），转到 generateTextWithImages
+    if (prompt_contains_media) {
       return generateTextWithImages(prompt, /*image_features=*/{}, max_tokens, temperature, top_p);
     }
 
@@ -274,66 +264,64 @@ public:
 
     // If no features provided, attempt to inject image via mtmd using the prompt reference
     if (image_features.empty()) {
-      // Heuristics to determine and extract media path
+      // Heuristics to detect and extract media path even when mixed with text
       auto trim_copy_local = [](const std::string &s) -> std::string {
         size_t start = 0, end = s.size();
         while (start < end && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
         while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
         return s.substr(start, end - start);
       };
-      auto is_markdown_image_line_local = [](const std::string &s) -> bool {
-        static const std::regex re("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
-        return std::regex_match(s, re);
+      auto contains_md_image_any_local = [](const std::string &s) -> bool {
+        static const std::regex re("!\\[[^\\]]*\\]\\(([^)]+)\\)");
+        return std::regex_search(s, re);
       };
-      auto looks_like_url_local = [&](const std::string &s) -> bool {
-        const std::string t = trim_copy_local(s);
-        static const std::regex re_scheme("^([a-zA-Z][a-zA-Z0-9+.-]*):\\/\\/");
-        if (std::regex_search(t, re_scheme)) return true;
-        static const std::regex re_data("^data:image/[^;]+;base64,");
-        if (std::regex_search(t, re_data)) return true;
-        return false;
+      auto extract_md_image_url_any = [](const std::string &s, std::smatch &m_out) -> bool {
+        static const std::regex re("!\\[[^\\]]*\\]\\(([^)]+)\\)");
+        return std::regex_search(s, m_out, re) && m_out.size() >= 2;
       };
-      auto looks_like_image_reference_local = [&](const std::string &s) -> bool {
-        const std::string t = trim_copy_local(s);
-        if (t.empty()) return false;
-        if (is_markdown_image_line_local(t)) return true;
-        if (looks_like_url_local(t)) {
-          static const std::regex re_img_ext("\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)(\\?.*)?$", std::regex::icase);
-          return std::regex_search(t, re_img_ext) || t.rfind("data:image/", 0) == 0;
-        }
-        static const std::regex re_local_img("\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)$", std::regex::icase);
-        if (std::regex_search(t, re_local_img)) {
-          if (t.find('/') != std::string::npos || t.find('\\') != std::string::npos) {
-            return t.find_first_of(" \t\r\n") == std::string::npos;
-          }
-        }
-        return false;
+      auto extract_first_file_url = [](const std::string &s, std::smatch &m_out) -> bool {
+        static const std::regex re("file://[^\\s)]+");
+        return std::regex_search(s, m_out, re);
       };
-      auto extract_media_local_path = [&](const std::string &s) -> std::string {
-        std::string t = trim_copy_local(s);
-        std::smatch m;
-        static const std::regex re_md("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
-        if (std::regex_match(t, m, re_md) && m.size() >= 2) {
-          t = trim_copy_local(m[1].str());
-        }
-        if (t.rfind("file://", 0) == 0) {
-          return t.substr(7);
-        }
-        return t;
+      auto extract_first_http_image = [](const std::string &s, std::smatch &m_out) -> bool {
+        static const std::regex re("https?://[^\\s)]+\\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)(\\?[^\\s)]*)?", std::regex::icase);
+        return std::regex_search(s, m_out, re);
+      };
+      auto contains_data_image_local = [](const std::string &s) -> bool {
+        static const std::regex re("data:image/[^;]+;base64,");
+        return std::regex_search(s, re);
       };
 
-      const bool is_media_ref = looks_like_image_reference_local(prompt);
-      if (!is_media_ref) {
+      // Determine media presence
+      const bool has_media = contains_md_image_any_local(prompt) || contains_data_image_local(prompt) ||
+                             std::regex_search(prompt, std::regex("file://")) ||
+                             std::regex_search(prompt, std::regex("https?://", std::regex::icase));
+      if (!has_media) {
         return std::string("[No image features provided] ") + prompt;
       }
-      std::string media_path = prompt;
-      {
-        std::smatch m;
-        static const std::regex re_md("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
-        if (std::regex_match(media_path, m, re_md) && m.size() >= 2) {
-          media_path = m[1].str();
-        }
+
+      // Extract media URL/path and user text part
+      std::string media_path;
+      std::string user_text;
+      std::smatch m;
+      if (extract_md_image_url_any(prompt, m)) {
+        media_path = trim_copy_local(m[1].str());
+        user_text = trim_copy_local(prompt.substr(0, m.position(0)) + " " +
+                                    prompt.substr(m.position(0) + m.length(0)));
+      } else if (extract_first_file_url(prompt, m)) {
+        media_path = trim_copy_local(m.str());
+        user_text = trim_copy_local(prompt.substr(0, m.position(0)) + " " +
+                                    prompt.substr(m.position(0) + m.length(0)));
+      } else if (extract_first_http_image(prompt, m)) {
+        media_path = trim_copy_local(m.str());
+        user_text = trim_copy_local(prompt.substr(0, m.position(0)) + " " +
+                                    prompt.substr(m.position(0) + m.length(0)));
+      } else {
+        // Fallback: data:image or local path mixed; use full prompt as text, try to pick first token as path
+        user_text = trim_copy_local(prompt);
+        media_path = user_text; // will be handled below for local path
       }
+
       // 对本地路径执行存在性校验；对 http(s)/data URI 不进行文件系统校验
       if (media_path.empty()) {
         return std::string("[Media path invalid or not found] ") + media_path;
@@ -343,27 +331,48 @@ public:
       if (!is_http && !is_data) {
         std::string local_path = media_path;
         if (local_path.rfind("file://", 0) == 0) {
-          local_path = local_path.substr(7);
+          // 解码 file:// URI -> 本地路径
+          auto percent_decode_local = [](const std::string &s) -> std::string {
+            std::string out; out.reserve(s.size());
+            for (size_t i = 0; i < s.size(); ++i) {
+              if (s[i] == '%' && i + 2 < s.size()) {
+                auto hex = s.substr(i + 1, 2);
+                char *endp = nullptr;
+                long v = std::strtol(hex.c_str(), &endp, 16);
+                if (endp && *endp == '\0') { out.push_back(static_cast<char>(v)); i += 2; continue; }
+              }
+              out.push_back(s[i]);
+            }
+            return out;
+          };
+          local_path = percent_decode_local(local_path.substr(7));
         }
+        // local path should exist; otherwise bail out early
         if (!std::filesystem::exists(local_path)) {
           return std::string("[Media path invalid or not found] ") + media_path;
         }
       }
 
-      // Build effective prompt with media marker (allow override, use mtmd default marker)
+      // Build effective prompt with media marker (allow override)
       std::string prompt_media;
       const char *marker = mtmd_default_marker();
-      // 支持通过环境变量覆盖图片描述模板
       const char *env_prompt = std::getenv("OVERRIDE_IMAGE_PROMPT");
       if (env_prompt && *env_prompt) {
         prompt_media = std::string(env_prompt);
-        // 若用户提示未包含媒体标记，则追加标记以确保图片被注入
         if (prompt_media.find(marker) == std::string::npos) {
           prompt_media += marker;
         }
       } else {
-        prompt_media = std::string("请详细用中文描述这张图片：") + marker + std::string("。要求简洁准确。");
+        if (!user_text.empty()) {
+          prompt_media = user_text;
+          if (prompt_media.find(marker) == std::string::npos) {
+            prompt_media += marker;
+          }
+        } else {
+          prompt_media = std::string("请详细用中文描述这张图片：") + marker + std::string("。要求简洁准确。");
+        }
       }
+      
 
       
 
@@ -458,14 +467,33 @@ public:
         pclose(pipe);
         return buf;
       };
-      media_path = prompt;
-      {
-        std::smatch m;
-        static const std::regex re_md("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
-        if (std::regex_match(media_path, m, re_md) && m.size() >= 2) {
-          media_path = m[1].str();
+      // 辅助：对 file:// URI 进行百分号解码，得到可用的本地路径
+      auto percent_decode = [](const std::string &s) -> std::string {
+        std::string out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size(); ++i) {
+          if (s[i] == '%' && i + 2 < s.size()) {
+            auto hex = s.substr(i + 1, 2);
+            char *endp = nullptr;
+            long v = std::strtol(hex.c_str(), &endp, 16);
+            if (endp && *endp == '\0') {
+              out.push_back(static_cast<char>(v));
+              i += 2;
+              continue;
+            }
+          }
+          out.push_back(s[i]);
         }
-      }
+        return out;
+      };
+      auto file_uri_to_path = [&](const std::string &uri) -> std::string {
+        // 仅当是 file:// 时进行处理
+        if (uri.rfind("file://", 0) == 0) {
+          // 去掉协议前缀并对百分号编码解码
+          return percent_decode(uri.substr(7));
+        }
+        return uri;
+      };
 
       mtmd_bitmap *bitmap = nullptr;
       if (media_path.rfind("data:image/", 0) == 0) {
@@ -489,11 +517,10 @@ public:
         }
         bitmap = mtmd_helper_bitmap_init_from_buf(mctx, bytes.data(), bytes.size());
       } else if (media_path.rfind("file://", 0) == 0) {
-        const std::string local_path = media_path.substr(7, media_path.size() - 1);
+        const std::string local_path = file_uri_to_path(media_path);
         bitmap = mtmd_helper_bitmap_init_from_file(mctx, local_path.c_str());
-      }
-      
-      else {
+      } else {
+        // 处理纯本地路径（可能包含百分号编码的边缘情况，但通常不需要）
         bitmap = mtmd_helper_bitmap_init_from_file(mctx, media_path.c_str());
       }
       if (!bitmap) {
