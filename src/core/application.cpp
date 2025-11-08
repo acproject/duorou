@@ -41,6 +41,7 @@
 typedef void *GApplication;
 #define G_APPLICATION(x) ((GApplication)(x))
 #define G_APPLICATION_FLAGS_NONE 0
+#define G_APPLICATION_DEFAULT_FLAGS 0
 #define G_CALLBACK(x) ((void (*)(void))(x))
 #define g_application_run(app, argc, argv) 0
 #define g_application_quit(app)                                                \
@@ -376,13 +377,15 @@ bool Application::initializeGtk() {
   }
 #endif
 
-  // If schemas are missing, fail GTK initialization to avoid GLib abort
+  // If schemas are missing, fail GTK initialization to avoid GLib abort (Windows only)
+#ifdef _WIN32
   if (!schemas_ready) {
     return false;
   }
+#endif
 
   // Create GTK application
-  gtk_app_ = gtk_application_new("com.duorou.app", G_APPLICATION_FLAGS_NONE);
+  gtk_app_ = gtk_application_new("com.duorou.app", G_APPLICATION_DEFAULT_FLAGS);
   if (!gtk_app_) {
     return false;
   }
