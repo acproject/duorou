@@ -7,14 +7,12 @@
 #include "video_source_dialog.h"
 #include "../core/model_manager.h"
 #include <chrono>
-// Prefer header presence over build macros; only define DUOROU_HAVE_GTK
-// when the header is actually available to the indexer/compiler.
-#ifdef __has_include
-#  if __has_include(<gtk/gtk.h>)
-#    include <gtk/gtk.h>
-#    if !defined(DUOROU_HAVE_GTK)
-#      define DUOROU_HAVE_GTK 1
-#    endif
+// Prefer header presence over build macros; include GTK headers only
+// when they are actually available to the compiler/indexer.
+#if __has_include(<gtk/gtk.h>)
+#  include <gtk/gtk.h>
+#  if !defined(DUOROU_HAVE_GTK)
+#    define DUOROU_HAVE_GTK 1
 #  endif
 #endif
 #ifndef DUOROU_HAVE_GTK
