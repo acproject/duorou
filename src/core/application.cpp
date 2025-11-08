@@ -308,7 +308,31 @@ bool Application::initializeGtk() {
   // On Windows, ensure GSettings schemas are discoverable to avoid GTK aborts
 #ifdef _WIN32
   const char *schema_env = std::getenv("GSETTINGS_SCHEMA_DIR");
-  if (!schema_env || !*schema_env) {
+
+  auto has_compiled = [](const std::filesystem::path &dir) -> bool {
+    try {
+      return std::filesystem::exists(dir) &&
+             std::filesystem::exists(dir / "gschemas.compiled");
+    } catch (...) {
+      return false;
+    }
+  };
+
+  std::filesystem::path current_env_dir;
+  if (schema_env && *schema_env) {
+    current_env_dir = std::filesystem::path(schema_env);
+    if (!has_compiled(current_env_dir)) {
+      std::cout << "[GTK] GSETTINGS_SCHEMA_DIR is set to '" << current_env_dir.string()
+                << "' but 'gschemas.compiled' is missing. Attempting fallback search."
+                << std::endl;
+      current_env_dir.clear();
+    } else {
+      std::cout << "[GTK] Using GSETTINGS_SCHEMA_DIR: " << current_env_dir.string() << std::endl;
+    }
+  }
+
+  bool schemas_ready = true;
+  if (current_env_dir.empty()) {
     std::vector<std::filesystem::path> candidates;
 
     // Prefer vcpkg installation if VCPKG_ROOT is set
@@ -326,19 +350,17 @@ bool Application::initializeGtk() {
       candidates.push_back(exe_dir / ".." / "share" / "glib-2.0" / "schemas");
     }
 
-    // Common system-wide locations (MSYS2 / GTK runtime)
+    // Common system-wide locations (MSYS2 / GTK runtime variants)
+    candidates.push_back(std::filesystem::path("C:/msys64/ucrt64/share/glib-2.0/schemas"));
+    candidates.push_back(std::filesystem::path("C:/msys64/clang64/share/glib-2.0/schemas"));
     candidates.push_back(std::filesystem::path("C:/msys64/mingw64/share/glib-2.0/schemas"));
     candidates.push_back(std::filesystem::path("C:/Program Files/GTK4-Runtime/share/glib-2.0/schemas"));
 
     std::filesystem::path found;
     for (const auto &c : candidates) {
-      try {
-        if (std::filesystem::exists(c) && std::filesystem::exists(c / "gschemas.compiled")) {
-          found = c;
-          break;
-        }
-      } catch (...) {
-        // Ignore filesystem errors
+      if (has_compiled(c)) {
+        found = c;
+        break;
       }
     }
 
@@ -346,12 +368,18 @@ bool Application::initializeGtk() {
       _putenv_s("GSETTINGS_SCHEMA_DIR", found.string().c_str());
       std::cout << "[GTK] GSETTINGS_SCHEMA_DIR set to: " << found.string() << std::endl;
     } else {
-      std::cout << "[GTK] Warning: GSETTINGS_SCHEMA_DIR not set and schemas not found."
-                   " GTK dialogs may fail. Install GTK/GLib schemas or set the env var manually."
+      std::cout << "[GTK] Error: GSettings schemas not found. Install GTK/GLib and ensure a 'gschemas.compiled' exists. "
+                   "Typical locations include MSYS2 (ucrt64/clang64/mingw64) or a GTK4 runtime."
                 << std::endl;
+      schemas_ready = false;
     }
   }
 #endif
+
+  // If schemas are missing, fail GTK initialization to avoid GLib abort
+  if (!schemas_ready) {
+    return false;
+  }
 
   // Create GTK application
   gtk_app_ = gtk_application_new("com.duorou.app", G_APPLICATION_FLAGS_NONE);
