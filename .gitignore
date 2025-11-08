@@ -154,3 +154,6 @@ third_party/llama.cpp/**
 third_party/llama.cpp/src/**
 *.mcdb
 *.aof
+
+third_party/MiniMemory/src/conf/dump.mcdb
+dump.mcdb
