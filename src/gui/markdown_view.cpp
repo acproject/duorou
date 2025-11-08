@@ -6,7 +6,35 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#if __has_include(<gdk/gdk.h>)
 #include <gdk/gdk.h>
+#define DUOROU_HAVE_GDK 1
+#else
+#define DUOROU_HAVE_GDK 0
+// Minimal GDK/GLib stubs for indexers when headers are unavailable
+typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef void GtkWidget; typedef void GtkButton; typedef void GtkCssProvider; typedef void GtkDialog; typedef void GtkRoot; typedef void GFile;
+#ifndef gdk_display_get_default
+#define gdk_display_get_default(...) ((GdkDisplay*)nullptr)
+#endif
+#ifndef gdk_display_get_clipboard
+#define gdk_display_get_clipboard(...) ((GdkClipboard*)nullptr)
+#endif
+#ifndef gdk_clipboard_set_text
+#define gdk_clipboard_set_text(...) ((void)0)
+#endif
+#ifndef g_get_current_dir
+#define g_get_current_dir(...) ((char*)nullptr)
+#endif
+#ifndef g_filename_to_uri
+#define g_filename_to_uri(...) ((char*)nullptr)
+#endif
+#ifndef g_error_free
+#define g_error_free(...) ((void)0)
+#endif
+#endif
 #include <cairo/cairo.h>
 #include <cairo/cairo-pdf.h>
 
@@ -25,6 +53,74 @@
 #define DUOROU_HAVE_MD4C 0
 #endif
 
+// --- GTK/GLib lightweight stubs when headers are missing ---
+#ifndef G_CALLBACK
+#define G_CALLBACK(f) (f)
+#endif
+#ifndef GTK_WIDGET
+#define GTK_WIDGET(x) (x)
+#endif
+#ifndef GTK_STYLE_PROVIDER
+#define GTK_STYLE_PROVIDER(x) (x)
+#endif
+#ifndef gtk_css_provider_new
+#define gtk_css_provider_new(...) ((GtkCssProvider*)nullptr)
+#endif
+#ifndef gtk_css_provider_load_from_string
+#define gtk_css_provider_load_from_string(...) ((void)0)
+#endif
+#ifndef g_object_unref
+#define g_object_unref(...) ((void)0)
+#endif
+#ifndef g_signal_connect
+#define g_signal_connect(...) ((void)0)
+#endif
+#ifndef gtk_widget_get_root
+#define gtk_widget_get_root(...) ((GtkRoot*)nullptr)
+#endif
+#ifndef gtk_file_chooser_dialog_new
+#define gtk_file_chooser_dialog_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef GTK_FILE_CHOOSER_ACTION_SAVE
+#define GTK_FILE_CHOOSER_ACTION_SAVE 0
+#endif
+#ifndef GTK_RESPONSE_CANCEL
+#define GTK_RESPONSE_CANCEL 0
+#endif
+#ifndef GTK_RESPONSE_ACCEPT
+#define GTK_RESPONSE_ACCEPT 1
+#endif
+#ifndef gtk_file_chooser_set_current_name
+#define gtk_file_chooser_set_current_name(...) ((void)0)
+#endif
+#ifndef GTK_FILE_CHOOSER
+#define GTK_FILE_CHOOSER(x) (x)
+#endif
+#ifndef G_OBJECT
+#define G_OBJECT(x) (x)
+#endif
+#ifndef gtk_window_destroy
+#define gtk_window_destroy(...) ((void)0)
+#endif
+#ifndef gtk_window_present
+#define gtk_window_present(...) ((void)0)
+#endif
+#ifndef gtk_file_chooser_get_file
+#define gtk_file_chooser_get_file(...) ((GFile*)nullptr)
+#endif
+#ifndef g_file_get_path
+#define g_file_get_path(...) ((char*)nullptr)
+#endif
+#ifndef g_free
+#define g_free free
+#endif
+#ifndef g_object_get_data
+#define g_object_get_data(...) ((void*)nullptr)
+#endif
+#ifndef g_object_set_data_full
+#define g_object_set_data_full(...) ((void)0)
+#endif
+
 // Simple HTML escape for fallback
 static std::string html_escape(const std::string &in) {
   std::string out;
@@ -40,6 +136,57 @@ static std::string html_escape(const std::string &in) {
     }
   }
   return out;
+}
+
+// --- Simple helpers for media detection ---
+static std::string to_lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+  return s;
+}
+
+static std::string trim(const std::string &s) {
+  size_t a = s.find_first_not_of("\t\r\n ");
+  if (a == std::string::npos) return std::string();
+  size_t b = s.find_last_not_of("\t\r\n ");
+  return s.substr(a, b - a + 1);
+}
+
+static bool has_image_extension(const std::string &url_lower) {
+  static const char *exts[] = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff"};
+  for (auto *e : exts) {
+    if (url_lower.size() >= strlen(e) && url_lower.rfind(e) == url_lower.size() - strlen(e)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool is_probable_url(const std::string &s) {
+  return s.rfind("http://", 0) == 0 || s.rfind("https://", 0) == 0 || s.rfind("file://", 0) == 0 || s.rfind("/", 0) == 0;
+}
+
+// Convert lines that are pure image URLs into markdown image syntax, e.g. ![](url)
+static std::string preprocess_markdown_for_media(const std::string &md) {
+  std::istringstream iss(md);
+  std::ostringstream oss;
+  std::string line;
+  bool changed = false;
+  while (std::getline(iss, line)) {
+    std::string t = trim(line);
+    std::string tl = to_lower(t);
+    if (!t.empty() && is_probable_url(t) && has_image_extension(tl)) {
+      oss << "![](" << t << ")\n";
+      changed = true;
+    } else {
+      oss << line << "\n";
+    }
+  }
+  // Preserve trailing newline consistency
+  std::string out = oss.str();
+  if (!out.empty() && out.back() == '\n') {
+    // ok
+  }
+  return changed ? out : md;
 }
 
 namespace duorou {
@@ -196,10 +343,14 @@ void MarkdownView::setup_actions() {
 void MarkdownView::set_markdown(const std::string &markdown) {
   markdown_ = markdown;
 #if DUOROU_HAVE_WEBKIT2GTK
-  std::string html = to_html(markdown_);
+  // Preprocess: auto-convert bare image links to markdown image syntax
+  std::string preprocessed = preprocess_markdown_for_media(markdown_);
+  std::string html = to_html(preprocessed);
   // Minimal CSS for readability
   std::string full = std::string("<html><head><meta charset='utf-8'>") +
                      "<style>body{font-family:-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;line-height:1.5;padding:0;margin:0;}" \
+                     "img{max-width:100%;height:auto;border-radius:8px;}" \
+                     "a{word-break:break-all;}" \
                      "pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:2px 4px;border-radius:4px;}" \
                      "pre{padding:8px;overflow:auto;} blockquote{color:#6a737d;border-left:4px solid #dfe2e5;padding:0 1em;}" \
                      "table{border-collapse:collapse;} th,td{border:1px solid #dfe2e5;padding:6px 13px;}" \
@@ -231,8 +382,69 @@ std::string MarkdownView::to_html(const std::string &md) const {
   md_html(md.c_str(), (MD_SIZE)md.size(), cb, &html, 0, 0);
   return html;
 #else
-  // Minimal fallback: wrap in <pre> with escaping
-  return std::string("<pre>") + html_escape(md) + "</pre>";
+  // Minimal fallback HTML: convert pure image links per-line; otherwise escape as paragraphs
+  std::istringstream iss(md);
+  std::ostringstream out;
+  std::string line;
+  while (std::getline(iss, line)) {
+    std::string t = trim(line);
+    std::string tl = to_lower(t);
+    // Case 1: whole-line is an image URL
+    if (!t.empty() && is_probable_url(t) && has_image_extension(tl)) {
+      out << "<img src=\"" << t << "\" style=\"max-width:100%;height:auto;border-radius:8px;\">\n";
+      continue;
+    }
+    if (t.empty()) continue;
+
+    // Case 2: parse inline markdown image syntax: ![alt](url)
+    std::string rendered;
+    size_t pos = 0;
+    bool has_img = false;
+    while (true) {
+      size_t bang = line.find("![", pos);
+      if (bang == std::string::npos) {
+        // append remaining as text
+        rendered.append(html_escape(line.substr(pos)));
+        break;
+      }
+      // append text before image
+      rendered.append(html_escape(line.substr(pos, bang - pos)));
+      size_t rb = line.find(']', bang + 2);
+      if (rb == std::string::npos) { // malformed, treat as text
+        rendered.append(html_escape(line.substr(bang)));
+        break;
+      }
+      size_t lp = line.find('(', rb + 1);
+      if (lp == std::string::npos) { // malformed
+        rendered.append(html_escape(line.substr(bang)));
+        break;
+      }
+      size_t rp = line.find(')', lp + 1);
+      if (rp == std::string::npos) { // malformed
+        rendered.append(html_escape(line.substr(bang)));
+        break;
+      }
+      std::string alt = line.substr(bang + 2, rb - (bang + 2));
+      std::string url = trim(line.substr(lp + 1, rp - (lp + 1)));
+      std::string url_l = to_lower(url);
+      // Emit image only if URL seems valid
+      if (is_probable_url(url) || has_image_extension(url_l)) {
+        rendered.append(std::string("<img src=\"") + html_escape(url) + "\" alt=\"" + html_escape(alt) + "\" style=\"max-width:100%;height:auto;border-radius:8px;\">");
+        has_img = true;
+      } else {
+        // Not a valid URL, fall back to text
+        rendered.append(html_escape(line.substr(bang, rp - bang + 1)));
+      }
+      pos = rp + 1;
+    }
+    // Wrap line: if we inserted images, allow them without extra <p>; include any surrounding text in <p>
+    if (has_img) {
+      out << rendered << "\n";
+    } else {
+      out << "<p>" << rendered << "</p>\n";
+    }
+  }
+  return out.str().empty() ? std::string("<pre>") + html_escape(md) + "</pre>" : out.str();
 #endif
 }
 

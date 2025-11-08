@@ -61,6 +61,15 @@ typedef int gint; typedef void* gpointer;
 #ifndef gtk_text_view_set_cursor_visible
 #define gtk_text_view_set_cursor_visible(...) ((void)0)
 #endif
+#ifndef GtkTextBuffer
+typedef void GtkTextBuffer;
+#endif
+#ifndef gtk_text_view_get_buffer
+#define gtk_text_view_get_buffer(...) ((GtkTextBuffer*)nullptr)
+#endif
+#ifndef gtk_text_buffer_set_text
+#define gtk_text_buffer_set_text(...) ((void)0)
+#endif
 #ifndef gtk_button_new_with_label
 #define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
 #endif
@@ -71,7 +80,12 @@ typedef int gint; typedef void* gpointer;
 #define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
 #endif
 #endif
+#if __has_include(<string>)
 #include <string>
+#else
+// Minimal std::string stub to reduce editor diagnostics when C++ STL headers are unavailable
+namespace std { class string {}; }
+#endif
 
 namespace duorou {
 namespace gui {
