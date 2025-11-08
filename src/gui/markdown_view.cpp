@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
 #if __has_include(<gdk/gdk.h>)
 #include <gdk/gdk.h>
 #define DUOROU_HAVE_GDK 1
@@ -36,11 +37,14 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #endif
 #endif
 
-// Ensure DUOROU_HAVE_GTK is consistently defined in this translation unit
-#ifndef DUOROU_HAVE_GTK
+// Ensure GTK is included when available, and DUOROU_HAVE_GTK reflects reality
 #if __has_include(<gtk/gtk.h>)
+#include <gtk/gtk.h>
+#ifndef DUOROU_HAVE_GTK
 #define DUOROU_HAVE_GTK 1
+#endif
 #else
+#ifndef DUOROU_HAVE_GTK
 #define DUOROU_HAVE_GTK 0
 #endif
 #endif
@@ -74,6 +78,20 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define DUOROU_HAVE_MD4C 1
 #else
 #define DUOROU_HAVE_MD4C 0
+#endif
+
+// CURL（用于下载远程图片，Fallback 渲染路径）
+#if __has_include(<curl/curl.h>)
+#include <curl/curl.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+#define DUOROU_HAVE_CURL 1
+#else
+#define DUOROU_HAVE_CURL 0
+#endif
+#ifndef _WIN32
+#include <unistd.h>
 #endif
 
 // --- GTK/GLib lightweight stubs when headers are missing ---
@@ -238,6 +256,24 @@ typedef int gint;
 #ifndef GTK_CONTENT_FIT_CONTAIN
 #define GTK_CONTENT_FIT_CONTAIN 0
 #endif
+#ifndef gtk_grid_new
+#define gtk_grid_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_grid_attach
+#define gtk_grid_attach(...) ((void)0)
+#endif
+#ifndef GTK_GRID
+#define GTK_GRID(x) (x)
+#endif
+#ifndef gtk_frame_new
+#define gtk_frame_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_frame_set_child
+#define gtk_frame_set_child(...) ((void)0)
+#endif
+#ifndef GTK_FRAME
+#define GTK_FRAME(x) (x)
+#endif
 #ifndef gtk_widget_set_margin_top
 #define gtk_widget_set_margin_top(...) ((void)0)
 #endif
@@ -295,9 +331,14 @@ static std::string trim(const std::string &s) {
 }
 
 static bool has_image_extension(const std::string &url_lower) {
+  // Consider query fragments and anchors: only check up to '?' or '#'
   static const char *exts[] = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff"};
+  size_t end = url_lower.size();
+  size_t qpos = url_lower.find('?'); if (qpos != std::string::npos) end = std::min(end, qpos);
+  size_t hpos = url_lower.find('#'); if (hpos != std::string::npos) end = std::min(end, hpos);
   for (auto *e : exts) {
-    if (url_lower.size() >= strlen(e) && url_lower.rfind(e) == url_lower.size() - strlen(e)) {
+    size_t elen = strlen(e);
+    if (end >= elen && url_lower.rfind(e, end) == end - elen) {
       return true;
     }
   }
@@ -438,11 +479,67 @@ static std::vector<std::string> split_md_table_row(const std::string &line) {
   return cells;
 }
 
+// 使用 libcurl 将远程 URL 下载到临时文件（POSIX），供 Fallback 渲染
+static bool download_url_to_temp(const std::string &url, std::string &out_path) {
+#if DUOROU_HAVE_CURL
+#ifndef _WIN32
+  char tmpl[] = "/tmp/duorou-img-XXXXXX";
+  int fd = mkstemp(tmpl);
+  if (fd < 0) {
+    return false;
+  }
+  FILE *fp = fdopen(fd, "wb");
+  if (!fp) {
+    close(fd);
+    unlink(tmpl);
+    return false;
+  }
+  CURL *curl = curl_easy_init();
+  if (!curl) {
+    fclose(fp);
+    unlink(tmpl);
+    return false;
+  }
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "duorou/markdown-view");
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
+    FILE *out = static_cast<FILE*>(userdata);
+    return fwrite(ptr, size, nmemb, out);
+  });
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+  CURLcode res = curl_easy_perform(curl);
+  curl_easy_cleanup(curl);
+  fclose(fp);
+  if (res != CURLE_OK) {
+    unlink(tmpl);
+    return false;
+  }
+  out_path = std::string(tmpl);
+  return true;
+#else
+  (void)url; (void)out_path;
+  return false;
+#endif
+#else
+  (void)url; (void)out_path;
+  return false;
+#endif
+}
+
 namespace duorou {
 namespace gui {
 
 MarkdownView::MarkdownView() { build_ui(); setup_actions(); }
-MarkdownView::~MarkdownView() {}
+MarkdownView::~MarkdownView() {
+#ifndef _WIN32
+  for (const auto &p : temp_files_) {
+    if (!p.empty()) unlink(p.c_str());
+  }
+#endif
+}
 
 void MarkdownView::build_ui() {
   container_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -621,6 +718,13 @@ void MarkdownView::set_markdown(const std::string &markdown) {
     gtk_box_remove(GTK_BOX(content_), child);
     child = next;
   }
+  // 清理上一次渲染留下的临时图片文件
+#ifndef _WIN32
+  for (const auto &p : temp_files_) {
+    if (!p.empty()) unlink(p.c_str());
+  }
+#endif
+  temp_files_.clear();
 
   auto append_text = [&](const std::string &text) {
     if (text.empty()) return;
@@ -641,21 +745,77 @@ void MarkdownView::set_markdown(const std::string &markdown) {
 
   auto append_picture = [&](const std::string &url) {
     GtkWidget *pic = nullptr;
-    if (url.rfind("file://", 0) == 0 || url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
-      GFile *gf = g_file_new_for_uri(url.c_str());
+    auto try_local_path = [&](const std::string &path) {
+      GtkWidget *w = nullptr;
+      GFile *gf = g_file_new_for_path(path.c_str());
       if (gf) {
-        pic = gtk_picture_new_for_file(gf);
+        w = gtk_picture_new_for_file(gf);
         g_object_unref(gf);
       }
-    } else if (!url.empty() && url[0] == '/') {
-      // absolute path
-      GFile *gf = g_file_new_for_path(url.c_str());
-      if (gf) {
-        pic = gtk_picture_new_for_file(gf);
-        g_object_unref(gf);
+      if (!w) w = gtk_picture_new_for_filename(path.c_str());
+      return w;
+    };
+    if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
+      // In pure GTK fallback, http(s) fetching may be unavailable.
+      // 先尝试通过 GFile 打开；失败则用 libcurl 下载到临时文件
+      std::string lower = to_lower(url);
+      GFile *gf = nullptr;
+      if (has_image_extension(lower)) {
+        gf = g_file_new_for_uri(url.c_str());
+        if (gf) {
+          pic = gtk_picture_new_for_file(gf);
+          g_object_unref(gf);
+        }
       }
       if (!pic) {
-        pic = gtk_picture_new_for_filename(url.c_str());
+        std::string tmp;
+        if (download_url_to_temp(url, tmp)) {
+          pic = gtk_picture_new_for_filename(tmp.c_str());
+          if (pic) {
+            temp_files_.push_back(tmp);
+          } else {
+#ifndef _WIN32
+            unlink(tmp.c_str());
+#endif
+          }
+        }
+      }
+    } else if (url.rfind("file://", 0) == 0) {
+      GFile *gf = g_file_new_for_uri(url.c_str());
+      if (gf) {
+        // 首选基于 GFile 的加载
+        pic = gtk_picture_new_for_file(gf);
+        if (!pic) {
+          // 退化：将 file:// URI 转换为本地路径再尝试
+          char *path = g_file_get_path(gf);
+          if (path) {
+            GtkWidget *alt = gtk_picture_new_for_filename(path);
+            if (alt) pic = alt;
+            g_free(path);
+          }
+        }
+        g_object_unref(gf);
+      }
+    } else {
+      // Local paths: support absolute, relative and '~' expansion
+      std::string path = url;
+      if (!url.empty() && url[0] == '~') {
+        const char *home = getenv("HOME");
+        if (home && url.size() > 1 && url[1] == '/') {
+          path = std::string(home) + url.substr(1);
+        }
+      }
+      if (!path.empty() && path[0] == '/') {
+        pic = try_local_path(path);
+      } else {
+        char *cwd = g_get_current_dir();
+        if (cwd) {
+          std::string abs = std::string(cwd) + "/" + path;
+          pic = try_local_path(abs);
+          g_free(cwd);
+        } else {
+          pic = try_local_path(path);
+        }
       }
     }
     if (!pic) {

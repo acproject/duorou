@@ -6,12 +6,22 @@
 #ifndef DUOROU_GUI_MARKDOWN_VIEW_H
 #define DUOROU_GUI_MARKDOWN_VIEW_H
 
+#include <vector>
+
 #if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
 #else
-// Minimal GTK stubs to reduce editor diagnostics when GTK headers are unavailable.
-typedef void GtkWidget; typedef void GtkButton; typedef void GtkTextView; typedef void GtkCssProvider; typedef void GtkStyleContext; typedef void GtkWindow; typedef void GtkEntry;
-typedef int gint; typedef void* gpointer;
+// Minimal GTK stubs to reduce editor diagnostics when GTK headers are
+// unavailable.
+typedef void GtkWidget;
+typedef void GtkButton;
+typedef void GtkTextView;
+typedef void GtkCssProvider;
+typedef void GtkStyleContext;
+typedef void GtkWindow;
+typedef void GtkEntry;
+typedef int gint;
+typedef void *gpointer;
 #ifndef TRUE
 #define TRUE 1
 #endif
@@ -38,12 +48,14 @@ typedef int gint; typedef void* gpointer;
 typedef void GtkTextBuffer;
 #endif
 #ifdef __cplusplus
-  #if __has_include(<string>)
-    #include <string>
-  #else
-    // Forward declaration when <string> is missing but compiling as C++
-    namespace std { class string; }
-  #endif
+#if __has_include(<string>)
+#include <string>
+#else
+// Forward declaration when <string> is missing but compiling as C++
+namespace std {
+class string;
+}
+#endif
 
 namespace duorou {
 namespace gui {
@@ -80,6 +92,8 @@ private:
   // Optional inner view when using WebKit
   GtkWidget *content_view_ = nullptr;
   std::string markdown_;
+  // 临时图片文件列表（用于 Fallback 远程图片下载的生命周期管理）
+  std::vector<std::string> temp_files_;
 
   // Render markdown -> HTML
   std::string to_html(const std::string &md) const;
