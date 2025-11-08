@@ -20,7 +20,7 @@
 #include <thread>
 
 // Fallback stubs when GTK headers are unavailable (for indexers/linting only)
-#if !__has_include(<gtk/gtk.h>)
+#if !defined(DUOROU_HAVE_GTK)
 // Basic TRUE/FALSE
 #ifndef TRUE
 #define TRUE 1

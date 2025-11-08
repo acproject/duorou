@@ -1,7 +1,7 @@
 #ifndef DUOROU_GUI_MAIN_WINDOW_H
 #define DUOROU_GUI_MAIN_WINDOW_H
 
-#if __has_include(<gtk/gtk.h>)
+#if defined(__has_include) && __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
 #define DUOROU_HAS_GTK 1
 #else
@@ -19,6 +19,123 @@ typedef unsigned int guint;
 // 额外的占位类型以便信号回调声明
 typedef void* GObject;
 typedef void* GParamSpec;
+ typedef void* GFile;
+
+ // 常用 GTK 类型转换宏占位
+ #ifndef GTK_WINDOW
+ #define GTK_WINDOW(x) (x)
+ #endif
+ #ifndef GTK_STACK
+ #define GTK_STACK(x) (x)
+ #endif
+ #ifndef GTK_LABEL
+ #define GTK_LABEL(x) (x)
+ #endif
+ #ifndef GTK_BOX
+ #define GTK_BOX(x) (x)
+ #endif
+ #ifndef GTK_PANED
+ #define GTK_PANED(x) (x)
+ #endif
+
+ // 常用 GTK4 函数占位（编辑器/索引器友好，运行时无影响）
+ #ifndef gtk_window_new
+ #define gtk_window_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_window_set_title
+ #define gtk_window_set_title(...) ((void)0)
+ #endif
+ #ifndef gtk_window_set_default_size
+ #define gtk_window_set_default_size(...) ((void)0)
+ #endif
+ #ifndef gtk_window_set_child
+ #define gtk_window_set_child(...) ((void)0)
+ #endif
+ #ifndef gtk_window_present
+ #define gtk_window_present(...) ((void)0)
+ #endif
+ #ifndef gtk_window_destroy
+ #define gtk_window_destroy(...) ((void)0)
+ #endif
+
+ #ifndef gtk_box_new
+ #define gtk_box_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_box_append
+ #define gtk_box_append(...) ((void)0)
+ #endif
+
+ #ifndef gtk_stack_new
+ #define gtk_stack_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_stack_add_named
+ #define gtk_stack_add_named(...) ((void)0)
+ #endif
+ #ifndef gtk_stack_set_visible_child_name
+ #define gtk_stack_set_visible_child_name(...) ((void)0)
+ #endif
+
+ #ifndef gtk_label_new
+ #define gtk_label_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_label_set_text
+ #define gtk_label_set_text(...) ((void)0)
+ #endif
+
+ #ifndef gtk_paned_new
+ #define gtk_paned_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_paned_set_start_child
+ #define gtk_paned_set_start_child(...) ((void)0)
+ #endif
+ #ifndef gtk_paned_set_end_child
+ #define gtk_paned_set_end_child(...) ((void)0)
+ #endif
+ #ifndef gtk_paned_set_position
+ #define gtk_paned_set_position(...) ((void)0)
+ #endif
+
+ #ifndef gtk_widget_set_visible
+ #define gtk_widget_set_visible(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_hide
+ #define gtk_widget_hide(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_show
+ #define gtk_widget_show(...) ((void)0)
+ #endif
+
+ // CSS/Display/GLib 占位
+ typedef void* GtkCssProvider; typedef void* GtkStyleProvider;
+ #ifndef GTK_STYLE_PROVIDER
+ #define GTK_STYLE_PROVIDER(x) ((GtkStyleProvider*)(x))
+ #endif
+ #ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+ #define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
+ #endif
+ #ifndef gdk_display_get_default
+ #define gdk_display_get_default(...) ((void*)nullptr)
+ #endif
+ #ifndef gtk_css_provider_new
+ #define gtk_css_provider_new(...) ((GtkCssProvider*)nullptr)
+ #endif
+ #ifndef gtk_css_provider_load_from_file
+ #define gtk_css_provider_load_from_file(...) ((void)0)
+ #endif
+ #ifndef g_file_new_for_path
+ #define g_file_new_for_path(...) ((GFile*)nullptr)
+ #endif
+ #ifndef g_object_unref
+ #define g_object_unref(...) ((void)0)
+ #endif
+
+ // 信号占位
+ #ifndef g_signal_connect
+ #define g_signal_connect(...) (0)
+ #endif
+ #ifndef G_CALLBACK
+ #define G_CALLBACK(f) ((void*)(f))
+ #endif
 #endif
 #include <memory>
 #include <string>

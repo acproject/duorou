@@ -33,59 +33,17 @@ typedef int gint; typedef void* gpointer;
 #ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
 #define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
 #endif
-// Common GTK functions used in MarkdownView; define as no-ops/dummies for indexing.
-#ifndef gtk_box_new
-#define gtk_box_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_box_append
-#define gtk_box_append(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_halign
-#define gtk_widget_set_halign(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_hexpand
-#define gtk_widget_set_hexpand(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_vexpand
-#define gtk_widget_set_vexpand(...) ((void)0)
-#endif
-#ifndef gtk_text_view_new
-#define gtk_text_view_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_text_view_set_wrap_mode
-#define gtk_text_view_set_wrap_mode(...) ((void)0)
-#endif
-#ifndef gtk_text_view_set_editable
-#define gtk_text_view_set_editable(...) ((void)0)
-#endif
-#ifndef gtk_text_view_set_cursor_visible
-#define gtk_text_view_set_cursor_visible(...) ((void)0)
-#endif
-#ifndef GtkTextBuffer
+// Note: do not define function-like GTK stubs here to avoid runtime issues.
+// Keep only type/constant placeholders for indexing when headers are missing.
 typedef void GtkTextBuffer;
 #endif
-#ifndef gtk_text_view_get_buffer
-#define gtk_text_view_get_buffer(...) ((GtkTextBuffer*)nullptr)
-#endif
-#ifndef gtk_text_buffer_set_text
-#define gtk_text_buffer_set_text(...) ((void)0)
-#endif
-#ifndef gtk_button_new_with_label
-#define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_style_context_add_provider
-#define gtk_style_context_add_provider(...) ((void)0)
-#endif
-#ifndef gtk_widget_get_style_context
-#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
-#endif
-#endif
-#if __has_include(<string>)
-#include <string>
-#else
-// Minimal std::string stub to reduce editor diagnostics when C++ STL headers are unavailable
-namespace std { class string {}; }
-#endif
+#ifdef __cplusplus
+  #if __has_include(<string>)
+    #include <string>
+  #else
+    // Forward declaration when <string> is missing but compiling as C++
+    namespace std { class string; }
+  #endif
 
 namespace duorou {
 namespace gui {
@@ -115,7 +73,12 @@ public:
 private:
   GtkWidget *container_ = nullptr;   // vertical box: [actions][content]
   GtkWidget *actions_box_ = nullptr; // right-aligned action buttons
-  GtkWidget *content_ = nullptr;     // WebKitWebView or GtkTextView
+  // Content container (vertical box). If WebKit is available, a WebKitWebView
+  // will be appended inside; otherwise, we build GTK widgets (labels/pictures)
+  // directly under this box.
+  GtkWidget *content_ = nullptr;
+  // Optional inner view when using WebKit
+  GtkWidget *content_view_ = nullptr;
   std::string markdown_;
 
   // Render markdown -> HTML
@@ -134,5 +97,10 @@ private:
 
 } // namespace gui
 } // namespace duorou
+#else
+// Non-C++ indexing mode: avoid namespace/class to reduce diagnostics.
+// Provide opaque placeholder so C indexers don't error out on usage.
+typedef void duorou_gui_markdown_view_opaque_t;
+#endif
 
 #endif // DUOROU_GUI_MARKDOWN_VIEW_H

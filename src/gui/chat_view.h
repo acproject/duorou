@@ -9,6 +9,7 @@
 #include <chrono>
 #if defined(__has_include) && __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#define DUOROU_HAVE_GTK 1
 #else
 // Lightweight GTK/GLib stubs to help indexers that lack GTK headers.
 // They do not change runtime behavior; real builds still use GTK.
@@ -58,106 +59,7 @@ typedef int gint; typedef void* gpointer;
 #ifndef GTK_INPUT_HINT_NONE
 #define GTK_INPUT_HINT_NONE 0
 #endif
-// Common GTK calls used in sources; macro stubs to avoid undeclared identifiers
-#ifndef gtk_box_new
-#define gtk_box_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_box_append
-#define gtk_box_append(...) ((void)0)
-#endif
-#ifndef GTK_BOX
-#define GTK_BOX(x) (x)
-#endif
-#ifndef gtk_widget_set_halign
-#define gtk_widget_set_halign(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_hexpand
-#define gtk_widget_set_hexpand(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_vexpand
-#define gtk_widget_set_vexpand(...) ((void)0)
-#endif
-#ifndef gtk_frame_new
-#define gtk_frame_new(...) ((GtkWidget*)nullptr)
-#endif
-// Widget traversal helpers
-#ifndef gtk_widget_get_first_child
-#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_widget_get_next_sibling
-#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_widget_get_last_child
-#define gtk_widget_get_last_child(...) ((GtkWidget*)nullptr)
-#endif
-// Scrolled window/dropdown/label/entry stubs
-#ifndef gtk_scrolled_window_new
-#define gtk_scrolled_window_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef GTK_SCROLLED_WINDOW
-#define GTK_SCROLLED_WINDOW(x) (x)
-#endif
-#ifndef gtk_drop_down_new_from_strings
-#define gtk_drop_down_new_from_strings(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_label_new
-#define gtk_label_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef gtk_entry_new
-#define gtk_entry_new(...) ((GtkWidget*)nullptr)
-#endif
-#ifndef GTK_ENTRY
-#define GTK_ENTRY(x) (x)
-#endif
-// CSS provider helpers
-#ifndef gtk_css_provider_new
-#define gtk_css_provider_new(...) ((GtkCssProvider*)nullptr)
-#endif
-#ifndef gtk_style_context_add_provider
-#define gtk_style_context_add_provider(...) ((void)0)
-#endif
-#ifndef gtk_widget_get_style_context
-#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
-#endif
-#ifndef gtk_css_provider_load_from_string
-#define gtk_css_provider_load_from_string(...) ((void)0)
-#endif
-// Generic signal/idle helpers
-#ifndef g_signal_connect
-#define g_signal_connect(...) ((void)0)
-#endif
-#ifndef g_idle_add
-#define g_idle_add(...) (0)
-#endif
-// Geometry helpers
-#ifndef gtk_widget_get_allocated_width
-#define gtk_widget_get_allocated_width(...) (0)
-#endif
-#ifndef gtk_widget_set_size_request
-#define gtk_widget_set_size_request(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_valign
-#define gtk_widget_set_valign(...) ((void)0)
-#endif
-#ifndef gtk_widget_add_css_class
-#define gtk_widget_add_css_class(...) ((void)0)
-#endif
-#ifndef gtk_widget_remove_css_class
-#define gtk_widget_remove_css_class(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_margin_top
-#define gtk_widget_set_margin_top(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_margin_bottom
-#define gtk_widget_set_margin_bottom(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_margin_start
-#define gtk_widget_set_margin_start(...) ((void)0)
-#endif
-#ifndef gtk_widget_set_margin_end
-#define gtk_widget_set_margin_end(...) ((void)0)
-#endif
-#endif
+#endif // end of minimal GTK placeholders; no function-like macros to avoid shadowing
 #include <memory>
 #include <string>
 #include <vector>

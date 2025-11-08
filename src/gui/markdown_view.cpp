@@ -35,8 +35,22 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define g_error_free(...) ((void)0)
 #endif
 #endif
+
+// Ensure DUOROU_HAVE_GTK is consistently defined in this translation unit
+#ifndef DUOROU_HAVE_GTK
+#if __has_include(<gtk/gtk.h>)
+#define DUOROU_HAVE_GTK 1
+#else
+#define DUOROU_HAVE_GTK 0
+#endif
+#endif
+#if __has_include(<cairo/cairo.h>) && __has_include(<cairo/cairo-pdf.h>)
 #include <cairo/cairo.h>
 #include <cairo/cairo-pdf.h>
+#define DUOROU_HAVE_CAIRO 1
+#else
+#define DUOROU_HAVE_CAIRO 0
+#endif
 
 #if __has_include(<webkit2/webkit2.h>)
 #include <webkit2/webkit2.h>
@@ -54,6 +68,7 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #endif
 
 // --- GTK/GLib lightweight stubs when headers are missing ---
+#if !__has_include(<gtk/gtk.h>)
 #ifndef G_CALLBACK
 #define G_CALLBACK(f) (f)
 #endif
@@ -120,6 +135,122 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #ifndef g_object_set_data_full
 #define g_object_set_data_full(...) ((void)0)
 #endif
+#endif // no gtk headers available
+
+// Additional lightweight GTK/GIO stubs for fallback rendering
+#if !__has_include(<gtk/gtk.h>)
+#ifndef GtkLabel
+typedef void GtkLabel;
+#endif
+#ifndef GtkPicture
+typedef void GtkPicture;
+#endif
+#ifndef GtkStyleContext
+typedef void GtkStyleContext;
+#endif
+#ifndef GtkWindow
+typedef void GtkWindow;
+#endif
+#ifndef gint
+typedef int gint;
+#endif
+#ifndef GTK_BOX
+#define GTK_BOX(x) (x)
+#endif
+#ifndef GTK_WINDOW
+#define GTK_WINDOW(x) (x)
+#endif
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#ifndef GTK_ALIGN_END
+#define GTK_ALIGN_END 1
+#endif
+#ifndef GTK_ORIENTATION_VERTICAL
+#define GTK_ORIENTATION_VERTICAL 0
+#endif
+#ifndef GTK_ORIENTATION_HORIZONTAL
+#define GTK_ORIENTATION_HORIZONTAL 1
+#endif
+#ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+#define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
+#endif
+#ifndef gtk_box_new
+#define gtk_box_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_set_halign
+#define gtk_widget_set_halign(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_hexpand
+#define gtk_widget_set_hexpand(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_vexpand
+#define gtk_widget_set_vexpand(...) ((void)0)
+#endif
+#ifndef gtk_button_new_with_label
+#define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_get_style_context
+#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
+#endif
+#ifndef gtk_style_context_add_provider
+#define gtk_style_context_add_provider(...) ((void)0)
+#endif
+#ifndef gtk_box_append
+#define gtk_box_append(...) ((void)0)
+#endif
+#ifndef gtk_label_new
+#define gtk_label_new(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_label_set_wrap
+#define gtk_label_set_wrap(...) ((void)0)
+#endif
+#ifndef gtk_label_set_xalign
+#define gtk_label_set_xalign(...) ((void)0)
+#endif
+#ifndef gtk_picture_new_for_filename
+#define gtk_picture_new_for_filename(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_picture_new_for_file
+#define gtk_picture_new_for_file(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef GTK_PICTURE
+#define GTK_PICTURE(x) (x)
+#endif
+#ifndef gtk_picture_set_content_fit
+#define gtk_picture_set_content_fit(...) ((void)0)
+#endif
+#ifndef GTK_CONTENT_FIT_CONTAIN
+#define GTK_CONTENT_FIT_CONTAIN 0
+#endif
+#ifndef gtk_widget_set_margin_top
+#define gtk_widget_set_margin_top(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_margin_bottom
+#define gtk_widget_set_margin_bottom(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_visible
+#define gtk_widget_set_visible(...) ((void)0)
+#endif
+#ifndef g_file_new_for_uri
+#define g_file_new_for_uri(...) ((GFile*)nullptr)
+#endif
+#ifndef g_file_new_for_path
+#define g_file_new_for_path(...) ((GFile*)nullptr)
+#endif
+#ifndef gtk_widget_get_first_child
+#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_get_next_sibling
+#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_box_remove
+#define gtk_box_remove(...) ((void)0)
+#endif
+#endif // no gtk headers
 
 // Simple HTML escape for fallback
 static std::string html_escape(const std::string &in) {
@@ -203,18 +334,18 @@ void MarkdownView::build_ui() {
   gtk_widget_set_halign(actions_box_, GTK_ALIGN_END);
   gtk_widget_set_hexpand(actions_box_, TRUE);
 
-  // Create content area
+  // Create content container (always a box); append inner view for WebKit when available
+  content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+  gtk_widget_set_hexpand(content_, TRUE);
+  gtk_widget_set_vexpand(content_, TRUE);
+  
 #if DUOROU_HAVE_WEBKIT2GTK
-  content_ = webkit_web_view_new();
-  gtk_widget_set_hexpand(content_, TRUE);
-  gtk_widget_set_vexpand(content_, TRUE);
+  content_view_ = webkit_web_view_new();
+  gtk_widget_set_hexpand(content_view_, TRUE);
+  gtk_widget_set_vexpand(content_view_, TRUE);
+  gtk_box_append(GTK_BOX(content_), content_view_);
 #else
-  content_ = gtk_text_view_new();
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(content_), GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_editable(GTK_TEXT_VIEW(content_), FALSE);
-  gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(content_), TRUE);
-  gtk_widget_set_hexpand(content_, TRUE);
-  gtk_widget_set_vexpand(content_, TRUE);
+  content_view_ = nullptr; // non-WebKit: we will add labels/pictures directly under content_
 #endif
 
   // Pack to container
@@ -359,14 +490,110 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   char *cwd = g_get_current_dir();
   GError *uri_err = nullptr;
   char *base_uri = g_filename_to_uri(cwd, nullptr, &uri_err);
-  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_), full.c_str(), base_uri ? base_uri : nullptr);
+  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_view_), full.c_str(), base_uri ? base_uri : nullptr);
   if (base_uri) g_free(base_uri);
   if (cwd) g_free(cwd);
   if (uri_err) g_error_free(uri_err);
 #else
-  // Fallback: show raw markdown text in read-only text view (selectable)
-  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(content_));
-  gtk_text_buffer_set_text(buf, markdown_.c_str(), (gint)markdown_.size());
+  // Fallback: build simple GTK widgets that handle images and text.
+  // Clear previous children
+  GtkWidget *child = gtk_widget_get_first_child(content_);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_box_remove(GTK_BOX(content_), child);
+    child = next;
+  }
+
+  auto append_text = [&](const std::string &text) {
+    if (text.empty()) return;
+    GtkWidget *lbl = gtk_label_new(text.c_str());
+    gtk_label_set_wrap((GtkLabel*)lbl, TRUE);
+    gtk_label_set_xalign((GtkLabel*)lbl, 0.0f);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    gtk_box_append(GTK_BOX(content_), lbl);
+  };
+
+  auto append_picture = [&](const std::string &url) {
+    GtkWidget *pic = nullptr;
+    if (url.rfind("file://", 0) == 0 || url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
+      GFile *gf = g_file_new_for_uri(url.c_str());
+      if (gf) {
+        pic = gtk_picture_new_for_file(gf);
+        g_object_unref(gf);
+      }
+    } else if (!url.empty() && url[0] == '/') {
+      // absolute path
+      GFile *gf = g_file_new_for_path(url.c_str());
+      if (gf) {
+        pic = gtk_picture_new_for_file(gf);
+        g_object_unref(gf);
+      }
+      if (!pic) {
+        pic = gtk_picture_new_for_filename(url.c_str());
+      }
+    }
+    if (!pic) {
+      // If we cannot create picture, just show the URL text
+      append_text(url);
+      return;
+    }
+    gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+    gtk_widget_set_hexpand(pic, TRUE);
+    gtk_widget_set_margin_top(pic, 4);
+    gtk_widget_set_margin_bottom(pic, 4);
+    gtk_box_append(GTK_BOX(content_), pic);
+  };
+
+  // Parse markdown by lines; render images and text blocks
+  std::istringstream iss(markdown_);
+  std::string line;
+  while (std::getline(iss, line)) {
+    std::string t = trim(line);
+    std::string tl = to_lower(t);
+    if (t.empty()) continue;
+
+    // Case 1: whole-line is an image URL
+    if (is_probable_url(t) && has_image_extension(tl)) {
+      append_picture(t);
+      continue;
+    }
+
+    // Case 2: inline images mixed with text: ![alt](url)
+    size_t pos = 0;
+    std::string before; // accumulate text before first image
+    bool emitted_any = false;
+    while (true) {
+      size_t bang = line.find("![", pos);
+      if (bang == std::string::npos) break;
+      before += line.substr(pos, bang - pos);
+      size_t rb = line.find(']', bang + 2);
+      if (rb == std::string::npos) break; // malformed
+      size_t lp = line.find('(', rb + 1);
+      if (lp == std::string::npos) break;
+      size_t rp = line.find(')', lp + 1);
+      if (rp == std::string::npos) break;
+      std::string url = trim(line.substr(lp + 1, rp - (lp + 1)));
+      std::string url_l = to_lower(url);
+      if (is_probable_url(url) || has_image_extension(url_l)) {
+        if (!before.empty()) { append_text(before); before.clear(); emitted_any = true; }
+        append_picture(url);
+        emitted_any = true;
+      } else {
+        before += line.substr(bang, rp - bang + 1); // treat as text
+      }
+      pos = rp + 1;
+    }
+    // Append remaining text
+    before += line.substr(pos);
+    if (!before.empty()) {
+      append_text(before);
+      emitted_any = true;
+    }
+    if (!emitted_any) {
+      // Fallback to plain text
+      append_text(line);
+    }
+  }
 #endif
 }
 
@@ -487,6 +714,8 @@ bool MarkdownView::export_pdf_with_webkit(const std::string &file_path) {
 }
 
 bool MarkdownView::export_pdf_with_cairo(const std::string &file_path) {
+  // If Cairo headers are unavailable, indicate failure gracefully
+#if DUOROU_HAVE_CAIRO
   // Very simple PDF export: write raw markdown text; formatting minimal
   cairo_surface_t *surface = cairo_pdf_surface_create(file_path.c_str(), 595, 842); // A4 in points
   cairo_t *cr = cairo_create(surface);
@@ -523,7 +752,22 @@ bool MarkdownView::export_pdf_with_cairo(const std::string &file_path) {
   cairo_surface_finish(surface);
   cairo_surface_destroy(surface);
   return true;
+#else
+  (void)file_path;
+  return false;
+#endif
 }
 
 } // namespace gui
 } // namespace duorou
+#if !__has_include(<gtk/gtk.h>)
+#ifndef gtk_widget_get_first_child
+#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_widget_get_next_sibling
+#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+#endif
+#ifndef gtk_box_remove
+#define gtk_box_remove(...) ((void)0)
+#endif
+#endif // no gtk headers

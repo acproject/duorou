@@ -191,7 +191,7 @@ void MainWindow::set_application(core::Application *app) { application_ = app; }
 
 void MainWindow::show() {
   if (window_) {
-    gtk_widget_show(window_);
+    gtk_window_present(GTK_WINDOW(window_));
 
     // Update system tray menu state
 #ifdef __APPLE__
@@ -205,7 +205,7 @@ void MainWindow::show() {
 void MainWindow::hide() {
   std::cout << "[MainWindow] hide() method called" << std::endl;
   if (window_) {
-    gtk_widget_hide(window_);
+    gtk_widget_set_visible(window_, FALSE);
     std::cout << "[MainWindow] Window hidden" << std::endl;
 
     // Update system tray menu state
@@ -231,10 +231,9 @@ void MainWindow::switch_to_chat() {
     current_view_ = "chat";
     update_sidebar_buttons(new_chat_button_);
 
-    // Update status bar
+    // Update status label
     if (status_bar_) {
-      gtk_statusbar_pop(GTK_STATUSBAR(status_bar_), 1);
-      gtk_statusbar_push(GTK_STATUSBAR(status_bar_), 1,
+      gtk_label_set_text(GTK_LABEL(status_bar_),
                          "Chat Mode - Ready for conversation");
     }
   }
@@ -246,10 +245,9 @@ void MainWindow::switch_to_image_generation() {
     current_view_ = "image";
     update_sidebar_buttons(image_button_);
 
-    // Update status bar
+    // Update status label
     if (status_bar_) {
-      gtk_statusbar_pop(GTK_STATUSBAR(status_bar_), 1);
-      gtk_statusbar_push(GTK_STATUSBAR(status_bar_), 1,
+      gtk_label_set_text(GTK_LABEL(status_bar_),
                          "Image Generation Mode - Ready to create");
     }
   }
@@ -491,8 +489,7 @@ void MainWindow::create_content_area() {
 }
 
 void MainWindow::create_status_bar() {
-  status_bar_ = gtk_statusbar_new();
-  gtk_statusbar_push(GTK_STATUSBAR(status_bar_), 1, "Ready");
+  status_bar_ = gtk_label_new("Ready");
   gtk_box_append(GTK_BOX(main_box_), status_bar_);
 }
 
