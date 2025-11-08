@@ -52,11 +52,20 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define DUOROU_HAVE_CAIRO 0
 #endif
 
-#if __has_include(<webkit2/webkit2.h>)
-#include <webkit2/webkit2.h>
-#define DUOROU_HAVE_WEBKIT2GTK 1
+// WebKitGTK headers vary across versions. Only enable when CMake found WebKitGTK.
+#if defined(HAVE_WEBKIT2GTK)
+  #if __has_include(<webkit/WebKit.h>)
+    #include <webkit/WebKit.h>
+  #elif __has_include(<webkit2/webkit2.h>)
+    #include <webkit2/webkit2.h>
+  #else
+    // CMake reported WebKitGTK present but headers not found in compiler search path
+    // This keeps compilation going while avoiding accidental inclusion of Apple WebKit.
+    #pragma message("HAVE_WEBKIT2GTK defined but no WebKitGTK headers found")
+  #endif
+  #define DUOROU_HAVE_WEBKIT2GTK 1
 #else
-#define DUOROU_HAVE_WEBKIT2GTK 0
+  #define DUOROU_HAVE_WEBKIT2GTK 0
 #endif
 
 // Optional MD4C for Markdown -> HTML conversion
@@ -211,6 +220,9 @@ typedef int gint;
 #ifndef gtk_label_set_xalign
 #define gtk_label_set_xalign(...) ((void)0)
 #endif
+#ifndef gtk_label_set_markup
+#define gtk_label_set_markup(...) ((void)0)
+#endif
 #ifndef gtk_picture_new_for_filename
 #define gtk_picture_new_for_filename(...) ((GtkWidget*)nullptr)
 #endif
@@ -318,6 +330,51 @@ static std::string preprocess_markdown_for_media(const std::string &md) {
     // ok
   }
   return changed ? out : md;
+}
+
+// Convert a single markdown line to simple Pango markup for fallback rendering.
+// Supports headings (#, ##), bold (**bold**), italic (*italic*), inline code (`code`).
+static std::string md_line_to_pango(const std::string &line) {
+  std::string t = trim(line);
+  if (t.empty()) return std::string();
+
+  // Headings
+  int hlevel = 0; size_t i = 0;
+  while (i < t.size() && t[i] == '#') { ++hlevel; ++i; }
+  if (hlevel > 0 && i < t.size() && t[i] == ' ') {
+    std::string content = t.substr(i + 1);
+    std::string esc = html_escape(content);
+    // Use Pango-supported size keywords only
+    const char *sizes[] = {"large","x-large","xx-large"};
+    const char *size = sizes[std::min(hlevel, 3) - 1];
+    return std::string("<span weight='bold' size='") + size + "'>" + esc + "</span>";
+  }
+
+  // Basic inline formatting: bold, italic, code
+  std::string out; out.reserve(t.size() * 1.3);
+  std::string plain;
+  bool bold = false, italic = false, code = false;
+  for (size_t p = 0; p < t.size(); ++p) {
+    if (!code && p + 1 < t.size() && t[p] == '*' && t[p+1] == '*') {
+      // flush plain
+      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
+      out += bold ? "</b>" : "<b>"; bold = !bold; ++p; continue;
+    }
+    if (!code && t[p] == '*') {
+      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
+      out += italic ? "</i>" : "<i>"; italic = !italic; continue;
+    }
+    if (t[p] == '`') {
+      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
+      out += code ? "</tt>" : "<tt>"; code = !code; continue;
+    }
+    // accumulate plain characters; will escape on flush
+    plain.push_back(t[p]);
+  }
+  // Close any dangling tags
+  if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
+  if (code) out += "</tt>"; if (bold) out += "</b>"; if (italic) out += "</i>";
+  return out;
 }
 
 namespace duorou {
@@ -506,7 +563,15 @@ void MarkdownView::set_markdown(const std::string &markdown) {
 
   auto append_text = [&](const std::string &text) {
     if (text.empty()) return;
-    GtkWidget *lbl = gtk_label_new(text.c_str());
+    // Render with simple Pango markup to improve readability
+    std::string markup = md_line_to_pango(text);
+    GtkWidget *lbl = gtk_label_new(NULL);
+    if (!markup.empty()) {
+      gtk_label_set_markup((GtkLabel*)lbl, markup.c_str());
+    } else {
+      // Fallback to plain text when markup conversion yields empty
+      gtk_label_set_markup((GtkLabel*)lbl, html_escape(text).c_str());
+    }
     gtk_label_set_wrap((GtkLabel*)lbl, TRUE);
     gtk_label_set_xalign((GtkLabel*)lbl, 0.0f);
     gtk_widget_set_hexpand(lbl, TRUE);
@@ -693,7 +758,8 @@ bool MarkdownView::export_pdf_to_file(const std::string &file_path) {
 
 bool MarkdownView::export_pdf_with_webkit(const std::string &file_path) {
 #if DUOROU_HAVE_WEBKIT2GTK
-  WebKitPrintOperation *op = webkit_print_operation_new(WEBKIT_WEB_VIEW(content_));
+  // Print the inner WebKit view, not the outer GTK box
+  WebKitPrintOperation *op = webkit_print_operation_new(WEBKIT_WEB_VIEW(content_view_));
   GtkPrintSettings *settings = gtk_print_settings_new();
   gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT, "pdf");
   gchar *uri = g_filename_to_uri(file_path.c_str(), nullptr, nullptr);

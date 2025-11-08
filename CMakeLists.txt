@@ -224,8 +224,11 @@ endif()
 
 # WebKitGTK 和 MD4C 支持（Markdown 渲染增强）
 if(DUOROU_BUILD_GUI)
-    # WebKitGTK (GTK4 通常对应 webkit2gtk-4.1；部分环境仍为 4.0)
-    pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.1)
+    # WebKitGTK: GTK4 通常对应 webkitgtk-6.0；部分环境仍为 webkit2gtk-4.x
+    pkg_check_modules(WEBKIT2GTK QUIET webkitgtk-6.0)
+    if(NOT WEBKIT2GTK_FOUND)
+        pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.1)
+    endif()
     if(NOT WEBKIT2GTK_FOUND)
         pkg_check_modules(WEBKIT2GTK QUIET webkit2gtk-4.0)
     endif()
