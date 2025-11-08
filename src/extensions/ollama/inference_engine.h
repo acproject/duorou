@@ -16,6 +16,16 @@
 #include <filesystem>
 #include <cstdio>
 
+// Windows CRT maps POSIX popen/pclose to _popen/_pclose
+#ifdef _WIN32
+#ifndef popen
+#define popen _popen
+#endif
+#ifndef pclose
+#define pclose _pclose
+#endif
+#endif
+
 // llama.cpp & ggml headers (resolved via target include directories)
 // Explicit relative include to satisfy IDE/LSP resolution
 #include "../../../third_party/llama.cpp/include/llama.h"
@@ -457,7 +467,7 @@ public:
       };
       auto read_url_to_buffer = [](const std::string &url) -> std::vector<unsigned char> {
         std::vector<unsigned char> buf;
-        FILE *pipe = popen((std::string("curl -sL ") + url).c_str(), "r");
+        FILE *pipe = popen((std::string("curl -sL ") + url).c_str(), "rb");
         if (!pipe) return buf;
         unsigned char tmp[4096];
         size_t nread = 0;
@@ -490,7 +500,14 @@ public:
         // 仅当是 file:// 时进行处理
         if (uri.rfind("file://", 0) == 0) {
           // 去掉协议前缀并对百分号编码解码
-          return percent_decode(uri.substr(7));
+          std::string path = percent_decode(uri.substr(7));
+#ifdef _WIN32
+          // 处理 Windows 的 file:///C:/...，去掉前导斜杠，得到 C:/...
+          if (path.size() >= 3 && path[0] == '/' && std::isalpha(static_cast<unsigned char>(path[1])) && path[2] == ':') {
+            path.erase(0, 1);
+          }
+#endif
+          return path;
         }
         return uri;
       };

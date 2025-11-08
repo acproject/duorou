@@ -207,7 +207,7 @@ void VideoDisplayWindow::on_draw_area(GtkDrawingArea *area, cairo_t *cr,
     // Calculate scale ratio to fit display area
     double scale_x = (double)width / window->frame_width_;
     double scale_y = (double)height / window->frame_height_;
-    double scale = std::min(scale_x, scale_y);
+    double scale = (std::min)(scale_x, scale_y);
 
     // Calculate centered position
     int scaled_width = (int)(window->frame_width_ * scale);

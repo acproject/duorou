@@ -6,6 +6,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC 编译器设置：统一源码编码为 UTF-8，自动导出 DLL 符号
+if(MSVC)
+    add_compile_options(/utf-8)
+    # 自动为 SHARED 库导出所有符号，确保生成可链接的 import .lib
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
+
 include(FetchContent)
 
 # 头文件目录
@@ -154,9 +161,9 @@ endif()
 # 为 Windows 平台添加 Winsock2 库和定义
 if(WIN32)
     # 添加 Windows 平台特定的编译定义
-    target_compile_definitions(mini_cache_server PRIVATE PLATFORM_WINDOWS _WIN32)
-    target_compile_definitions(mini_cache_cli PRIVATE PLATFORM_WINDOWS _WIN32 _WINSOCK_DEPRECATED_NO_WARNINGS)
-    target_compile_definitions(data_store PRIVATE PLATFORM_WINDOWS _WIN32)
+    target_compile_definitions(mini_cache_server PRIVATE PLATFORM_WINDOWS _WIN32 WIN32_LEAN_AND_MEAN _WINSOCK_DEPRECATED_NO_WARNINGS)
+    target_compile_definitions(mini_cache_cli PRIVATE PLATFORM_WINDOWS _WIN32 WIN32_LEAN_AND_MEAN _WINSOCK_DEPRECATED_NO_WARNINGS)
+    target_compile_definitions(data_store PRIVATE PLATFORM_WINDOWS _WIN32 WIN32_LEAN_AND_MEAN)
     target_compile_definitions(tcp_server PRIVATE PLATFORM_WINDOWS _WIN32)
     
     # 链接 Windows 网络库

@@ -305,6 +305,54 @@ void Application::registerExitCallback(std::function<void()> callback) {
 }
 
 bool Application::initializeGtk() {
+  // On Windows, ensure GSettings schemas are discoverable to avoid GTK aborts
+#ifdef _WIN32
+  const char *schema_env = std::getenv("GSETTINGS_SCHEMA_DIR");
+  if (!schema_env || !*schema_env) {
+    std::vector<std::filesystem::path> candidates;
+
+    // Prefer vcpkg installation if VCPKG_ROOT is set
+    if (const char *vcpkg = std::getenv("VCPKG_ROOT")) {
+      std::filesystem::path vcpkg_root(vcpkg);
+      candidates.push_back(vcpkg_root / "installed/x64-windows/share/glib-2.0/schemas");
+      candidates.push_back(vcpkg_root / "installed/x64-windows-static/share/glib-2.0/schemas");
+    }
+
+    // Try relative to executable directory
+    if (!args_.empty()) {
+      std::filesystem::path exe_path(args_[0]);
+      std::filesystem::path exe_dir = exe_path.parent_path();
+      candidates.push_back(exe_dir / "share/glib-2.0/schemas");
+      candidates.push_back(exe_dir / ".." / "share" / "glib-2.0" / "schemas");
+    }
+
+    // Common system-wide locations (MSYS2 / GTK runtime)
+    candidates.push_back(std::filesystem::path("C:/msys64/mingw64/share/glib-2.0/schemas"));
+    candidates.push_back(std::filesystem::path("C:/Program Files/GTK4-Runtime/share/glib-2.0/schemas"));
+
+    std::filesystem::path found;
+    for (const auto &c : candidates) {
+      try {
+        if (std::filesystem::exists(c) && std::filesystem::exists(c / "gschemas.compiled")) {
+          found = c;
+          break;
+        }
+      } catch (...) {
+        // Ignore filesystem errors
+      }
+    }
+
+    if (!found.empty()) {
+      _putenv_s("GSETTINGS_SCHEMA_DIR", found.string().c_str());
+      std::cout << "[GTK] GSETTINGS_SCHEMA_DIR set to: " << found.string() << std::endl;
+    } else {
+      std::cout << "[GTK] Warning: GSETTINGS_SCHEMA_DIR not set and schemas not found."
+                   " GTK dialogs may fail. Install GTK/GLib schemas or set the env var manually."
+                << std::endl;
+    }
+  }
+#endif
+
   // Create GTK application
   gtk_app_ = gtk_application_new("com.duorou.app", G_APPLICATION_FLAGS_NONE);
   if (!gtk_app_) {
@@ -675,23 +723,49 @@ bool Application::startMiniMemoryServer() {
       // 以当前工作目录为基准，尝试两种候选路径（从项目根或从 build 目录）
       const auto cwd = std::filesystem::current_path();
 
+      // 兼容 Windows 下 .exe 后缀，以及可能存在的 Release/Debug 子目录
+#ifdef _WIN32
+      const char *exe_ext = ".exe";
+#else
+      const char *exe_ext = "";
+#endif
+      const auto bin_root_base =
+          cwd / std::filesystem::path("third_party") / "MiniMemory" / "build" / "bin";
+      const auto bin_build_base =
+          cwd / std::filesystem::path("..") / "third_party" / "MiniMemory" / "build" / "bin";
       const std::filesystem::path bin_candidate_root =
-          cwd / "third_party/MiniMemory/build/bin/mini_cache_server";
+          bin_root_base / (std::string("mini_cache_server") + exe_ext);
+      const std::filesystem::path bin_candidate_root_rel =
+          bin_root_base / "Release" / (std::string("mini_cache_server") + exe_ext);
+      const std::filesystem::path bin_candidate_root_dbg =
+          bin_root_base / "Debug" / (std::string("mini_cache_server") + exe_ext);
       const std::filesystem::path bin_candidate_build =
-          cwd / "../third_party/MiniMemory/build/bin/mini_cache_server";
+          bin_build_base / (std::string("mini_cache_server") + exe_ext);
+      const std::filesystem::path bin_candidate_build_rel =
+          bin_build_base / "Release" / (std::string("mini_cache_server") + exe_ext);
+      const std::filesystem::path bin_candidate_build_dbg =
+          bin_build_base / "Debug" / (std::string("mini_cache_server") + exe_ext);
 
       const std::filesystem::path cfg_candidate_root =
-          cwd / "third_party/MiniMemory/src/conf/mcs.conf";
+          cwd / std::filesystem::path("third_party") / "MiniMemory" / "src" / "conf" / "mcs.conf";
       const std::filesystem::path cfg_candidate_build =
-          cwd / "../third_party/MiniMemory/src/conf/mcs.conf";
+          cwd / std::filesystem::path("..") / "third_party" / "MiniMemory" / "src" / "conf" / "mcs.conf";
 
       std::filesystem::path mini_bin;
       std::filesystem::path mini_cfg;
 
       if (std::filesystem::exists(bin_candidate_root)) {
         mini_bin = std::filesystem::canonical(bin_candidate_root);
+      } else if (std::filesystem::exists(bin_candidate_root_rel)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_root_rel);
+      } else if (std::filesystem::exists(bin_candidate_root_dbg)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_root_dbg);
       } else if (std::filesystem::exists(bin_candidate_build)) {
         mini_bin = std::filesystem::canonical(bin_candidate_build);
+      } else if (std::filesystem::exists(bin_candidate_build_rel)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_build_rel);
+      } else if (std::filesystem::exists(bin_candidate_build_dbg)) {
+        mini_bin = std::filesystem::canonical(bin_candidate_build_dbg);
       }
 
       if (std::filesystem::exists(cfg_candidate_root)) {
@@ -705,7 +779,9 @@ bool Application::startMiniMemoryServer() {
           logger_->error(
               std::string("MiniMemory paths not found. cwd=") + cwd.string());
           logger_->error(std::string("Checked bin: ") + bin_candidate_root.string() +
-                         ", " + bin_candidate_build.string());
+                         ", " + bin_candidate_root_rel.string() + ", " + bin_candidate_root_dbg.string() +
+                         ", " + bin_candidate_build.string() + ", " + bin_candidate_build_rel.string() +
+                         ", " + bin_candidate_build_dbg.string());
           logger_->error(std::string("Checked cfg: ") + cfg_candidate_root.string() +
                          ", " + cfg_candidate_build.string());
           logger_->error(
@@ -721,7 +797,8 @@ bool Application::startMiniMemoryServer() {
       minimemory_executable_path_ = mini_bin.string();
 
       // 直接使用绝对路径启动，避免对工作目录的依赖
-      std::string command = mini_bin.string() + " --config " + mini_cfg.string();
+      auto quote = [](const std::string &s) { return std::string("\"") + s + "\""; };
+      std::string command = quote(mini_bin.string()) + " --config " + quote(mini_cfg.string());
 
       if (logger_) {
         logger_->info("Starting MiniMemory server with command: " + command);

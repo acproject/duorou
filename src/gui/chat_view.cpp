@@ -19,6 +19,22 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
+#include <string>
+// Windows 兼容 setenv/unsetenv 封装
+static inline int setenv(const char* name, const char* value, int overwrite) {
+    if (!overwrite && std::getenv(name)) {
+        return 0;
+    }
+    return _putenv_s(name, value);
+}
+static inline int unsetenv(const char* name) {
+    std::string s(name);
+    s += "="; // _putenv("NAME=") 删除变量
+    return _putenv(s.c_str());
+}
+#endif
+
 // Fallback stubs when GTK headers are unavailable (prefer header presence check)
 #if !__has_include(<gtk/gtk.h>)
 // Basic TRUE/FALSE

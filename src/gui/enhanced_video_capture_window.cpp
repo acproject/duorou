@@ -551,7 +551,7 @@ void EnhancedVideoCaptureWindow::on_draw_area(GtkDrawingArea* area, cairo_t* cr,
         // Calculate scale ratio to fit display area
         double scale_x = (double)width / window->cached_width_;
         double scale_y = (double)height / window->cached_height_;
-        double scale = std::min(scale_x, scale_y);
+    double scale = (std::min)(scale_x, scale_y);
 
         // Calculate center position
         double scaled_width = window->cached_width_ * scale;

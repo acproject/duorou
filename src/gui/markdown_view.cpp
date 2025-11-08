@@ -338,8 +338,8 @@ static bool has_image_extension(const std::string &url_lower) {
   // Consider query fragments and anchors: only check up to '?' or '#'
   static const char *exts[] = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff"};
   size_t end = url_lower.size();
-  size_t qpos = url_lower.find('?'); if (qpos != std::string::npos) end = std::min(end, qpos);
-  size_t hpos = url_lower.find('#'); if (hpos != std::string::npos) end = std::min(end, hpos);
+    size_t qpos = url_lower.find('?'); if (qpos != std::string::npos) end = (std::min)(end, qpos);
+    size_t hpos = url_lower.find('#'); if (hpos != std::string::npos) end = (std::min)(end, hpos);
   for (auto *e : exts) {
     size_t elen = strlen(e);
     if (end >= elen && url_lower.rfind(e, end) == end - elen) {
@@ -391,7 +391,7 @@ static std::string md_line_to_pango(const std::string &line) {
     std::string esc = html_escape(content);
     // Use Pango-supported size keywords only
     const char *sizes[] = {"large","x-large","xx-large"};
-    const char *size = sizes[std::min(hlevel, 3) - 1];
+    const char *size = sizes[(std::min)(hlevel, 3) - 1];
     return std::string("<span weight='bold' size='") + size + "'>" + esc + "</span>";
   }
 
@@ -429,7 +429,7 @@ static std::string extract_first_url(const std::string &s) {
   for (const char *pref : {"http://", "https://", "file://"}) {
     size_t pos = s.find(pref);
     if (pos != std::string::npos) {
-      p = (p == std::string::npos) ? pos : std::min(p, pos);
+    p = (p == std::string::npos) ? pos : (std::min)(p, pos);
     }
   }
   if (p != std::string::npos) {
@@ -949,7 +949,7 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       gtk_widget_set_margin_top(grid, 4);
       gtk_widget_set_margin_bottom(grid, 4);
       size_t nrows = rows.size();
-      size_t ncols = 0; for (auto &rw : rows) ncols = std::max(ncols, rw.size());
+    size_t ncols = 0; for (auto &rw : rows) ncols = (std::max)(ncols, rw.size());
       for (size_t r = 0; r < nrows; ++r) {
         for (size_t c = 0; c < ncols; ++c) {
           std::string cell = (c < rows[r].size()) ? rows[r][c] : std::string();

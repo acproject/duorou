@@ -157,3 +157,5 @@ third_party/llama.cpp/src/**
 
 third_party/MiniMemory/src/conf/dump.mcdb
 dump.mcdb
+
+__cmake_systeminformation

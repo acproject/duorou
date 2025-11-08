@@ -42,9 +42,15 @@ target_link_libraries(module_integration_test
 )
 
 # 编译器标志
-target_compile_options(module_integration_test PRIVATE
-    -Wall -Wextra -O2
-)
+if(MSVC)
+    target_compile_options(module_integration_test PRIVATE
+        /W4 /O2
+    )
+else()
+    target_compile_options(module_integration_test PRIVATE
+        -Wall -Wextra -O2
+    )
+endif()
 
 # 添加测试
 add_test(NAME ModuleIntegrationTest COMMAND module_integration_test)

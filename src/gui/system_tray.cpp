@@ -455,7 +455,7 @@ public:
     }
 
     void updateProgress(double progress, const std::string& text) {
-        progress_ = std::max(0.0, std::min(1.0, progress));
+    progress_ = (std::max)(0.0, (std::min)(1.0, progress));
         progress_text_ = text;
         
         // Update tooltip text
