@@ -39,6 +39,17 @@ typedef void GtkCssProvider;
 typedef void GtkStyleProvider;
 typedef void GtkEntryBuffer;
 typedef unsigned long gulong;
+// Lightweight GLib/GTK helpers for stub builds
+#ifndef gboolean
+typedef int gboolean;
+#endif
+// Generic GTK cast helpers used throughout the file
+#ifndef GTK_WIDGET
+#define GTK_WIDGET(x) (x)
+#endif
+#ifndef GTK_IS_WIDGET
+#define GTK_IS_WIDGET(x) (TRUE)
+#endif
 
 // Align/orientation constants
 #ifndef GTK_ALIGN_START
@@ -102,6 +113,19 @@ typedef unsigned long gulong;
 #ifndef gtk_widget_add_css_class
 #define gtk_widget_add_css_class(...) ((void)0)
 #endif
+// Additional widget helpers used by ChatView
+#ifndef gtk_widget_remove_css_class
+#define gtk_widget_remove_css_class(...) ((void)0)
+#endif
+#ifndef gtk_widget_has_css_class
+#define gtk_widget_has_css_class(...) (FALSE)
+#endif
+#ifndef gtk_widget_get_sensitive
+#define gtk_widget_get_sensitive(...) (TRUE)
+#endif
+#ifndef gtk_widget_set_visible
+#define gtk_widget_set_visible(...) ((void)0)
+#endif
 #ifndef gtk_widget_get_style_context
 #define gtk_widget_get_style_context(...) ((GtkStyleContext *)nullptr)
 #endif
@@ -136,6 +160,10 @@ typedef unsigned long gulong;
 #endif
 #ifndef GTK_FRAME
 #define GTK_FRAME(x) (x)
+#endif
+// Simple frame constructor stub
+#ifndef gtk_frame_new
+#define gtk_frame_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_frame_set_child
 #define gtk_frame_set_child(...) ((void)0)
@@ -222,6 +250,19 @@ typedef unsigned long gulong;
 #ifndef gtk_toggle_button_new
 #define gtk_toggle_button_new(...) ((GtkWidget *)nullptr)
 #endif
+// Button/toggle helpers
+#ifndef GTK_BUTTON
+#define GTK_BUTTON(x) (x)
+#endif
+#ifndef GTK_TOGGLE_BUTTON
+#define GTK_TOGGLE_BUTTON(x) (x)
+#endif
+#ifndef gtk_toggle_button_get_active
+#define gtk_toggle_button_get_active(...) (FALSE)
+#endif
+#ifndef gtk_toggle_button_set_active
+#define gtk_toggle_button_set_active(...) ((void)0)
+#endif
 #ifndef gtk_picture_new_for_filename
 #define gtk_picture_new_for_filename(...) ((GtkWidget *)nullptr)
 #endif
@@ -235,6 +276,10 @@ typedef unsigned long gulong;
 #endif
 #ifndef g_idle_add
 #define g_idle_add(...) (0)
+#endif
+// Timer helper used for delayed UI updates
+#ifndef g_timeout_add
+#define g_timeout_add(...) (0)
 #endif
 #ifndef G_CALLBACK
 #define G_CALLBACK(f) ((void *)(f))
@@ -328,6 +373,28 @@ typedef void GtkWindow;
 #ifndef gtk_widget_show
 #define gtk_widget_show(...) ((void)0)
 #endif
+// Message dialog helpers and constants
+#ifndef gtk_message_dialog_new
+#define gtk_message_dialog_new(...) ((GtkWidget *)nullptr)
+#endif
+#ifndef gtk_dialog_add_button
+#define gtk_dialog_add_button(...) ((void)0)
+#endif
+#ifndef GTK_DIALOG_MODAL
+#define GTK_DIALOG_MODAL 1
+#endif
+#ifndef GTK_MESSAGE_ERROR
+#define GTK_MESSAGE_ERROR 0
+#endif
+#ifndef GTK_MESSAGE_WARNING
+#define GTK_MESSAGE_WARNING 1
+#endif
+#ifndef GTK_BUTTONS_OK
+#define GTK_BUTTONS_OK 1
+#endif
+#ifndef GTK_BUTTONS_NONE
+#define GTK_BUTTONS_NONE 0
+#endif
 
 // Object data helpers
 #ifndef g_object_set_data
@@ -343,6 +410,13 @@ typedef void GtkWindow;
 #endif
 #ifndef gtk_window_destroy
 #define gtk_window_destroy(...) ((void)0)
+#endif
+// Window helpers
+#ifndef gtk_window_set_modal
+#define gtk_window_set_modal(...) ((void)0)
+#endif
+#ifndef gtk_window_present
+#define gtk_window_present(...) ((void)0)
 #endif
 
 // Editable text helpers
@@ -729,6 +803,10 @@ void ChatView::add_message(const std::string &message, bool is_user) {
     // Prevent frame from expanding to full width; cap with size request
     gtk_widget_set_hexpand(bubble_frame, FALSE);
     gtk_widget_set_size_request(bubble_frame, bubble_max_px, -1);
+    // Also ensure inner markdown view has a non-zero width immediately
+    gtk_widget_set_size_request(mv->widget(), bubble_max_px, -1);
+    // Sync target width to inner pictures to avoid height collapsing
+    mv->set_target_width(bubble_max_px);
     gtk_widget_set_halign(bubble_box, GTK_ALIGN_END);
 
     // Add left spacer to achieve right alignment effect
@@ -761,6 +839,10 @@ void ChatView::add_message(const std::string &message, bool is_user) {
     g_object_unref(provider);
     gtk_widget_set_hexpand(bubble_frame, FALSE);
     gtk_widget_set_size_request(bubble_frame, bubble_max_px, -1);
+    // Also ensure inner markdown view has a non-zero width immediately
+    gtk_widget_set_size_request(mv->widget(), bubble_max_px, -1);
+    // Sync target width to inner pictures to avoid height collapsing
+    mv->set_target_width(bubble_max_px);
     gtk_widget_set_halign(bubble_box, GTK_ALIGN_START);
 
     gtk_box_append(GTK_BOX(bubble_box), bubble_frame);
@@ -817,6 +899,12 @@ MarkdownView *ChatView::add_assistant_placeholder(const std::string &text) {
                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(provider);
   gtk_widget_set_size_request(bubble_frame, bubble_max_px, -1);
+  // Also ensure inner markdown view has a non-zero width immediately
+  gtk_widget_set_size_request(mv->widget(), bubble_max_px, -1);
+  // Allow inner markdown view to expand vertically so images keep height
+  gtk_widget_set_vexpand(mv->widget(), TRUE);
+  // Sync target width to inner pictures
+  mv->set_target_width(bubble_max_px);
 
   GtkWidget *bubble_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   // Make bubble container expand so placeholder can grow wider
@@ -920,6 +1008,14 @@ void ChatView::update_bubble_max_width() {
         // Also set width-request so the frame does not expand beyond target
         gtk_widget_set_hexpand(bubble_frame, FALSE);
         gtk_widget_set_size_request(bubble_frame, bubble_max_px, -1);
+        // And ensure the inner MarkdownView gets a matching width immediately
+        auto *mv = static_cast<MarkdownView *>(
+            g_object_get_data(G_OBJECT(bubble_frame), "markdown_view_ptr"));
+        if (mv) {
+          gtk_widget_set_size_request(mv->widget(), bubble_max_px, -1);
+          gtk_widget_set_vexpand(mv->widget(), TRUE);
+          mv->set_target_width(bubble_max_px);
+        }
       }
     }
     msg = gtk_widget_get_next_sibling(msg);

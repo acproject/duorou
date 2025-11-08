@@ -254,6 +254,9 @@ typedef int gint;
 #ifndef gtk_picture_set_content_fit
 #define gtk_picture_set_content_fit(...) ((void)0)
 #endif
+#ifndef gtk_picture_set_can_shrink
+#define gtk_picture_set_can_shrink(...) ((void)0)
+#endif
 #ifndef GTK_CONTENT_FIT_CONTAIN
 #define GTK_CONTENT_FIT_CONTAIN 0
 #endif
@@ -732,7 +735,7 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   // Minimal CSS for readability
   std::string full = std::string("<html><head><meta charset='utf-8'>") +
                      "<style>body{font-family:-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;line-height:1.5;padding:0;margin:0;}" \
-                     "img{max-width:100%;height:auto;border-radius:8px;}" \
+                     "img{max-width:100%;width:100%;height:auto;border-radius:8px;}" \
                      "a{word-break:break-all;}" \
                      "pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:2px 4px;border-radius:4px;}" \
                      "pre{padding:8px;overflow:auto;} blockquote{color:#6a737d;border-left:4px solid #dfe2e5;padding:0 1em;}" \
@@ -868,8 +871,17 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       append_text(url);
       return;
     }
+    // Ensure picture keeps a non-zero height and respects aspect ratio
     gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+    gtk_picture_set_can_shrink(GTK_PICTURE(pic), FALSE);
     gtk_widget_set_hexpand(pic, TRUE);
+    gtk_widget_set_vexpand(pic, TRUE);
+    // Mark this widget as a markdown picture for later width sync
+    g_object_set_data(G_OBJECT(pic), "markdown_picture", (gpointer)1);
+    // Apply target width immediately to avoid height collapsing
+    if (target_width_ > 0) {
+      gtk_widget_set_size_request(pic, target_width_, -1);
+    }
     gtk_widget_set_margin_top(pic, 4);
     gtk_widget_set_margin_bottom(pic, 4);
     gtk_box_append(GTK_BOX(content_), pic);
@@ -991,6 +1003,23 @@ void MarkdownView::set_markdown(const std::string &markdown) {
     if (!emitted_any) { append_text(line); }
   }
 #endif
+}
+
+void MarkdownView::set_target_width(int px) {
+  target_width_ = px;
+  if (!content_) return;
+  // Apply to existing picture children
+  GtkWidget *child = gtk_widget_get_first_child(content_);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gpointer tag = g_object_get_data(G_OBJECT(child), "markdown_picture");
+    if (tag && target_width_ > 0) {
+      gtk_widget_set_size_request(child, target_width_, -1);
+      // Also ensure vertical expansion so height doesn't collapse under layout changes
+      gtk_widget_set_vexpand(child, TRUE);
+    }
+    child = next;
+  }
 }
 
 std::string MarkdownView::to_html(const std::string &md) const {

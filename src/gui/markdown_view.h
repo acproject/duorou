@@ -72,6 +72,9 @@ public:
   // Set new markdown content and re-render
   void set_markdown(const std::string &markdown);
 
+  // Set target width for inner media (pictures) so height won't collapse
+  void set_target_width(int px);
+
   // Get current raw markdown
   std::string get_markdown() const { return markdown_; }
 
@@ -94,6 +97,9 @@ private:
   std::string markdown_;
   // 临时图片文件列表（用于 Fallback 远程图片下载的生命周期管理）
   std::vector<std::string> temp_files_;
+
+  // Target width for media items inside content_
+  int target_width_ = 0;
 
   // Render markdown -> HTML
   std::string to_html(const std::string &md) const;

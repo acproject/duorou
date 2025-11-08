@@ -7,10 +7,17 @@
 #include "video_source_dialog.h"
 #include "../core/model_manager.h"
 #include <chrono>
-#if defined(__has_include) && __has_include(<gtk/gtk.h>)
-#include <gtk/gtk.h>
-#define DUOROU_HAVE_GTK 1
-#else
+// Prefer header presence over build macros; only define DUOROU_HAVE_GTK
+// when the header is actually available to the indexer/compiler.
+#ifdef __has_include
+#  if __has_include(<gtk/gtk.h>)
+#    include <gtk/gtk.h>
+#    if !defined(DUOROU_HAVE_GTK)
+#      define DUOROU_HAVE_GTK 1
+#    endif
+#  endif
+#endif
+#ifndef DUOROU_HAVE_GTK
 // Lightweight GTK/GLib stubs to help indexers that lack GTK headers.
 // They do not change runtime behavior; real builds still use GTK.
 typedef void GtkWidget; typedef void GtkDialog; typedef void GtkButton; typedef void GtkToggleButton; typedef void GtkStyleContext; typedef void GtkCssProvider;
@@ -59,7 +66,7 @@ typedef int gint; typedef void* gpointer;
 #ifndef GTK_INPUT_HINT_NONE
 #define GTK_INPUT_HINT_NONE 0
 #endif
-#endif // end of minimal GTK placeholders; no function-like macros to avoid shadowing
+#endif // DUOROU_HAVE_GTK
 #include <memory>
 #include <string>
 #include <vector>
