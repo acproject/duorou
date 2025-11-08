@@ -377,6 +377,67 @@ static std::string md_line_to_pango(const std::string &line) {
   return out;
 }
 
+// Extract first URL-like token from a string (http/https/file/absolute path)
+static std::string extract_first_url(const std::string &s) {
+  // Look for http(s):// or file:// or an absolute path starting with '/'
+  size_t p = std::string::npos;
+  for (const char *pref : {"http://", "https://", "file://"}) {
+    size_t pos = s.find(pref);
+    if (pos != std::string::npos) {
+      p = (p == std::string::npos) ? pos : std::min(p, pos);
+    }
+  }
+  if (p != std::string::npos) {
+    // take until whitespace or closing bracket
+    size_t q = s.find_first_of("\t\n\r )]>", p);
+    return s.substr(p, q == std::string::npos ? std::string::npos : (q - p));
+  }
+  // absolute path
+  if (!s.empty() && s[0] == '/') {
+    size_t q = s.find_first_of("\t\n\r )]>", 1);
+    return s.substr(0, q == std::string::npos ? std::string::npos : q);
+  }
+  return std::string();
+}
+
+// Detect typical markdown table separator line: "| --- | :---: | --- |"
+static bool is_md_table_separator(const std::string &line) {
+  std::string t = trim(line);
+  if (t.empty()) return false;
+  // allow leading/trailing '|'
+  bool has_bar = t.find('|') != std::string::npos;
+  if (!has_bar) return false;
+  for (char ch : t) {
+    if (!(ch == '|' || ch == '-' || ch == ':' || ch == ' ')) {
+      return false;
+    }
+  }
+  // must contain at least one "-"
+  return t.find('-') != std::string::npos;
+}
+
+// Split a markdown table row into cells (trim spaces, ignore leading/trailing '|')
+static std::vector<std::string> split_md_table_row(const std::string &line) {
+  std::string t = trim(line);
+  std::vector<std::string> cells;
+  size_t start = 0, end;
+  // ignore leading '|'
+  if (!t.empty() && t.front() == '|') start = 1;
+  while (start <= t.size()) {
+    end = t.find('|', start);
+    std::string cell = (end == std::string::npos) ? t.substr(start) : t.substr(start, end - start);
+    // trim cell
+    size_t a = 0; while (a < cell.size() && std::isspace((unsigned char)cell[a])) ++a;
+    size_t b = cell.size(); while (b > a && std::isspace((unsigned char)cell[b-1])) --b;
+    cells.push_back(cell.substr(a, b - a));
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  // drop trailing empty if the line ended with '|'
+  if (!cells.empty() && cells.back().empty()) cells.pop_back();
+  return cells;
+}
+
 namespace duorou {
 namespace gui {
 
@@ -609,55 +670,109 @@ void MarkdownView::set_markdown(const std::string &markdown) {
     gtk_box_append(GTK_BOX(content_), pic);
   };
 
-  // Parse markdown by lines; render images and text blocks
-  std::istringstream iss(markdown_);
-  std::string line;
-  while (std::getline(iss, line)) {
+  // Parse markdown by lines; render images, tables and text blocks
+  std::vector<std::string> lines;
+  {
+    std::istringstream iss(markdown_);
+    std::string l; while (std::getline(iss, l)) lines.push_back(l);
+  }
+  for (size_t idx = 0; idx < lines.size(); ++idx) {
+    std::string line = lines[idx];
     std::string t = trim(line);
-    std::string tl = to_lower(t);
     if (t.empty()) continue;
+    std::string tl = to_lower(t);
 
-    // Case 1: whole-line is an image URL
+    // Case 0: custom media hint line like "<__media__>: ..."
+    if (t.rfind("<__media__>", 0) == 0 || t.rfind("<__media__>:", 0) == 0) {
+      std::string url = extract_first_url(t);
+      if (!url.empty()) {
+        append_picture(url);
+        continue;
+      }
+      // no url found, show as text
+      append_text(line);
+      continue;
+    }
+
+    // Case 1: whole-line is an image URL (with common extensions)
     if (is_probable_url(t) && has_image_extension(tl)) {
       append_picture(t);
       continue;
     }
 
-    // Case 2: inline images mixed with text: ![alt](url)
+    // Case 2: markdown table block: header, separator, then rows
+    if (t.find('|') != std::string::npos && idx + 1 < lines.size() && is_md_table_separator(lines[idx + 1])) {
+      // Collect table rows
+      std::vector<std::vector<std::string>> rows;
+      // Header
+      rows.push_back(split_md_table_row(lines[idx]));
+      // Skip separator
+      idx += 1;
+      // Data rows
+      size_t rstart = idx + 1;
+      for (; rstart < lines.size(); ++rstart) {
+        std::string lt = trim(lines[rstart]);
+        if (lt.empty() || lt.find('|') == std::string::npos) break;
+        rows.push_back(split_md_table_row(lines[rstart]));
+      }
+      // Render grid
+      GtkWidget *grid = gtk_grid_new();
+      gtk_widget_set_hexpand(grid, TRUE);
+      gtk_widget_set_margin_top(grid, 4);
+      gtk_widget_set_margin_bottom(grid, 4);
+      size_t nrows = rows.size();
+      size_t ncols = 0; for (auto &rw : rows) ncols = std::max(ncols, rw.size());
+      for (size_t r = 0; r < nrows; ++r) {
+        for (size_t c = 0; c < ncols; ++c) {
+          std::string cell = (c < rows[r].size()) ? rows[r][c] : std::string();
+          std::string markup = r == 0 ? (std::string("<b>") + html_escape(cell) + "</b>") : html_escape(cell);
+          GtkWidget *frame = gtk_frame_new(NULL);
+          GtkWidget *lbl = gtk_label_new(NULL);
+          gtk_label_set_markup((GtkLabel*)lbl, markup.c_str());
+          gtk_label_set_wrap((GtkLabel*)lbl, TRUE);
+          gtk_label_set_xalign((GtkLabel*)lbl, 0.0f);
+          gtk_widget_set_margin_top(lbl, 2);
+          gtk_widget_set_margin_bottom(lbl, 2);
+          gtk_frame_set_child(GTK_FRAME(frame), lbl);
+          gtk_widget_set_hexpand(frame, TRUE);
+          gtk_widget_set_margin_top(frame, 1);
+          gtk_widget_set_margin_bottom(frame, 1);
+          gtk_grid_attach(GTK_GRID(grid), frame, (int)c, (int)r, 1, 1);
+        }
+      }
+      gtk_box_append(GTK_BOX(content_), grid);
+      // Advance index
+      idx = (rstart == 0 ? idx : rstart - 1);
+      continue;
+    }
+
+    // Case 3: inline images mixed with text: ![alt](url)
     size_t pos = 0;
-    std::string before; // accumulate text before first image
+    std::string before;
     bool emitted_any = false;
     while (true) {
       size_t bang = line.find("![", pos);
       if (bang == std::string::npos) break;
       before += line.substr(pos, bang - pos);
       size_t rb = line.find(']', bang + 2);
-      if (rb == std::string::npos) break; // malformed
+      if (rb == std::string::npos) break;
       size_t lp = line.find('(', rb + 1);
       if (lp == std::string::npos) break;
       size_t rp = line.find(')', lp + 1);
       if (rp == std::string::npos) break;
       std::string url = trim(line.substr(lp + 1, rp - (lp + 1)));
-      std::string url_l = to_lower(url);
-      if (is_probable_url(url) || has_image_extension(url_l)) {
+      if (!url.empty()) {
         if (!before.empty()) { append_text(before); before.clear(); emitted_any = true; }
         append_picture(url);
         emitted_any = true;
       } else {
-        before += line.substr(bang, rp - bang + 1); // treat as text
+        before += line.substr(bang, rp - bang + 1);
       }
       pos = rp + 1;
     }
-    // Append remaining text
     before += line.substr(pos);
-    if (!before.empty()) {
-      append_text(before);
-      emitted_any = true;
-    }
-    if (!emitted_any) {
-      // Fallback to plain text
-      append_text(line);
-    }
+    if (!before.empty()) { append_text(before); emitted_any = true; }
+    if (!emitted_any) { append_text(line); }
   }
 #endif
 }
