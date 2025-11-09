@@ -25,11 +25,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         add_compile_options(-O3 -DNDEBUG)
     endif()
 elseif(MSVC)
-    add_compile_options(/W4 /utf-8)
+    # 仅对 C/CXX 生效，避免污染 CUDA 编译（NVCC 会误将 MSVC 斜杠选项当作输入文件）
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:C>:/W4>
+        $<$<COMPILE_LANGUAGE:CXX>:/W4>
+        $<$<COMPILE_LANGUAGE:C>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+    )
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options(/Od /Zi /RTC1)
+        add_compile_options(
+            $<$<COMPILE_LANGUAGE:C>:/Od>
+            $<$<COMPILE_LANGUAGE:CXX>:/Od>
+            $<$<COMPILE_LANGUAGE:C>:/Zi>
+            $<$<COMPILE_LANGUAGE:CXX>:/Zi>
+            $<$<COMPILE_LANGUAGE:C>:/RTC1>
+            $<$<COMPILE_LANGUAGE:CXX>:/RTC1>
+        )
     else()
-        add_compile_options(/O2 /DNDEBUG)
+        add_compile_options(
+            $<$<COMPILE_LANGUAGE:C>:/O2>
+            $<$<COMPILE_LANGUAGE:CXX>:/O2>
+            $<$<COMPILE_LANGUAGE:C>:/DNDEBUG>
+            $<$<COMPILE_LANGUAGE:CXX>:/DNDEBUG>
+        )
     endif()
 endif()
 
@@ -79,6 +97,31 @@ option(DUOROU_BUILD_GUI "Build GUI components and executable (requires GTK4)" ON
 if(APPLE AND NOT DUOROU_ENABLE_METAL)
     set(DUOROU_ENABLE_METAL ON)
     message(STATUS "Auto-enabled Metal support for macOS")
+endif()
+
+# Windows: 如检测到 NVCC，默认开启 CUDA 支持（可用 -DDUOROU_ENABLE_CUDA=OFF 覆盖）
+if(WIN32)
+    if(NOT DUOROU_ENABLE_CUDA)
+        # 在常见位置查找 nvcc，可使用 CUDA_PATH 环境变量
+        find_program(DUOROU_NVCC_EXECUTABLE nvcc
+            HINTS "$ENV{CUDA_PATH}/bin" "$ENV{CUDA_HOME}/bin" "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/bin"
+        )
+        if(DUOROU_NVCC_EXECUTABLE)
+            execute_process(
+                COMMAND ${DUOROU_NVCC_EXECUTABLE} --version
+                OUTPUT_VARIABLE DUOROU_NVCC_VERSION_RAW
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+            message(STATUS "Detected NVCC: ${DUOROU_NVCC_EXECUTABLE}")
+            if(DUOROU_NVCC_VERSION_RAW)
+                message(STATUS "NVCC version info:\n${DUOROU_NVCC_VERSION_RAW}")
+            endif()
+            set(DUOROU_ENABLE_CUDA ON CACHE BOOL "Enable CUDA support" FORCE)
+            message(STATUS "Auto-enabled CUDA support for Windows (override with -DDUOROU_ENABLE_CUDA=OFF)")
+        else()
+            message(STATUS "NVCC not found on Windows; CUDA remains disabled. Set CUDA_PATH or install CUDA Toolkit 12.x+")
+        endif()
+    endif()
 endif()
 
 # 查找依赖包
@@ -366,8 +409,19 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
 # 根据选项配置 llama.cpp
 if(DUOROU_ENABLE_CUDA)
+    # llama.cpp 旧变量（已弃用）与新变量同时设置，确保兼容
     set(LLAMA_CUDA ON CACHE BOOL "" FORCE)
+    set(GGML_CUDA ON CACHE BOOL "" FORCE)
+    set(GGML_CCACHE OFF CACHE BOOL "" FORCE)
     message(STATUS "Enabled CUDA support for llama.cpp")
+    # 统一 CUDA 语言标准与默认架构（如未由外部指定）
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        # 覆盖常见的 NVIDIA GPU 代际：Turing(75), Ampere(80,86), Ada(89,90)
+        set(CMAKE_CUDA_ARCHITECTURES "90;89;86;80;75" CACHE STRING "CUDA architectures" FORCE)
+        message(STATUS "Default CMAKE_CUDA_ARCHITECTURES=90;89;86;80;75 (override by -DCMAKE_CUDA_ARCHITECTURES=...)")
+    endif()
 endif()
 
 if(DUOROU_ENABLE_METAL)
@@ -387,6 +441,12 @@ set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 if(DUOROU_ENABLE_CUDA)
     set(SD_CUDA ON CACHE BOOL "" FORCE)
     message(STATUS "Enabled CUDA support for stable-diffusion.cpp")
+    # 保持与上方一致的 CUDA 标准与架构设置
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "90;89;86;80;75" CACHE STRING "CUDA architectures" FORCE)
+    endif()
 endif()
 
 if(DUOROU_ENABLE_METAL)
