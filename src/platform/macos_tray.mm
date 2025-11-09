@@ -8,6 +8,50 @@
 #include <map>
 #include <vector>
 
+// Try to load a custom status bar icon named
+// "seo_page_browser_web_window_view_icon" from bundle resources or project paths.
+static NSImage *LoadCustomStatusIcon() {
+  @autoreleasepool {
+    // Preferred search order: ICNS -> PNG -> ICO
+    // Locations: app bundle resources -> project relative paths
+    NSArray<NSString *> *extensions = @[ @"icns", @"png", @"ico" ];
+
+    // 1) Search in the app bundle resources
+    NSBundle *bundle = [NSBundle mainBundle];
+    if (bundle) {
+      for (NSString *ext in extensions) {
+        NSString *resPath = [bundle pathForResource:@"seo_page_browser_web_window_view_icon" ofType:ext];
+        if (resPath != nil) {
+          NSImage *img = [[NSImage alloc] initWithContentsOfFile:resPath];
+          if (img) {
+            // Return retained image; caller will release after assignment
+            return img;
+          }
+        }
+      }
+    }
+
+    // 2) Fallback: search relative to current working directory
+    NSString *cwd = [[NSFileManager defaultManager] currentDirectoryPath];
+    NSArray<NSString *> *relPaths = @[
+      @"src/gui/seo_page_browser_web_window_view_icon.icns",
+      @"src/gui/seo_page_browser_web_window_view_icon.png",
+      @"src/gui/seo_page_browser_web_window_view_icon.ico"
+    ];
+    for (NSString *rel in relPaths) {
+      NSString *full = [cwd stringByAppendingPathComponent:rel];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:full]) {
+        NSImage *img = [[NSImage alloc] initWithContentsOfFile:full];
+        if (img) {
+          return img;
+        }
+      }
+    }
+
+    return nil;
+  }
+}
+
 // Helper class to handle menu item callbacks
 @interface MenuItemTarget : NSObject {
   std::function<void()> callback_;
@@ -48,6 +92,8 @@ duorou::MacOSTray::~MacOSTray() {
       if (info.menuItem) {
         [info.menuItem release];
       }
+      // If a strong-associated target is stored via representedObject,
+      // it will be released when menuItem is released. Nothing else needed.
     }
     menu_items_.clear();
     menu_item_map_.clear();
@@ -96,6 +142,7 @@ bool duorou::MacOSTray::initialize() {
 
     // Set up the status item
     statusItem_.menu = menu_;
+    std::cout << "[MacOSTray] statusItem_=" << statusItem_ << " menu_=" << menu_ << std::endl;
 
     // Check if button is available
     if (!statusItem_.button) {
@@ -107,6 +154,7 @@ bool duorou::MacOSTray::initialize() {
       menu_ = nil;
       return false;
     }
+    std::cout << "[MacOSTray] button=" << statusItem_.button << std::endl;
 
     // Set default properties
     statusItem_.button.toolTip = @"Duorou";
@@ -128,15 +176,23 @@ void duorou::MacOSTray::setIcon(const std::string &iconText) {
   }
 
   @autoreleasepool {
-    NSImage *image = createImageFromText(iconText);
-    if (image && [image isKindOfClass:[NSImage class]]) {
-      // Set as template image before assigning
-      [image setTemplate:YES];
+    // Treat parameter as file path first; fallback to text rendering
+    NSString *path = [NSString stringWithUTF8String:iconText.c_str()];
+    NSImage *fileImg = [[NSImage alloc] initWithContentsOfFile:path];
+    if (fileImg) {
+      [fileImg setSize:NSMakeSize(18, 18)];
+      [fileImg setTemplate:YES];
+      statusItem_.button.image = fileImg;
+      [fileImg release];
+      return;
+    }
 
-      // Assign to button (button will retain the image)
-      statusItem_.button.image = image;
+    NSImage *textImg = createImageFromText(iconText);
+    if (textImg && [textImg isKindOfClass:[NSImage class]]) {
+      [textImg setTemplate:YES];
+      statusItem_.button.image = textImg;
     } else {
-      std::cerr << "Failed to create image from text: " << iconText
+      std::cerr << "Failed to load icon from path or text: " << iconText
                 << std::endl;
     }
   }
@@ -150,26 +206,44 @@ void duorou::MacOSTray::setSystemIcon() {
   }
 
   @autoreleasepool {
-    // Use tree.circle system icon
-    NSImage *image = [NSImage imageWithSystemSymbolName:@"tree.circle"
-                               accessibilityDescription:nil];
-    if (image) {
-      [image setTemplate:YES];
-      statusItem_.button.image = image;
-    } else {
-      // Fallback: create a simple colored circle
-      NSImage *fallbackImage =
-          [[NSImage alloc] initWithSize:NSMakeSize(16, 16)];
-      [fallbackImage lockFocus];
-      [[NSColor systemBlueColor] set];
-      NSBezierPath *circle =
-          [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(2, 2, 12, 12)];
-      [circle fill];
-      [fallbackImage unlockFocus];
-      [fallbackImage setTemplate:YES];
-      statusItem_.button.image = fallbackImage;
-      [fallbackImage release];
+    std::cout << "[MacOSTray] setSystemIcon start" << std::endl;
+    NSStatusBarButton *btn = statusItem_.button;
+    if (!btn) {
+      std::cerr << "[MacOSTray] button unexpectedly nil" << std::endl;
+      return;
     }
+    std::cout << "[MacOSTray] button class = "
+              << [[btn className] UTF8String] << std::endl;
+
+    // First, attempt to use the custom icon if present
+    NSImage *custom = LoadCustomStatusIcon();
+    if (custom) {
+      std::cout << "[MacOSTray] using custom icon" << std::endl;
+      // Standard status bar icon size is 18×18 points
+      [custom setSize:NSMakeSize(18, 18)];
+      // Template image lets macOS tint for light/dark mode automatically
+      [custom setTemplate:YES];
+      btn.image = custom;
+      [btn setImageScaling:NSImageScaleProportionallyDown];
+      [btn setImagePosition:NSImageOnly];
+      [custom release];
+      std::cout << "[MacOSTray] custom icon applied (template+18x18)" << std::endl;
+      return;
+    }
+
+    // Final fallback: draw a simple circle (avoid SF Symbols to be safe)
+    std::cout << "[MacOSTray] using fallback circle icon" << std::endl;
+    NSImage *fallbackImage = [[NSImage alloc] initWithSize:NSMakeSize(16, 16)];
+    [fallbackImage lockFocus];
+    [[NSColor systemBlueColor] set];
+    NSBezierPath *circle =
+        [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(2, 2, 12, 12)];
+    [circle fill];
+    [fallbackImage unlockFocus];
+    [fallbackImage setTemplate:YES];
+    btn.image = fallbackImage;
+    std::cout << "[MacOSTray] fallback icon applied" << std::endl;
+    [fallbackImage release];
   }
 }
 
@@ -236,10 +310,13 @@ void duorou::MacOSTray::addMenuItem(const std::string &title,
     MenuItemTarget *target = [[MenuItemTarget alloc] initWithCallback:callback];
 
     [menuItem setTarget:target];
+    // Ensure strong association so target isn't deallocated prematurely
+    [menuItem setRepresentedObject:target];
     [menu_ addItem:menuItem];
 
+    // representedObject is retained by NSMenuItem; safe to release locals
+    [target release];
     [menuItem release];
-    [target release]; // menuItem will retain target
   }
 }
 
@@ -437,8 +514,9 @@ NSMenuItem *duorou::MacOSTray::createNSMenuItem(const MenuItemInfo &info) {
       MenuItemTarget *target =
           [[MenuItemTarget alloc] initWithCallback:info.callback];
       [menuItem setTarget:target];
-      // Don't release target, let menuItem keep reference to it
-      // target will be automatically released when menuItem is released
+      // Strongly associate to the menu item to prevent dangling target
+      [menuItem setRepresentedObject:target];
+      [target release];
     }
 
     [menuItem setEnabled:info.enabled];
@@ -514,12 +592,11 @@ void duorou::MacOSTray::setQuitCallback(std::function<void()> callback) {
       // 更新NSMenuItem的target
       @autoreleasepool {
         if (info->menuItem) {
-          MenuItemTarget *target =
-              [[MenuItemTarget alloc] initWithCallback:info->callback];
+          MenuItemTarget *target = [[MenuItemTarget alloc] initWithCallback:info->callback];
           [info->menuItem setTarget:target];
-          // 不要释放target，让menuItem保持对它的引用
-          std::cout << "[MacOSTray] Updated NSMenuItem target for quit menu"
-                    << std::endl;
+          [info->menuItem setRepresentedObject:target];
+          [target release];
+          std::cout << "[MacOSTray] Updated NSMenuItem target for quit menu" << std::endl;
         }
       }
     }

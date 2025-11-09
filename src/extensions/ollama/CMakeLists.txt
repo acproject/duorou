@@ -37,6 +37,11 @@ add_library(${OLLAMA_EXTENSION_NAME} STATIC
     ${LLAMA_CPP_SOURCES}
 )
 
+# Ensure real Ollama implementation is compiled (not the stub)
+target_compile_definitions(${OLLAMA_EXTENSION_NAME}
+    PUBLIC DUOROU_ENABLE_OLLAMA
+)
+
 # 设置目标属性
 set_target_properties(${OLLAMA_EXTENSION_NAME} PROPERTIES
     CXX_STANDARD 17

@@ -1,17 +1,22 @@
 #ifndef DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
 #define DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
 
+#ifdef __cplusplus
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+// 注意：避免在命名空间内包含头文件，以防标准库命名空间被嵌套。
+// 所有包含应在命名空间之外进行。
+
+#if !defined(DUOROU_ENABLE_OLLAMA)
+
 namespace duorou {
 namespace extensions {
 namespace ollama {
-
-#if !defined(DUOROU_ENABLE_OLLAMA)
 
 // ---------- Stub declarations when Ollama extension is disabled ----------
 
@@ -90,12 +95,20 @@ public:
   static void shutdown() {}
 };
 
+} // namespace ollama
+} // namespace extensions
+} // namespace duorou
+
 #else // DUOROU_ENABLE_OLLAMA
 
 // ---------- Real declarations when Ollama extension is enabled ----------
 
 #include "gguf_parser.h"
 #include "ollama_path_resolver.h"
+
+namespace duorou {
+namespace extensions {
+namespace ollama {
 
 // Forward declaration
 class InferenceEngine;
@@ -228,3 +241,5 @@ private:
 } // namespace duorou
 
 #endif // DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
+
+#endif // __cplusplus
