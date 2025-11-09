@@ -338,30 +338,36 @@ public:
       }
       const bool is_http = media_path.rfind("http://", 0) == 0 || media_path.rfind("https://", 0) == 0;
       const bool is_data = media_path.rfind("data:image/", 0) == 0;
-      if (!is_http && !is_data) {
-        std::string local_path = media_path;
-        if (local_path.rfind("file://", 0) == 0) {
-          // 解码 file:// URI -> 本地路径
-          auto percent_decode_local = [](const std::string &s) -> std::string {
-            std::string out; out.reserve(s.size());
-            for (size_t i = 0; i < s.size(); ++i) {
-              if (s[i] == '%' && i + 2 < s.size()) {
-                auto hex = s.substr(i + 1, 2);
-                char *endp = nullptr;
-                long v = std::strtol(hex.c_str(), &endp, 16);
-                if (endp && *endp == '\0') { out.push_back(static_cast<char>(v)); i += 2; continue; }
+        if (!is_http && !is_data) {
+          std::string local_path = media_path;
+          if (local_path.rfind("file://", 0) == 0) {
+            // 解码 file:// URI -> 本地路径
+            auto percent_decode_local = [](const std::string &s) -> std::string {
+              std::string out; out.reserve(s.size());
+              for (size_t i = 0; i < s.size(); ++i) {
+                if (s[i] == '%' && i + 2 < s.size()) {
+                  auto hex = s.substr(i + 1, 2);
+                  char *endp = nullptr;
+                  long v = std::strtol(hex.c_str(), &endp, 16);
+                  if (endp && *endp == '\0') { out.push_back(static_cast<char>(v)); i += 2; continue; }
+                }
+                out.push_back(s[i]);
               }
-              out.push_back(s[i]);
+              return out;
+            };
+            local_path = percent_decode_local(local_path.substr(7));
+            // Windows: 处理 file:///C:/... 前导斜杠，转换为 C:/...
+            #ifdef _WIN32
+            if (local_path.size() >= 3 && local_path[0] == '/' && std::isalpha(static_cast<unsigned char>(local_path[1])) && local_path[2] == ':') {
+              local_path.erase(0, 1);
             }
-            return out;
-          };
-          local_path = percent_decode_local(local_path.substr(7));
+            #endif
+          }
+          // local path should exist; otherwise bail out early
+          if (!std::filesystem::exists(local_path)) {
+            return std::string("[Media path invalid or not found] ") + media_path;
+          }
         }
-        // local path should exist; otherwise bail out early
-        if (!std::filesystem::exists(local_path)) {
-          return std::string("[Media path invalid or not found] ") + media_path;
-        }
-      }
 
       // Build effective prompt with media marker (allow override)
       std::string prompt_media;
