@@ -1,8 +1,6 @@
 #ifndef DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
 #define DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
 
-#include "gguf_parser.h"
-#include "ollama_path_resolver.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +10,92 @@
 namespace duorou {
 namespace extensions {
 namespace ollama {
+
+#if !defined(DUOROU_ENABLE_OLLAMA)
+
+// ---------- Stub declarations when Ollama extension is disabled ----------
+
+// 模型信息结构体
+struct ModelInfo {
+  std::string model_id;
+  std::string file_path;
+  std::string architecture;
+  unsigned int context_length = 0;
+  unsigned int vocab_size = 0;
+  bool has_vision = false;
+  bool is_loaded = false;
+};
+
+// 模型加载状态枚举
+enum class ModelLoadState { UNLOADED, LOADING, LOADED, LOAD_ERROR };
+
+// 推理请求结构体
+struct InferenceRequest {
+  std::string model_id;
+  std::string prompt;
+  std::vector<std::vector<float>> image_features;
+  unsigned int max_tokens = 100;
+  float temperature = 0.7f;
+  float top_p = 0.9f;
+};
+
+// 推理响应结构体
+struct InferenceResponse {
+  bool success = false;
+  std::string generated_text;
+  std::string error_message;
+  unsigned int tokens_generated = 0;
+  float inference_time_ms = 0.0f;
+};
+
+class OllamaModelManager {
+public:
+  explicit OllamaModelManager(bool /*verbose*/ = false) {}
+  ~OllamaModelManager() = default;
+
+  bool registerModel(const std::string &/*model_id*/, const std::string &/*gguf_file_path*/) { return false; }
+  bool registerModelByName(const std::string &/*model_name*/) { return false; }
+  bool loadModel(const std::string &/*model_id*/) { return false; }
+  bool unloadModel(const std::string &/*model_id*/) { return false; }
+  bool isModelLoaded(const std::string &/*model_id*/) const { return false; }
+
+  std::vector<std::string> getRegisteredModels() const { return {}; }
+  std::vector<std::string> getLoadedModels() const { return {}; }
+  const ModelInfo *getModelInfo(const std::string &/*model_id*/) const { return nullptr; }
+  ModelLoadState getModelLoadState(const std::string &/*model_id*/) const { return ModelLoadState::UNLOADED; }
+
+  InferenceResponse generateText(const InferenceRequest &/*request*/) { return {}; }
+  InferenceResponse generateTextWithImages(const InferenceRequest &/*request*/) { return {}; }
+  std::vector<InferenceResponse> generateTextBatch(const std::vector<InferenceRequest> &/*requests*/) { return {}; }
+
+  bool validateModel(const std::string &/*gguf_file_path*/, std::string &/*error_message*/) { return false; }
+
+  void clearAllModels() {}
+  size_t getMemoryUsage() const { return 0; }
+
+  std::string normalizeModelId(const std::string &model_name) const { return model_name; }
+};
+
+inline std::unique_ptr<OllamaModelManager> createOllamaModelManager(bool verbose = false) {
+  return std::make_unique<OllamaModelManager>(verbose);
+}
+
+class GlobalModelManager {
+public:
+  static OllamaModelManager &getInstance() {
+    static OllamaModelManager instance;
+    return instance;
+  }
+  static void initialize(bool /*verbose*/ = false) {}
+  static void shutdown() {}
+};
+
+#else // DUOROU_ENABLE_OLLAMA
+
+// ---------- Real declarations when Ollama extension is enabled ----------
+
+#include "gguf_parser.h"
+#include "ollama_path_resolver.h"
 
 // Forward declaration
 class InferenceEngine;
@@ -136,6 +220,8 @@ private:
   static std::unique_ptr<OllamaModelManager> instance_;
   static bool initialized_;
 };
+
+#endif // DUOROU_ENABLE_OLLAMA
 
 } // namespace ollama
 } // namespace extensions

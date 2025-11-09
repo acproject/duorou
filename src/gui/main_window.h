@@ -144,6 +144,9 @@ typedef void* GParamSpec;
 #ifdef __APPLE__
 #include "../platform/macos_tray.h"
 #endif
+#ifdef _WIN32
+#include "../platform/windows_tray.h"
+#endif
 
 namespace duorou {
 namespace core {
@@ -273,6 +276,9 @@ private:
 
 #ifdef __APPLE__
   std::unique_ptr<MacOSTray> macos_tray_;
+#endif
+#ifdef _WIN32
+  std::unique_ptr<WindowsTray> windows_tray_;
 #endif
 
   // Current view state

@@ -18,10 +18,14 @@ MainWindow::MainWindow()
       paned_(nullptr), toggle_sidebar_button_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
-      current_view_("chat"), application_(nullptr)
+  current_view_("chat"), application_(nullptr)
 #ifdef __APPLE__
       ,
       macos_tray_(std::make_unique<MacOSTray>())
+#endif
+#ifdef _WIN32
+      ,
+      windows_tray_(std::make_unique<WindowsTray>())
 #endif
 {
 }
@@ -32,10 +36,14 @@ MainWindow::MainWindow(core::Application *app)
       paned_(nullptr), toggle_sidebar_button_(nullptr),
       new_chat_button_(nullptr), image_button_(nullptr),
       settings_button_(nullptr), chat_history_box_(nullptr),
-      current_view_("chat"), application_(app)
+  current_view_("chat"), application_(app)
 #ifdef __APPLE__
       ,
       macos_tray_(std::make_unique<MacOSTray>())
+#endif
+#ifdef _WIN32
+      ,
+      windows_tray_(std::make_unique<WindowsTray>())
 #endif
 {
 }
@@ -171,10 +179,49 @@ bool MainWindow::initialize() {
   } else {
     std::cerr << "Failed to initialize macOS system tray" << std::endl;
   }
+#elif defined(_WIN32)
+  if (windows_tray_ && windows_tray_->initialize()) {
+    std::cout << "Windows system tray initialized successfully" << std::endl;
+
+    windows_tray_->setSystemIcon();
+    windows_tray_->setIconFromFile("src/gui/seo_page_browser_web_window_view_icon.ico");
+    windows_tray_->setTooltip("Duorou - AI Desktop Assistant");
+
+    windows_tray_->setLeftClickCallback([this]() { restore_from_tray(); });
+    windows_tray_->setRightClickCallback([this]() { hide(); });
+
+    windows_tray_->addMenuItemWithId("show_window", "Show Window",
+                                     [this]() { restore_from_tray(); });
+    windows_tray_->addMenuItemWithId("hide_window", "Hide Window",
+                                     [this]() { hide(); });
+
+    windows_tray_->addSeparator();
+
+    windows_tray_->addMenuItemWithId("new_chat", "New Chat", [this]() {
+      restore_from_tray();
+      create_new_chat();
+    });
+
+    windows_tray_->addMenuItemWithId("settings", "Settings", [this]() {
+      restore_from_tray();
+      show_settings();
+    });
+
+    windows_tray_->addSeparator();
+
+    windows_tray_->addMenuItemWithId("quit", "Quit Duorou", [this]() {
+      quit_application();
+    });
+
+    windows_tray_->setQuitCallback([this]() { quit_application(); });
+    windows_tray_->show();
+    windows_tray_->updateWindowStateMenu(true);
+  } else {
+    std::cerr << "Failed to initialize Windows system tray" << std::endl;
+  }
 #else
-  // Use GTK system tray on other platforms (if supported)
-  std::cout << "System tray feature not implemented for this platform"
-            << std::endl;
+  // Other platforms: not implemented
+  std::cout << "System tray feature not implemented for this platform" << std::endl;
 #endif
 
   // Load existing sessions and update chat history list
@@ -199,6 +246,11 @@ void MainWindow::show() {
       macos_tray_->updateWindowStateMenu(true);
     }
 #endif
+#ifdef _WIN32
+    if (windows_tray_ && windows_tray_->isAvailable()) {
+      windows_tray_->updateWindowStateMenu(true);
+    }
+#endif
   }
 }
 
@@ -214,6 +266,11 @@ void MainWindow::hide() {
       macos_tray_->updateWindowStateMenu(false);
       std::cout << "[MainWindow] Updated tray menu state to hidden"
                 << std::endl;
+    }
+#endif
+#ifdef _WIN32
+    if (windows_tray_ && windows_tray_->isAvailable()) {
+      windows_tray_->updateWindowStateMenu(false);
     }
 #endif
   }
@@ -823,6 +880,13 @@ gboolean MainWindow::on_window_delete_event(GtkWindow *window,
     return TRUE; // Prevent window closing, just hide
   }
 #endif
+#ifdef _WIN32
+  // On Windows, if system tray is available, hide window instead of quitting
+  if (main_window->windows_tray_ && main_window->windows_tray_->isAvailable()) {
+    main_window->hide();
+    return TRUE;
+  }
+#endif
 
   // If system tray is not available, exit normally
   return FALSE; // Allow window to close normally
@@ -847,6 +911,11 @@ void MainWindow::restore_from_tray() {
       macos_tray_->updateWindowStateMenu(true);
     }
 #endif
+#ifdef _WIN32
+    if (windows_tray_ && windows_tray_->isAvailable()) {
+      windows_tray_->updateWindowStateMenu(true);
+    }
+#endif
   }
 }
 
@@ -868,6 +937,26 @@ void MainWindow::set_tray_status(const std::string &status) {
     } else {
       macos_tray_->setIcon("Flower"); // Default icon
       macos_tray_->setTooltip("Duorou - AI Desktop Assistant");
+    }
+  }
+#endif
+#ifdef _WIN32
+  if (windows_tray_ && windows_tray_->isAvailable()) {
+    if (status == "idle") {
+      windows_tray_->setIcon("Flower");
+      windows_tray_->setTooltip("Duorou - Ready");
+    } else if (status == "processing") {
+      windows_tray_->setIcon("Lightning");
+      windows_tray_->setTooltip("Duorou - Processing...");
+    } else if (status == "error") {
+      windows_tray_->setIcon("Error");
+      windows_tray_->setTooltip("Duorou - Error occurred");
+    } else if (status == "success") {
+      windows_tray_->setIcon("Success");
+      windows_tray_->setTooltip("Duorou - Task completed");
+    } else {
+      windows_tray_->setIcon("Flower");
+      windows_tray_->setTooltip("Duorou - AI Desktop Assistant");
     }
   }
 #endif

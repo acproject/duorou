@@ -6,7 +6,9 @@
 #include "logger.h"
 #include "model_manager.h"
 #include "workflow_engine.h"
+#if defined(DUOROU_ENABLE_OLLAMA)
 #include "../extensions/ollama/ollama_model_manager.h"
+#endif
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #endif
@@ -188,6 +190,7 @@ int Application::run() {
     }
 
     if (!cli_prompt.empty()) {
+#if defined(DUOROU_ENABLE_OLLAMA)
       // Require model for deterministic behavior
       if (cli_model.empty()) {
         std::cerr << "Missing --model for CLI generation. Usage: --service --model <name> --prompt <text> [--max-tokens N --temperature T --top-p P]" << std::endl;
@@ -235,6 +238,11 @@ int Application::run() {
         status_ = Status::Stopped;
         return 6;
       }
+#else
+      std::cerr << "Ollama 扩展未启用，无法进行 CLI 文本生成。请使用 -DDUOROU_ENABLE_OLLAMA=ON 重新配置。" << std::endl;
+      status_ = Status::Stopped;
+      return 7;
+#endif
     }
 
     // Log startup information
@@ -442,7 +450,8 @@ bool Application::initializeComponents() {
     }
     std::cout << "Model manager initialized successfully" << std::endl;
 
-    // Initialize global model manager
+    // Initialize global model manager (only when Ollama is enabled)
+#if defined(DUOROU_ENABLE_OLLAMA)
     std::cout << "Initializing global model manager..." << std::endl;
     try {
       extensions::ollama::GlobalModelManager::initialize();
@@ -451,6 +460,9 @@ bool Application::initializeComponents() {
       logger_->error("Failed to initialize global model manager: " + std::string(e.what()));
       return false;
     }
+#else
+    std::cout << "Ollama 扩展未启用，跳过全局模型管理器初始化。" << std::endl;
+#endif
 
     // Initialize workflow engine
     std::cout << "Creating workflow engine..." << std::endl;
@@ -544,13 +556,15 @@ void Application::cleanup() {
   // Clean up core components (in reverse order)
   workflow_engine_.reset();
   
-  // Shutdown global model manager
+  // Shutdown global model manager (only when Ollama is enabled)
+#if defined(DUOROU_ENABLE_OLLAMA)
   try {
     extensions::ollama::GlobalModelManager::shutdown();
   } catch (const std::exception& e) {
     // Continue cleanup even if errors occur during shutdown
     std::cerr << "Warning: Failed to shutdown global model manager: " << e.what() << std::endl;
   }
+#endif
   
   model_manager_.reset();
   config_manager_.reset();

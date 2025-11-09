@@ -74,6 +74,9 @@ elseif(WIN32)
     
     # Windows 特定的 vcpkg 包配置
     set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg target triplet")
+
+    # 使用 Unicode 宽字符 API（仅在主可执行目标中设置，避免影响第三方库）
+    # 注：全局设置会导致某些第三方库（如 stable-diffusion.cpp）在窄字符 API 上发生编译错误
     
 elseif(UNIX)
     set(DUOROU_PLATFORM "linux")
@@ -370,6 +373,11 @@ add_definitions(
     -DDUOROU_PLATFORM="${DUOROU_PLATFORM}"
 )
 
+# 全局启用 Ollama 扩展的编译宏，便于头文件条件编译
+if(DUOROU_ENABLE_OLLAMA)
+    add_definitions(-DDUOROU_ENABLE_OLLAMA)
+endif()
+
 if(DUOROU_BUILD_GUI AND GTK4_FOUND)
     add_definitions(${GTK4_CFLAGS_OTHER} -DHAVE_GTK)
 endif()
@@ -553,6 +561,11 @@ if(APPLE)
     list(APPEND DUOROU_SOURCES_LIST src/media/macos_screen_capture.mm)
 endif()
 
+# Windows平台特定源文件
+if(WIN32)
+    list(APPEND DUOROU_SOURCES_LIST src/platform/windows_tray.cpp)
+endif()
+
 # 头文件列表（只包含实际存在的文件）
 set(DUOROU_HEADERS_LIST
     src/core/application.h
@@ -592,6 +605,11 @@ if(APPLE)
     list(APPEND DUOROU_HEADERS_LIST src/media/macos_screen_capture.h)
 endif()
 
+# Windows平台特定头文件
+if(WIN32)
+    list(APPEND DUOROU_HEADERS_LIST src/platform/windows_tray.h)
+endif()
+
 # 检查实际存在的源文件
 set(DUOROU_SOURCES)
 set(DUOROU_HEADERS)
@@ -629,6 +647,10 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     
     # 主可执行文件
     add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
+    # 仅对主可执行目标启用 Unicode 宽字符宏，避免影响第三方库
+    if(WIN32)
+        target_compile_definitions(duorou PRIVATE UNICODE _UNICODE)
+    endif()
     
     # 设置包含目录（GTK 目录按条件添加）
     target_include_directories(duorou PRIVATE
@@ -650,7 +672,7 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         llama
         mtmd
         stable-diffusion
-        duorou_ollama_extension
+        $<$<BOOL:${DUOROU_ENABLE_OLLAMA}>:duorou_ollama_extension>
         duorou_model
         duorou_utils
         Threads::Threads
@@ -733,6 +755,15 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
     )
+
+    # 复制 Windows 托盘图标到可执行文件目录，确保运行时可找到
+    if(WIN32)
+        add_custom_command(TARGET duorou POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/seo_page_browser_web_window_view_icon.ico
+                $<TARGET_FILE_DIR:duorou>/seo_page_browser_web_window_view_icon.ico
+        )
+    endif()
 elseif(NOT DUOROU_BUILD_GUI)
     message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GUI executable build.")
 else()

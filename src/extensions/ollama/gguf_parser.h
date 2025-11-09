@@ -1,6 +1,93 @@
 #ifndef DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H
 #define DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H
 
+// 当未启用 Ollama 扩展时，提供轻量级桩实现以便其他模块可编译
+#if !defined(DUOROU_ENABLE_OLLAMA)
+#ifdef __cplusplus
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <unordered_map>
+
+namespace duorou { namespace extensions { namespace ollama {
+
+enum class GGUFType : uint32_t {
+  UINT8 = 0, INT8 = 1, UINT16 = 2, INT16 = 3,
+  UINT32 = 4, INT32 = 5, FLOAT32 = 6, BOOL = 7,
+  STRING = 8, ARRAY = 9, UINT64 = 10, INT64 = 11, FLOAT64 = 12
+};
+
+enum class GGMLTensorType : uint32_t {
+  F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3,
+  Q5_0 = 6, Q5_1 = 7, Q8_0 = 8, Q8_1 = 9,
+  Q2_K = 10, Q3_K = 11, Q4_K = 12, Q5_K = 13, Q6_K = 14, Q8_K = 15,
+  BF16 = 30
+};
+
+struct GGUFKeyValue {
+  std::string key; GGUFType type; std::vector<uint8_t> data;
+  std::string asString() const { return {}; }
+  int32_t asInt32() const { return 0; }
+  int64_t asInt64() const { return 0; }
+  uint32_t asUInt32() const { return 0; }
+  uint64_t asUInt64() const { return 0; }
+  float asFloat32() const { return 0.0f; }
+  double asFloat64() const { return 0.0; }
+  bool asBool() const { return false; }
+  std::vector<int32_t> asInt32Array() const { return {}; }
+  std::vector<uint64_t> asUInt64Array() const { return {}; }
+  std::vector<std::string> asStringArray() const { return {}; }
+};
+
+struct GGUFHeader { uint32_t magic = 0; uint32_t version = 0; uint64_t tensor_count = 0; uint64_t metadata_kv_count = 0; };
+
+struct GGUFTensorInfo {
+  std::string name; uint32_t n_dimensions = 0; std::vector<uint64_t> dimensions;
+  GGMLTensorType type = GGMLTensorType::F32; uint64_t offset = 0; uint64_t size = 0;
+};
+
+struct ModelArchitecture {
+  std::string name; uint32_t context_length = 0; uint32_t embedding_length = 0;
+  uint32_t block_count = 0; uint32_t feed_forward_length = 0;
+  uint32_t attention_head_count = 0; uint32_t attention_head_count_kv = 0;
+  uint32_t attention_head_dim = 0; uint32_t attention_head_dim_k = 0;
+  float layer_norm_rms_epsilon = 0.0f; uint32_t rope_dimension_count = 0;
+  float rope_freq_base = 0.0f; std::vector<uint64_t> rope_dimension_sections;
+  bool has_vision = false; uint32_t vision_patch_size = 0; uint32_t vision_spatial_patch_size = 0;
+  std::vector<uint64_t> vision_fullatt_block_indexes;
+};
+
+class GGUFParser {
+public:
+  explicit GGUFParser(bool verbose = false) : verbose_(verbose) {}
+  ~GGUFParser() = default;
+  bool useMmap() const { return false; }
+  void setUseMmap(bool) {}
+  bool parseFile(const std::string&) { return false; }
+  const ModelArchitecture& getArchitecture() const { return architecture_; }
+  const GGUFKeyValue* getMetadata(const std::string&) const { return nullptr; }
+  std::vector<std::string> listMetadataKeys() const { return {}; }
+  const GGUFTensorInfo* getTensorInfo(const std::string&) const { return nullptr; }
+  const std::vector<GGUFTensorInfo>& getAllTensorInfos() const { return tensor_infos_; }
+  const GGUFHeader& getHeader() const { return header_; }
+  uint64_t getTensorDataOffset() const { return 0ULL; }
+  bool validateFile() const { return false; }
+  static bool isSupportedArchitecture(const std::string&) { return false; }
+  void setVerbose(bool verbose) { verbose_ = verbose; }
+  const uint8_t* getTensorDataPtr(const std::string&) const { return nullptr; }
+  bool readTensorData(const std::string&, void*, size_t, size_t = 0) const { return false; }
+  bool readTensorData(const GGUFTensorInfo&, void*, size_t, size_t = 0) const { return false; }
+  size_t getTensorSize(const std::string&) const { return 0ULL; }
+private:
+  ModelArchitecture architecture_{};
+  std::vector<GGUFTensorInfo> tensor_infos_{};
+  GGUFHeader header_{};
+  bool verbose_{false};
+};
+
+} } } // namespace duorou::extensions::ollama
+#endif // __cplusplus
+#else
 #ifdef __cplusplus
 
 #include <cstdint>
@@ -365,5 +452,7 @@ inline size_t GGUFParser::getTensorSize(const std::string& name) const {
 } // namespace duorou
 
 #endif // __cplusplus
+
+#endif // !DUOROU_ENABLE_OLLAMA
 
 #endif // DUOROU_EXTENSIONS_OLLAMA_GGUF_PARSER_H
