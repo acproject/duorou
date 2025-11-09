@@ -234,11 +234,11 @@ private:
   static bool initialized_;
 };
 
-#endif // DUOROU_ENABLE_OLLAMA
-
 } // namespace ollama
 } // namespace extensions
 } // namespace duorou
+
+#endif // DUOROU_ENABLE_OLLAMA
 
 #endif // DUOROU_EXTENSIONS_OLLAMA_OLLAMA_MODEL_MANAGER_H
 
