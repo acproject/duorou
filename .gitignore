@@ -159,3 +159,10 @@ third_party/MiniMemory/src/conf/dump.mcdb
 dump.mcdb
 
 __cmake_systeminformation
+third_party/llama.cpp/**
+third_party/llama.cpp
+third_party\llama.cpp\**
+third_party\stable-diffusion.cpp
+third_party\stable-diffusion.cpp\**
+third_party/stable-diffusion.cpp/**
+third_party/llama.cpp/ggml/src/ggml-cuda/CMakeLists.txt
