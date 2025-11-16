@@ -260,3 +260,11 @@ Thought
 
 
 增加一个会话检索的功能（先完成文字版本的）
+
+```py
+python3 third_party/llama.cpp/convert_hf_to_gguf.py --outtype auto --outfile ~/workspace/cpp_projects/duorou/models/qwen3-vl-4b-instruct/qwen3-vl-4b-instruct-{ftype}.gguf ~/workspace/cpp_projects/duorou/models/qwen3-vl-4b-instruct 
+```
+
+```py
+python3 third_party/llama.cpp/convert_hf_to_gguf.py --mmproj --outfile /~/workspace/cpp_projects/duorou/models/qwen3-vl-4b-instruct/mmproj-qwen3-vl-4b-instruct-f16.gguf ~/workspace/cpp_projects/duorou/models/qwen3-vl-4b-instruct 
+```
