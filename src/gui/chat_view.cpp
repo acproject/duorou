@@ -1,5 +1,6 @@
 #include "chat_view.h"
 #include "../core/config_manager.h"
+#include "../core/file_parser.h"
 #include "../core/logger.h"
 #include "../core/model_manager.h"
 #include "../core/text_generator.h"
@@ -22,20 +23,21 @@
 #ifdef _WIN32
 #include <string>
 // Windows 兼容 setenv/unsetenv 封装
-static inline int setenv(const char* name, const char* value, int overwrite) {
-    if (!overwrite && std::getenv(name)) {
-        return 0;
-    }
-    return _putenv_s(name, value);
+static inline int setenv(const char *name, const char *value, int overwrite) {
+  if (!overwrite && std::getenv(name)) {
+    return 0;
+  }
+  return _putenv_s(name, value);
 }
-static inline int unsetenv(const char* name) {
-    std::string s(name);
-    s += "="; // _putenv("NAME=") 删除变量
-    return _putenv(s.c_str());
+static inline int unsetenv(const char *name) {
+  std::string s(name);
+  s += "="; // _putenv("NAME=") 删除变量
+  return _putenv(s.c_str());
 }
 #endif
 
-// Fallback stubs when GTK headers are unavailable (prefer header presence check)
+// Fallback stubs when GTK headers are unavailable (prefer header presence
+// check)
 #if !__has_include(<gtk/gtk.h>)
 // Basic TRUE/FALSE
 #ifndef TRUE
@@ -333,6 +335,12 @@ typedef void GtkWindow;
 #ifndef GTK_FILE_CHOOSER
 #define GTK_FILE_CHOOSER(x) (x)
 #endif
+#ifndef GTK_LABEL
+#define GTK_LABEL(x) (x)
+#endif
+#ifndef gtk_label_set_text
+#define gtk_label_set_text(...) ((void)0)
+#endif
 
 // Constants used by file chooser and picture
 #ifndef GTK_CONTENT_FIT_CONTAIN
@@ -492,7 +500,8 @@ ChatView::ChatView()
       session_manager_(nullptr), model_manager_(nullptr),
       config_manager_(nullptr), cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
-      last_audio_update_(std::chrono::steady_clock::now()) {
+      last_audio_update_(std::chrono::steady_clock::now()),
+      file_preview_label_(nullptr) {
   // Initialize enhanced video window
   if (enhanced_video_window_) {
     enhanced_video_window_->initialize();
@@ -1072,6 +1081,13 @@ void ChatView::create_input_area() {
   gtk_box_append(GTK_BOX(model_container), model_label);
   gtk_box_append(GTK_BOX(model_container), model_selector_);
 
+  // Create file preview label (initially hidden)
+  file_preview_label_ = gtk_label_new("");
+  gtk_widget_set_halign(file_preview_label_, GTK_ALIGN_START);
+  gtk_widget_set_margin_bottom(file_preview_label_, 5);
+  gtk_widget_add_css_class(file_preview_label_, "file-preview-label");
+  gtk_widget_set_visible(file_preview_label_, FALSE); // Hidden by default
+
   // Create input box container
   input_container_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(input_container_, "input-container");
@@ -1168,6 +1184,7 @@ void ChatView::create_input_area() {
 
   // Add to main input container
   gtk_box_append(GTK_BOX(input_box_), model_container);
+  gtk_box_append(GTK_BOX(input_box_), file_preview_label_); // Add label
   gtk_box_append(GTK_BOX(input_box_), input_container_);
 
   // Add to main container
@@ -1304,8 +1321,28 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message += "File: " + std::string(g_path_get_basename(
-                                     chat_view->selected_file_path_.c_str()));
+
+      std::string filename = std::string(
+          g_path_get_basename(chat_view->selected_file_path_.c_str()));
+      auto parser = duorou::core::FileParserFactory::get_parser(
+          chat_view->selected_file_path_);
+      if (parser) {
+        std::string content = parser->parse(chat_view->selected_file_path_);
+
+        // Truncate content if too long
+        const size_t MAX_CONTENT_LENGTH = 20000;
+        if (content.length() > MAX_CONTENT_LENGTH) {
+          content = content.substr(0, MAX_CONTENT_LENGTH) +
+                    "\n\n[Content truncated due to length...]";
+        }
+
+        full_message += "File Content (" + filename + "):\n";
+        full_message += "```\n" + content + "\n```";
+        std::cout << "Attached file content length: " << content.length()
+                  << " chars" << std::endl;
+      } else {
+        full_message += "File: " + filename;
+      }
     }
 
     // Send message
@@ -1321,6 +1358,10 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       chat_view->selected_file_path_.clear();
       gtk_widget_set_tooltip_text(chat_view->upload_file_button_,
                                   "Upload Document");
+      if (chat_view->file_preview_label_) {
+        gtk_widget_set_visible(chat_view->file_preview_label_, FALSE);
+        gtk_label_set_text(GTK_LABEL(chat_view->file_preview_label_), "");
+      }
     }
   }
 }
@@ -1373,8 +1414,28 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
-      full_message += "File: " + std::string(g_path_get_basename(
-                                     chat_view->selected_file_path_.c_str()));
+
+      std::string filename = std::string(
+          g_path_get_basename(chat_view->selected_file_path_.c_str()));
+      auto parser = duorou::core::FileParserFactory::get_parser(
+          chat_view->selected_file_path_);
+      if (parser) {
+        std::string content = parser->parse(chat_view->selected_file_path_);
+
+        // Truncate content if too long
+        const size_t MAX_CONTENT_LENGTH = 20000;
+        if (content.length() > MAX_CONTENT_LENGTH) {
+          content = content.substr(0, MAX_CONTENT_LENGTH) +
+                    "\n\n[Content truncated due to length...]";
+        }
+
+        full_message += "File Content (" + filename + "):\n";
+        full_message += "```\n" + content + "\n```";
+        std::cout << "Attached file content length: " << content.length()
+                  << " chars" << std::endl;
+      } else {
+        full_message += "File: " + filename;
+      }
     }
 
     // Send message
@@ -1390,6 +1451,10 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       chat_view->selected_file_path_.clear();
       gtk_widget_set_tooltip_text(chat_view->upload_file_button_,
                                   "Upload Document");
+      if (chat_view->file_preview_label_) {
+        gtk_widget_set_visible(chat_view->file_preview_label_, FALSE);
+        gtk_label_set_text(GTK_LABEL(chat_view->file_preview_label_), "");
+      }
     }
   }
 }
@@ -1535,6 +1600,15 @@ void ChatView::on_file_dialog_response(GtkDialog *dialog, gint response_id,
             chat_view->upload_file_button_,
             ("Document selected: " + std::string(g_path_get_basename(filename)))
                 .c_str());
+
+        // Update file preview label
+        if (chat_view->file_preview_label_) {
+          std::string label_text =
+              "Attached: " + std::string(g_path_get_basename(filename));
+          gtk_label_set_text(GTK_LABEL(chat_view->file_preview_label_),
+                             label_text.c_str());
+          gtk_widget_set_visible(chat_view->file_preview_label_, TRUE);
+        }
 
         g_free(filename);
       }

@@ -380,23 +380,23 @@ std::string ImageGenerator::preprocessPrompt(const std::string &prompt) const {
 sample_method_t
 ImageGenerator::convertSampler(const std::string &sampler_name) const {
   if (sampler_name == "euler_a") {
-    return EULER_A;
+    return EULER_A_SAMPLE_METHOD;
   } else if (sampler_name == "euler") {
-    return EULER;
+    return EULER_SAMPLE_METHOD;
   } else if (sampler_name == "heun") {
-    return HEUN;
+    return HEUN_SAMPLE_METHOD;
   } else if (sampler_name == "dpm2") {
-    return DPM2;
+    return DPM2_SAMPLE_METHOD;
   } else if (sampler_name == "dpm++2s_a") {
-    return DPMPP2S_A;
+    return DPMPP2S_A_SAMPLE_METHOD;
   } else if (sampler_name == "dpm++2m") {
-    return DPMPP2M;
+    return DPMPP2M_SAMPLE_METHOD;
   } else if (sampler_name == "dpm++2mv2") {
-    return DPMPP2Mv2;
+    return DPMPP2Mv2_SAMPLE_METHOD;
   } else if (sampler_name == "lcm") {
-    return LCM;
+    return LCM_SAMPLE_METHOD;
   } else {
-    return EULER_A; // 默认采样器
+    return EULER_A_SAMPLE_METHOD; // 默认采样器
   }
 }
 

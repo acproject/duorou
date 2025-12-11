@@ -193,6 +193,7 @@ private:
   GtkWidget *upload_image_button_; // Upload image button
   GtkWidget *upload_file_button_;  // Upload file button
   GtkWidget *video_record_button_; // Video record button (GtkToggleButton)
+  GtkWidget *file_preview_label_;  // Label to show selected file
 
   // Store selected file paths
   std::string selected_image_path_;

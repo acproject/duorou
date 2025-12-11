@@ -477,6 +477,7 @@ add_subdirectory(third_party/llama.cpp)
 # Ensure mtmd library (multimodal tools) is available for linking
 add_subdirectory(third_party/llama.cpp/tools/mtmd EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/stable-diffusion.cpp)
+add_subdirectory(third_party/pdf-text-extraction)
 add_subdirectory(src/model)
 if(TARGET duorou_model)
     target_include_directories(duorou_model PRIVATE
@@ -537,6 +538,9 @@ set(DUOROU_SOURCES_LIST
     src/core/resource_manager.cpp
     src/core/workflow_engine.cpp
     src/core/model_switch_task.cpp
+    src/core/file_parser.cpp
+    src/core/pdf_parser.cpp
+    src/core/text_file_parser.cpp
 
     src/gui/main_window.cpp
     src/gui/chat_view.cpp
@@ -581,6 +585,9 @@ set(DUOROU_HEADERS_LIST
     src/core/resource_manager.h
     src/core/workflow_engine.h
     src/core/model_switch_task.h
+    src/core/file_parser.h
+    src/core/pdf_parser.h
+    src/core/text_file_parser.h
     src/gui/main_window.h
     src/gui/chat_view.h
     src/gui/image_view.h
@@ -672,6 +679,7 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         llama
         mtmd
         stable-diffusion
+        TextExtraction::TextExtraction
         $<$<BOOL:${DUOROU_ENABLE_OLLAMA}>:duorou_ollama_extension>
         duorou_model
         duorou_utils
