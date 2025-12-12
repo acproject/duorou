@@ -2,36 +2,50 @@
 
 #include "markdown_view.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <fstream>
-#include <sstream>
-#include <algorithm>
-#include <regex>
-#include <cctype>
-#include <cstring>
-#include <cstdlib>
 #if __has_include(<gdk/gdk.h>)
 #include <gdk/gdk.h>
 #define DUOROU_HAVE_GDK 1
 #else
 #define DUOROU_HAVE_GDK 0
 // Minimal GDK/GLib stubs for indexers when headers are unavailable
-typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef void GtkWidget; typedef void GtkButton; typedef void GtkCssProvider; typedef void GtkDialog; typedef void GtkRoot; typedef void GFile;
+typedef void GdkDisplay;
+typedef void GdkClipboard;
+typedef void GError;
+typedef void GtkWidget;
+typedef void GtkButton;
+typedef void GtkCssProvider;
+typedef void GtkDialog;
+typedef void GtkRoot;
+typedef void GFile;
 #ifndef gdk_display_get_default
-#define gdk_display_get_default(...) ((GdkDisplay*)nullptr)
+#define gdk_display_get_default(...) ((GdkDisplay *)nullptr)
 #endif
 #ifndef gdk_display_get_clipboard
-#define gdk_display_get_clipboard(...) ((GdkClipboard*)nullptr)
+#define gdk_display_get_clipboard(...) ((GdkClipboard *)nullptr)
 #endif
 #ifndef gdk_clipboard_set_text
 #define gdk_clipboard_set_text(...) ((void)0)
 #endif
 #ifndef g_get_current_dir
-#define g_get_current_dir(...) ((char*)nullptr)
+#define g_get_current_dir(...) ((char *)nullptr)
+#endif
+#ifndef g_object_set_data
+#define g_object_set_data(...) ((void)0)
+#endif
+#ifndef gtk_widget_set_size_request
+#define gtk_widget_set_size_request(...) ((void)0)
 #endif
 #ifndef g_filename_to_uri
-#define g_filename_to_uri(...) ((char*)nullptr)
+#define g_filename_to_uri(...) ((char *)nullptr)
 #endif
 #ifndef g_error_free
 #define g_error_free(...) ((void)0)
@@ -50,27 +64,29 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #endif
 #endif
 #if __has_include(<cairo/cairo.h>) && __has_include(<cairo/cairo-pdf.h>)
-#include <cairo/cairo.h>
 #include <cairo/cairo-pdf.h>
+#include <cairo/cairo.h>
 #define DUOROU_HAVE_CAIRO 1
 #else
 #define DUOROU_HAVE_CAIRO 0
 #endif
 
-// WebKitGTK headers vary across versions. Only enable when CMake found WebKitGTK.
+// WebKitGTK headers vary across versions. Only enable when CMake found
+// WebKitGTK.
 #if defined(HAVE_WEBKIT2GTK)
-  #if __has_include(<webkit/WebKit.h>)
-    #include <webkit/WebKit.h>
-  #elif __has_include(<webkit2/webkit2.h>)
-    #include <webkit2/webkit2.h>
-  #else
-    // CMake reported WebKitGTK present but headers not found in compiler search path
-    // This keeps compilation going while avoiding accidental inclusion of Apple WebKit.
-    #pragma message("HAVE_WEBKIT2GTK defined but no WebKitGTK headers found")
-  #endif
-  #define DUOROU_HAVE_WEBKIT2GTK 1
+#if __has_include(<webkit/WebKit.h>)
+#include <webkit/WebKit.h>
+#elif __has_include(<webkit2/webkit2.h>)
+#include <webkit2/webkit2.h>
 #else
-  #define DUOROU_HAVE_WEBKIT2GTK 0
+// CMake reported WebKitGTK present but headers not found in compiler search
+// path This keeps compilation going while avoiding accidental inclusion of
+// Apple WebKit.
+#pragma message("HAVE_WEBKIT2GTK defined but no WebKitGTK headers found")
+#endif
+#define DUOROU_HAVE_WEBKIT2GTK 1
+#else
+#define DUOROU_HAVE_WEBKIT2GTK 0
 #endif
 
 // Optional MD4C for Markdown -> HTML conversion
@@ -107,7 +123,7 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define GTK_STYLE_PROVIDER(x) (x)
 #endif
 #ifndef gtk_css_provider_new
-#define gtk_css_provider_new(...) ((GtkCssProvider*)nullptr)
+#define gtk_css_provider_new(...) ((GtkCssProvider *)nullptr)
 #endif
 #ifndef gtk_css_provider_load_from_string
 #define gtk_css_provider_load_from_string(...) ((void)0)
@@ -119,10 +135,10 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define g_signal_connect(...) ((void)0)
 #endif
 #ifndef gtk_widget_get_root
-#define gtk_widget_get_root(...) ((GtkRoot*)nullptr)
+#define gtk_widget_get_root(...) ((GtkRoot *)nullptr)
 #endif
 #ifndef gtk_file_chooser_dialog_new
-#define gtk_file_chooser_dialog_new(...) ((GtkWidget*)nullptr)
+#define gtk_file_chooser_dialog_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef GTK_FILE_CHOOSER_ACTION_SAVE
 #define GTK_FILE_CHOOSER_ACTION_SAVE 0
@@ -149,16 +165,16 @@ typedef void GdkDisplay; typedef void GdkClipboard; typedef void GError; typedef
 #define gtk_window_present(...) ((void)0)
 #endif
 #ifndef gtk_file_chooser_get_file
-#define gtk_file_chooser_get_file(...) ((GFile*)nullptr)
+#define gtk_file_chooser_get_file(...) ((GFile *)nullptr)
 #endif
 #ifndef g_file_get_path
-#define g_file_get_path(...) ((char*)nullptr)
+#define g_file_get_path(...) ((char *)nullptr)
 #endif
 #ifndef g_free
 #define g_free free
 #endif
 #ifndef g_object_get_data
-#define g_object_get_data(...) ((void*)nullptr)
+#define g_object_get_data(...) ((void *)nullptr)
 #endif
 #ifndef g_object_set_data_full
 #define g_object_set_data_full(...) ((void)0)
@@ -207,7 +223,7 @@ typedef int gint;
 #define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
 #endif
 #ifndef gtk_box_new
-#define gtk_box_new(...) ((GtkWidget*)nullptr)
+#define gtk_box_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_widget_set_halign
 #define gtk_widget_set_halign(...) ((void)0)
@@ -219,10 +235,10 @@ typedef int gint;
 #define gtk_widget_set_vexpand(...) ((void)0)
 #endif
 #ifndef gtk_button_new_with_label
-#define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
+#define gtk_button_new_with_label(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_widget_get_style_context
-#define gtk_widget_get_style_context(...) ((GtkStyleContext*)nullptr)
+#define gtk_widget_get_style_context(...) ((GtkStyleContext *)nullptr)
 #endif
 #ifndef gtk_style_context_add_provider
 #define gtk_style_context_add_provider(...) ((void)0)
@@ -231,7 +247,7 @@ typedef int gint;
 #define gtk_box_append(...) ((void)0)
 #endif
 #ifndef gtk_label_new
-#define gtk_label_new(...) ((GtkWidget*)nullptr)
+#define gtk_label_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_label_set_wrap
 #define gtk_label_set_wrap(...) ((void)0)
@@ -243,10 +259,10 @@ typedef int gint;
 #define gtk_label_set_markup(...) ((void)0)
 #endif
 #ifndef gtk_picture_new_for_filename
-#define gtk_picture_new_for_filename(...) ((GtkWidget*)nullptr)
+#define gtk_picture_new_for_filename(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_picture_new_for_file
-#define gtk_picture_new_for_file(...) ((GtkWidget*)nullptr)
+#define gtk_picture_new_for_file(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef GTK_PICTURE
 #define GTK_PICTURE(x) (x)
@@ -261,7 +277,7 @@ typedef int gint;
 #define GTK_CONTENT_FIT_CONTAIN 0
 #endif
 #ifndef gtk_grid_new
-#define gtk_grid_new(...) ((GtkWidget*)nullptr)
+#define gtk_grid_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_grid_attach
 #define gtk_grid_attach(...) ((void)0)
@@ -270,7 +286,7 @@ typedef int gint;
 #define GTK_GRID(x) (x)
 #endif
 #ifndef gtk_frame_new
-#define gtk_frame_new(...) ((GtkWidget*)nullptr)
+#define gtk_frame_new(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_frame_set_child
 #define gtk_frame_set_child(...) ((void)0)
@@ -288,16 +304,16 @@ typedef int gint;
 #define gtk_widget_set_visible(...) ((void)0)
 #endif
 #ifndef g_file_new_for_uri
-#define g_file_new_for_uri(...) ((GFile*)nullptr)
+#define g_file_new_for_uri(...) ((GFile *)nullptr)
 #endif
 #ifndef g_file_new_for_path
-#define g_file_new_for_path(...) ((GFile*)nullptr)
+#define g_file_new_for_path(...) ((GFile *)nullptr)
 #endif
 #ifndef gtk_widget_get_first_child
-#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+#define gtk_widget_get_first_child(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_widget_get_next_sibling
-#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+#define gtk_widget_get_next_sibling(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_box_remove
 #define gtk_box_remove(...) ((void)0)
@@ -310,12 +326,24 @@ static std::string html_escape(const std::string &in) {
   out.reserve(in.size() * 1.1);
   for (char c : in) {
     switch (c) {
-    case '&': out += "&amp;"; break;
-    case '<': out += "&lt;"; break;
-    case '>': out += "&gt;"; break;
-    case '"': out += "&quot;"; break;
-    case '\'': out += "&#39;"; break;
-    default: out.push_back(c); break;
+    case '&':
+      out += "&amp;";
+      break;
+    case '<':
+      out += "&lt;";
+      break;
+    case '>':
+      out += "&gt;";
+      break;
+    case '"':
+      out += "&quot;";
+      break;
+    case '\'':
+      out += "&#39;";
+      break;
+    default:
+      out.push_back(c);
+      break;
     }
   }
   return out;
@@ -323,23 +351,30 @@ static std::string html_escape(const std::string &in) {
 
 // --- Simple helpers for media detection ---
 static std::string to_lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
   return s;
 }
 
 static std::string trim(const std::string &s) {
   size_t a = s.find_first_not_of("\t\r\n ");
-  if (a == std::string::npos) return std::string();
+  if (a == std::string::npos)
+    return std::string();
   size_t b = s.find_last_not_of("\t\r\n ");
   return s.substr(a, b - a + 1);
 }
 
 static bool has_image_extension(const std::string &url_lower) {
   // Consider query fragments and anchors: only check up to '?' or '#'
-  static const char *exts[] = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff"};
+  static const char *exts[] = {".png",  ".jpg", ".jpeg", ".gif",
+                               ".webp", ".bmp", ".svg",  ".tiff"};
   size_t end = url_lower.size();
-    size_t qpos = url_lower.find('?'); if (qpos != std::string::npos) end = (std::min)(end, qpos);
-    size_t hpos = url_lower.find('#'); if (hpos != std::string::npos) end = (std::min)(end, hpos);
+  size_t qpos = url_lower.find('?');
+  if (qpos != std::string::npos)
+    end = (std::min)(end, qpos);
+  size_t hpos = url_lower.find('#');
+  if (hpos != std::string::npos)
+    end = (std::min)(end, hpos);
   for (auto *e : exts) {
     size_t elen = strlen(e);
     if (end >= elen && url_lower.rfind(e, end) == end - elen) {
@@ -350,10 +385,12 @@ static bool has_image_extension(const std::string &url_lower) {
 }
 
 static bool is_probable_url(const std::string &s) {
-  return s.rfind("http://", 0) == 0 || s.rfind("https://", 0) == 0 || s.rfind("file://", 0) == 0 || s.rfind("/", 0) == 0;
+  return s.rfind("http://", 0) == 0 || s.rfind("https://", 0) == 0 ||
+         s.rfind("file://", 0) == 0 || s.rfind("/", 0) == 0;
 }
 
-// Convert lines that are pure image URLs into markdown image syntax, e.g. ![](url)
+// Convert lines that are pure image URLs into markdown image syntax, e.g.
+// ![](url)
 static std::string preprocess_markdown_for_media(const std::string &md) {
   std::istringstream iss(md);
   std::ostringstream oss;
@@ -378,47 +415,79 @@ static std::string preprocess_markdown_for_media(const std::string &md) {
 }
 
 // Convert a single markdown line to simple Pango markup for fallback rendering.
-// Supports headings (#, ##), bold (**bold**), italic (*italic*), inline code (`code`).
+// Supports headings (#, ##), bold (**bold**), italic (*italic*), inline code
+// (`code`).
 static std::string md_line_to_pango(const std::string &line) {
   std::string t = trim(line);
-  if (t.empty()) return std::string();
+  if (t.empty())
+    return std::string();
 
   // Headings
-  int hlevel = 0; size_t i = 0;
-  while (i < t.size() && t[i] == '#') { ++hlevel; ++i; }
+  int hlevel = 0;
+  size_t i = 0;
+  while (i < t.size() && t[i] == '#') {
+    ++hlevel;
+    ++i;
+  }
   if (hlevel > 0 && i < t.size() && t[i] == ' ') {
     std::string content = t.substr(i + 1);
     std::string esc = html_escape(content);
     // Use Pango-supported size keywords only
-    const char *sizes[] = {"large","x-large","xx-large"};
+    const char *sizes[] = {"large", "x-large", "xx-large"};
     const char *size = sizes[(std::min)(hlevel, 3) - 1];
-    return std::string("<span weight='bold' size='") + size + "'>" + esc + "</span>";
+    return std::string("<span weight='bold' size='") + size + "'>" + esc +
+           "</span>";
   }
 
   // Basic inline formatting: bold, italic, code
-  std::string out; out.reserve(t.size() * 1.3);
+  std::string out;
+  out.reserve(t.size() * 1.3);
   std::string plain;
   bool bold = false, italic = false, code = false;
   for (size_t p = 0; p < t.size(); ++p) {
-    if (!code && p + 1 < t.size() && t[p] == '*' && t[p+1] == '*') {
+    if (!code && p + 1 < t.size() && t[p] == '*' && t[p + 1] == '*') {
       // flush plain
-      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
-      out += bold ? "</b>" : "<b>"; bold = !bold; ++p; continue;
+      if (!plain.empty()) {
+        out += html_escape(plain);
+        plain.clear();
+      }
+      out += bold ? "</b>" : "<b>";
+      bold = !bold;
+      ++p;
+      continue;
     }
     if (!code && t[p] == '*') {
-      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
-      out += italic ? "</i>" : "<i>"; italic = !italic; continue;
+      if (!plain.empty()) {
+        out += html_escape(plain);
+        plain.clear();
+      }
+      out += italic ? "</i>" : "<i>";
+      italic = !italic;
+      continue;
     }
     if (t[p] == '`') {
-      if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
-      out += code ? "</tt>" : "<tt>"; code = !code; continue;
+      if (!plain.empty()) {
+        out += html_escape(plain);
+        plain.clear();
+      }
+      out += code ? "</tt>" : "<tt>";
+      code = !code;
+      continue;
     }
     // accumulate plain characters; will escape on flush
     plain.push_back(t[p]);
   }
   // Close any dangling tags
-  if (!plain.empty()) { out += html_escape(plain); plain.clear(); }
-  if (code) out += "</tt>"; if (bold) out += "</b>"; if (italic) out += "</i>";
+  if (!plain.empty()) {
+    out += html_escape(plain);
+    plain.clear();
+  }
+  if (code)
+    out += "</tt>";
+  if (bold)
+    out += "</b>";
+  if (italic)
+    out += "</i>";
   return out;
 }
 
@@ -429,7 +498,7 @@ static std::string extract_first_url(const std::string &s) {
   for (const char *pref : {"http://", "https://", "file://"}) {
     size_t pos = s.find(pref);
     if (pos != std::string::npos) {
-    p = (p == std::string::npos) ? pos : (std::min)(p, pos);
+      p = (p == std::string::npos) ? pos : (std::min)(p, pos);
     }
   }
   if (p != std::string::npos) {
@@ -445,26 +514,33 @@ static std::string extract_first_url(const std::string &s) {
   return std::string();
 }
 
-// 提取 Markdown 图片语法中的 URL，例如 ![](file:///path/img.png) 或 ![alt](./img.jpg)
+// 提取 Markdown 图片语法中的 URL，例如 ![](file:///path/img.png) 或
+// ![alt](./img.jpg)
 static std::string extract_md_image_url(const std::string &s) {
   size_t bang = s.find('!');
-  if (bang == std::string::npos) return std::string();
+  if (bang == std::string::npos)
+    return std::string();
   size_t lb = s.find('[', bang);
-  if (lb == std::string::npos) return std::string();
+  if (lb == std::string::npos)
+    return std::string();
   size_t rb = s.find(']', lb);
-  if (rb == std::string::npos) return std::string();
+  if (rb == std::string::npos)
+    return std::string();
   size_t lp = s.find('(', rb);
-  if (lp == std::string::npos) return std::string();
+  if (lp == std::string::npos)
+    return std::string();
   // 支持行内多个图片语法的第一个匹配
   size_t rp = s.find(')', lp);
-  if (rp == std::string::npos || rp <= lp + 1) return std::string();
+  if (rp == std::string::npos || rp <= lp + 1)
+    return std::string();
   std::string url = trim(s.substr(lp + 1, rp - lp - 1));
   if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
     url = trim(url.substr(1, url.size() - 2));
   }
   // 简单过滤，避免把标题等误识别为URL
   std::string lower = to_lower(url);
-  if (lower.rfind("file://", 0) == 0 || is_probable_url(lower) || has_image_extension(lower)) {
+  if (lower.rfind("file://", 0) == 0 || is_probable_url(lower) ||
+      has_image_extension(lower)) {
     return url;
   }
   return std::string();
@@ -473,10 +549,12 @@ static std::string extract_md_image_url(const std::string &s) {
 // Detect typical markdown table separator line: "| --- | :---: | --- |"
 static bool is_md_table_separator(const std::string &line) {
   std::string t = trim(line);
-  if (t.empty()) return false;
+  if (t.empty())
+    return false;
   // allow leading/trailing '|'
   bool has_bar = t.find('|') != std::string::npos;
-  if (!has_bar) return false;
+  if (!has_bar)
+    return false;
   for (char ch : t) {
     if (!(ch == '|' || ch == '-' || ch == ':' || ch == ' ')) {
       return false;
@@ -486,30 +564,41 @@ static bool is_md_table_separator(const std::string &line) {
   return t.find('-') != std::string::npos;
 }
 
-// Split a markdown table row into cells (trim spaces, ignore leading/trailing '|')
+// Split a markdown table row into cells (trim spaces, ignore leading/trailing
+// '|')
 static std::vector<std::string> split_md_table_row(const std::string &line) {
   std::string t = trim(line);
   std::vector<std::string> cells;
   size_t start = 0, end;
   // ignore leading '|'
-  if (!t.empty() && t.front() == '|') start = 1;
+  if (!t.empty() && t.front() == '|')
+    start = 1;
   while (start <= t.size()) {
     end = t.find('|', start);
-    std::string cell = (end == std::string::npos) ? t.substr(start) : t.substr(start, end - start);
+    std::string cell = (end == std::string::npos)
+                           ? t.substr(start)
+                           : t.substr(start, end - start);
     // trim cell
-    size_t a = 0; while (a < cell.size() && std::isspace((unsigned char)cell[a])) ++a;
-    size_t b = cell.size(); while (b > a && std::isspace((unsigned char)cell[b-1])) --b;
+    size_t a = 0;
+    while (a < cell.size() && std::isspace((unsigned char)cell[a]))
+      ++a;
+    size_t b = cell.size();
+    while (b > a && std::isspace((unsigned char)cell[b - 1]))
+      --b;
     cells.push_back(cell.substr(a, b - a));
-    if (end == std::string::npos) break;
+    if (end == std::string::npos)
+      break;
     start = end + 1;
   }
   // drop trailing empty if the line ended with '|'
-  if (!cells.empty() && cells.back().empty()) cells.pop_back();
+  if (!cells.empty() && cells.back().empty())
+    cells.pop_back();
   return cells;
 }
 
 // 使用 libcurl 将远程 URL 下载到临时文件（POSIX），供 Fallback 渲染
-static bool download_url_to_temp(const std::string &url, std::string &out_path) {
+static bool download_url_to_temp(const std::string &url,
+                                 std::string &out_path) {
 #if DUOROU_HAVE_CURL
 #ifndef _WIN32
   char tmpl[] = "/tmp/duorou-img-XXXXXX";
@@ -532,10 +621,12 @@ static bool download_url_to_temp(const std::string &url, std::string &out_path) 
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "duorou/markdown-view");
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
-    FILE *out = static_cast<FILE*>(userdata);
-    return fwrite(ptr, size, nmemb, out);
-  });
+  curl_easy_setopt(
+      curl, CURLOPT_WRITEFUNCTION,
+      +[](char *ptr, size_t size, size_t nmemb, void *userdata) -> size_t {
+        FILE *out = static_cast<FILE *>(userdata);
+        return fwrite(ptr, size, nmemb, out);
+      });
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
@@ -549,11 +640,13 @@ static bool download_url_to_temp(const std::string &url, std::string &out_path) 
   out_path = std::string(tmpl);
   return true;
 #else
-  (void)url; (void)out_path;
+  (void)url;
+  (void)out_path;
   return false;
 #endif
 #else
-  (void)url; (void)out_path;
+  (void)url;
+  (void)out_path;
   return false;
 #endif
 }
@@ -561,11 +654,15 @@ static bool download_url_to_temp(const std::string &url, std::string &out_path) 
 namespace duorou {
 namespace gui {
 
-MarkdownView::MarkdownView() { build_ui(); setup_actions(); }
+MarkdownView::MarkdownView() {
+  build_ui();
+  setup_actions();
+}
 MarkdownView::~MarkdownView() {
 #ifndef _WIN32
   for (const auto &p : temp_files_) {
-    if (!p.empty()) unlink(p.c_str());
+    if (!p.empty())
+      unlink(p.c_str());
   }
 #endif
 }
@@ -578,18 +675,20 @@ void MarkdownView::build_ui() {
   gtk_widget_set_halign(actions_box_, GTK_ALIGN_END);
   gtk_widget_set_hexpand(actions_box_, TRUE);
 
-  // Create content container (always a box); append inner view for WebKit when available
+  // Create content container (always a box); append inner view for WebKit when
+  // available
   content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
   gtk_widget_set_hexpand(content_, TRUE);
   gtk_widget_set_vexpand(content_, TRUE);
-  
+
 #if DUOROU_HAVE_WEBKIT2GTK
   content_view_ = webkit_web_view_new();
   gtk_widget_set_hexpand(content_view_, TRUE);
   gtk_widget_set_vexpand(content_view_, TRUE);
   // 允许从 file:// 页面访问本地文件资源，确保 Markdown 中的本地图片正常加载
   {
-    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(content_view_));
+    WebKitSettings *settings =
+        webkit_web_view_get_settings(WEBKIT_WEB_VIEW(content_view_));
     if (settings) {
       // 打开文件访问与跨文件访问（不同目录的 file://）
       webkit_settings_set_allow_file_access_from_file_urls(settings, TRUE);
@@ -600,7 +699,8 @@ void MarkdownView::build_ui() {
   }
   gtk_box_append(GTK_BOX(content_), content_view_);
 #else
-  content_view_ = nullptr; // non-WebKit: we will add labels/pictures directly under content_
+  content_view_ = nullptr; // non-WebKit: we will add labels/pictures directly
+                           // under content_
 #endif
 
   // Pack to container
@@ -641,8 +741,7 @@ void MarkdownView::setup_actions() {
 
   // Copy: if WebKit, user can select and Cmd/Ctrl+C; button copies all markdown
   g_signal_connect(
-      btn_copy, "clicked",
-      G_CALLBACK(+[](GtkButton *, gpointer user_data) {
+      btn_copy, "clicked", G_CALLBACK(+[](GtkButton *, gpointer user_data) {
         auto *self = static_cast<MarkdownView *>(user_data);
         if (!self)
           return;
@@ -659,8 +758,7 @@ void MarkdownView::setup_actions() {
 
   // Save MD (GTK4: async response)
   g_signal_connect(
-      btn_save_md, "clicked",
-      G_CALLBACK(+[](GtkButton *b, gpointer user_data) {
+      btn_save_md, "clicked", G_CALLBACK(+[](GtkButton *b, gpointer user_data) {
         auto *self = static_cast<MarkdownView *>(user_data);
         if (!self)
           return;
@@ -670,23 +768,25 @@ void MarkdownView::setup_actions() {
             "取消", GTK_RESPONSE_CANCEL, "保存", GTK_RESPONSE_ACCEPT, NULL);
         gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), "chat.md");
         g_object_set_data_full(G_OBJECT(dialog), "markdown_view", self, NULL);
-        g_signal_connect(dialog, "response",
-                         G_CALLBACK(+[](GtkDialog *dlg, gint response, gpointer) {
-                           if (response == GTK_RESPONSE_ACCEPT) {
-                             GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
-                             auto *mv = static_cast<MarkdownView *>(g_object_get_data(G_OBJECT(dlg), "markdown_view"));
-                             if (mv && file) {
-                               char *path = g_file_get_path(file);
-                               if (path) {
-                                 mv->export_markdown_to_file(path);
-                                 g_free(path);
-                               }
-                               g_object_unref(file);
-                             }
-                           }
-                           gtk_window_destroy(GTK_WINDOW(dlg));
-                         }),
-                         NULL);
+        g_signal_connect(
+            dialog, "response",
+            G_CALLBACK(+[](GtkDialog *dlg, gint response, gpointer) {
+              if (response == GTK_RESPONSE_ACCEPT) {
+                GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+                auto *mv = static_cast<MarkdownView *>(
+                    g_object_get_data(G_OBJECT(dlg), "markdown_view"));
+                if (mv && file) {
+                  char *path = g_file_get_path(file);
+                  if (path) {
+                    mv->export_markdown_to_file(path);
+                    g_free(path);
+                  }
+                  g_object_unref(file);
+                }
+              }
+              gtk_window_destroy(GTK_WINDOW(dlg));
+            }),
+            NULL);
         gtk_window_present(GTK_WINDOW(dialog));
       }),
       this);
@@ -700,27 +800,29 @@ void MarkdownView::setup_actions() {
           return;
         GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(b));
         GtkWidget *dialog = gtk_file_chooser_dialog_new(
-            "导出为 PDF", GTK_WINDOW(root), GTK_FILE_CHOOSER_ACTION_SAVE, "取消",
-            GTK_RESPONSE_CANCEL, "保存", GTK_RESPONSE_ACCEPT, NULL);
+            "导出为 PDF", GTK_WINDOW(root), GTK_FILE_CHOOSER_ACTION_SAVE,
+            "取消", GTK_RESPONSE_CANCEL, "保存", GTK_RESPONSE_ACCEPT, NULL);
         gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), "chat.pdf");
         g_object_set_data_full(G_OBJECT(dialog), "markdown_view", self, NULL);
-        g_signal_connect(dialog, "response",
-                         G_CALLBACK(+[](GtkDialog *dlg, gint response, gpointer) {
-                           if (response == GTK_RESPONSE_ACCEPT) {
-                             GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
-                             auto *mv = static_cast<MarkdownView *>(g_object_get_data(G_OBJECT(dlg), "markdown_view"));
-                             if (mv && file) {
-                               char *path = g_file_get_path(file);
-                               if (path) {
-                                 mv->export_pdf_to_file(path);
-                                 g_free(path);
-                               }
-                               g_object_unref(file);
-                             }
-                           }
-                           gtk_window_destroy(GTK_WINDOW(dlg));
-                         }),
-                         NULL);
+        g_signal_connect(
+            dialog, "response",
+            G_CALLBACK(+[](GtkDialog *dlg, gint response, gpointer) {
+              if (response == GTK_RESPONSE_ACCEPT) {
+                GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+                auto *mv = static_cast<MarkdownView *>(
+                    g_object_get_data(G_OBJECT(dlg), "markdown_view"));
+                if (mv && file) {
+                  char *path = g_file_get_path(file);
+                  if (path) {
+                    mv->export_pdf_to_file(path);
+                    g_free(path);
+                  }
+                  g_object_unref(file);
+                }
+              }
+              gtk_window_destroy(GTK_WINDOW(dlg));
+            }),
+            NULL);
         gtk_window_present(GTK_WINDOW(dialog));
       }),
       this);
@@ -733,14 +835,37 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   std::string preprocessed = preprocess_markdown_for_media(markdown_);
   std::string html = to_html(preprocessed);
   // Minimal CSS for readability
-  std::string full = std::string("<html><head><meta charset='utf-8'>") +
-                     "<style>body{font-family:-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;line-height:1.5;padding:0;margin:0;}" \
-                     "img{max-width:100%;width:100%;height:auto;border-radius:8px;}" \
-                     "a{word-break:break-all;}" \
-                     "pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:2px 4px;border-radius:4px;}" \
-                     "pre{padding:8px;overflow:auto;} blockquote{color:#6a737d;border-left:4px solid #dfe2e5;padding:0 1em;}" \
-                     "table{border-collapse:collapse;} th,td{border:1px solid #dfe2e5;padding:6px 13px;}" \
-                     "</style></head><body>" + html + "</body></html>";
+  std::string full =
+      std::string("<html><head><meta charset='utf-8'>") +
+      "<style>body{font-family:-apple-system,Segoe "
+      "UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;line-height:1.5;padding:0;"
+      "margin:0;}"
+      "img{max-width:100%;width:100%;height:auto;border-radius:8px;}"
+      "a{word-break:break-all;}"
+      "pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"
+      "monospace;background:#f6f8fa;padding:2px 4px;border-radius:4px;}"
+      "pre{padding:8px;overflow:auto;} "
+      "blockquote{color:#6a737d;border-left:4px solid #dfe2e5;padding:0 1em;}"
+      "table{border-collapse:collapse;} th,td{border:1px solid "
+      "#dfe2e5;padding:6px 13px;}"
+      "</style>"
+      "<script src=\"mermaid.min.js\"></script>"
+      "<script>"
+      "document.addEventListener('DOMContentLoaded', function() {"
+      "  mermaid.initialize({ startOnLoad: false, theme: 'default' });"
+      "  document.querySelectorAll('pre "
+      "code.language-mermaid').forEach(function(el) {"
+      "    var graphDefinition = el.textContent;"
+      "    var newDiv = document.createElement('div');"
+      "    newDiv.className = 'mermaid';"
+      "    newDiv.textContent = graphDefinition;"
+      "    el.parentNode.parentNode.replaceChild(newDiv, el.parentNode);"
+      "  });"
+      "  mermaid.run();"
+      "});"
+      "</script>"
+      "</head><body>" +
+      html + "</body></html>";
   // 提供本地基础URI，便于加载相对路径和 file:// 资源
   char *cwd = g_get_current_dir();
   GError *uri_err = nullptr;
@@ -753,10 +878,15 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   } else if (fallback_home && *fallback_home) {
     base_for_load = std::string("file://") + fallback_home;
   }
-  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_view_), full.c_str(), base_for_load.empty() ? nullptr : base_for_load.c_str());
-  if (base_uri) g_free(base_uri);
-  if (cwd) g_free(cwd);
-  if (uri_err) g_error_free(uri_err);
+  webkit_web_view_load_html(WEBKIT_WEB_VIEW(content_view_), full.c_str(),
+                            base_for_load.empty() ? nullptr
+                                                  : base_for_load.c_str());
+  if (base_uri)
+    g_free(base_uri);
+  if (cwd)
+    g_free(cwd);
+  if (uri_err)
+    g_error_free(uri_err);
 #else
   // Fallback: build simple GTK widgets that handle images and text.
   // Clear previous children
@@ -769,24 +899,26 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   // 清理上一次渲染留下的临时图片文件
 #ifndef _WIN32
   for (const auto &p : temp_files_) {
-    if (!p.empty()) unlink(p.c_str());
+    if (!p.empty())
+      unlink(p.c_str());
   }
 #endif
   temp_files_.clear();
 
   auto append_text = [&](const std::string &text) {
-    if (text.empty()) return;
+    if (text.empty())
+      return;
     // Render with simple Pango markup to improve readability
     std::string markup = md_line_to_pango(text);
     GtkWidget *lbl = gtk_label_new(NULL);
     if (!markup.empty()) {
-      gtk_label_set_markup((GtkLabel*)lbl, markup.c_str());
+      gtk_label_set_markup((GtkLabel *)lbl, markup.c_str());
     } else {
       // Fallback to plain text when markup conversion yields empty
-      gtk_label_set_markup((GtkLabel*)lbl, html_escape(text).c_str());
+      gtk_label_set_markup((GtkLabel *)lbl, html_escape(text).c_str());
     }
-    gtk_label_set_wrap((GtkLabel*)lbl, TRUE);
-    gtk_label_set_xalign((GtkLabel*)lbl, 0.0f);
+    gtk_label_set_wrap((GtkLabel *)lbl, TRUE);
+    gtk_label_set_xalign((GtkLabel *)lbl, 0.0f);
     gtk_widget_set_hexpand(lbl, TRUE);
     gtk_box_append(GTK_BOX(content_), lbl);
   };
@@ -800,7 +932,8 @@ void MarkdownView::set_markdown(const std::string &markdown) {
         w = gtk_picture_new_for_file(gf);
         g_object_unref(gf);
       }
-      if (!w) w = gtk_picture_new_for_filename(path.c_str());
+      if (!w)
+        w = gtk_picture_new_for_filename(path.c_str());
       return w;
     };
     if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
@@ -838,7 +971,8 @@ void MarkdownView::set_markdown(const std::string &markdown) {
           char *path = g_file_get_path(gf);
           if (path) {
             GtkWidget *alt = gtk_picture_new_for_filename(path);
-            if (alt) pic = alt;
+            if (alt)
+              pic = alt;
             g_free(path);
           }
         }
@@ -891,12 +1025,15 @@ void MarkdownView::set_markdown(const std::string &markdown) {
   std::vector<std::string> lines;
   {
     std::istringstream iss(markdown_);
-    std::string l; while (std::getline(iss, l)) lines.push_back(l);
+    std::string l;
+    while (std::getline(iss, l))
+      lines.push_back(l);
   }
   for (size_t idx = 0; idx < lines.size(); ++idx) {
     std::string line = lines[idx];
     std::string t = trim(line);
-    if (t.empty()) continue;
+    if (t.empty())
+      continue;
     std::string tl = to_lower(t);
 
     // Case 0: custom media hint line like "<__media__>: ..."
@@ -913,7 +1050,8 @@ void MarkdownView::set_markdown(const std::string &markdown) {
 
     // Case 1.5: 仅当整行就是一个 markdown 图片语法时，作为纯图片行处理
     {
-      static const std::regex re_md_pure_line("^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
+      static const std::regex re_md_pure_line(
+          "^\\s*!\\[[^\\]]*\\]\\(([^)]+)\\)\\s*$");
       std::smatch m;
       if (std::regex_match(line, m, re_md_pure_line) && m.size() >= 2) {
         std::string img_url = trim(m[1].str());
@@ -929,7 +1067,8 @@ void MarkdownView::set_markdown(const std::string &markdown) {
     }
 
     // Case 2: markdown table block: header, separator, then rows
-    if (t.find('|') != std::string::npos && idx + 1 < lines.size() && is_md_table_separator(lines[idx + 1])) {
+    if (t.find('|') != std::string::npos && idx + 1 < lines.size() &&
+        is_md_table_separator(lines[idx + 1])) {
       // Collect table rows
       std::vector<std::vector<std::string>> rows;
       // Header
@@ -940,7 +1079,8 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       size_t rstart = idx + 1;
       for (; rstart < lines.size(); ++rstart) {
         std::string lt = trim(lines[rstart]);
-        if (lt.empty() || lt.find('|') == std::string::npos) break;
+        if (lt.empty() || lt.find('|') == std::string::npos)
+          break;
         rows.push_back(split_md_table_row(lines[rstart]));
       }
       // Render grid
@@ -949,16 +1089,20 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       gtk_widget_set_margin_top(grid, 4);
       gtk_widget_set_margin_bottom(grid, 4);
       size_t nrows = rows.size();
-    size_t ncols = 0; for (auto &rw : rows) ncols = (std::max)(ncols, rw.size());
+      size_t ncols = 0;
+      for (auto &rw : rows)
+        ncols = (std::max)(ncols, rw.size());
       for (size_t r = 0; r < nrows; ++r) {
         for (size_t c = 0; c < ncols; ++c) {
           std::string cell = (c < rows[r].size()) ? rows[r][c] : std::string();
-          std::string markup = r == 0 ? (std::string("<b>") + html_escape(cell) + "</b>") : html_escape(cell);
+          std::string markup =
+              r == 0 ? (std::string("<b>") + html_escape(cell) + "</b>")
+                     : html_escape(cell);
           GtkWidget *frame = gtk_frame_new(NULL);
           GtkWidget *lbl = gtk_label_new(NULL);
-          gtk_label_set_markup((GtkLabel*)lbl, markup.c_str());
-          gtk_label_set_wrap((GtkLabel*)lbl, TRUE);
-          gtk_label_set_xalign((GtkLabel*)lbl, 0.0f);
+          gtk_label_set_markup((GtkLabel *)lbl, markup.c_str());
+          gtk_label_set_wrap((GtkLabel *)lbl, TRUE);
+          gtk_label_set_xalign((GtkLabel *)lbl, 0.0f);
           gtk_widget_set_margin_top(lbl, 2);
           gtk_widget_set_margin_bottom(lbl, 2);
           gtk_frame_set_child(GTK_FRAME(frame), lbl);
@@ -980,17 +1124,25 @@ void MarkdownView::set_markdown(const std::string &markdown) {
     bool emitted_any = false;
     while (true) {
       size_t bang = line.find("![", pos);
-      if (bang == std::string::npos) break;
+      if (bang == std::string::npos)
+        break;
       before += line.substr(pos, bang - pos);
       size_t rb = line.find(']', bang + 2);
-      if (rb == std::string::npos) break;
+      if (rb == std::string::npos)
+        break;
       size_t lp = line.find('(', rb + 1);
-      if (lp == std::string::npos) break;
+      if (lp == std::string::npos)
+        break;
       size_t rp = line.find(')', lp + 1);
-      if (rp == std::string::npos) break;
+      if (rp == std::string::npos)
+        break;
       std::string url = trim(line.substr(lp + 1, rp - (lp + 1)));
       if (!url.empty()) {
-        if (!before.empty()) { append_text(before); before.clear(); emitted_any = true; }
+        if (!before.empty()) {
+          append_text(before);
+          before.clear();
+          emitted_any = true;
+        }
         append_picture(url);
         emitted_any = true;
       } else {
@@ -999,15 +1151,21 @@ void MarkdownView::set_markdown(const std::string &markdown) {
       pos = rp + 1;
     }
     before += line.substr(pos);
-    if (!before.empty()) { append_text(before); emitted_any = true; }
-    if (!emitted_any) { append_text(line); }
+    if (!before.empty()) {
+      append_text(before);
+      emitted_any = true;
+    }
+    if (!emitted_any) {
+      append_text(line);
+    }
   }
 #endif
 }
 
 void MarkdownView::set_target_width(int px) {
   target_width_ = px;
-  if (!content_) return;
+  if (!content_)
+    return;
   // Apply to existing picture children
   GtkWidget *child = gtk_widget_get_first_child(content_);
   while (child) {
@@ -1015,7 +1173,8 @@ void MarkdownView::set_target_width(int px) {
     gpointer tag = g_object_get_data(G_OBJECT(child), "markdown_picture");
     if (tag && target_width_ > 0) {
       gtk_widget_set_size_request(child, target_width_, -1);
-      // Also ensure vertical expansion so height doesn't collapse under layout changes
+      // Also ensure vertical expansion so height doesn't collapse under layout
+      // changes
       gtk_widget_set_vexpand(child, TRUE);
     }
     child = next;
@@ -1034,7 +1193,8 @@ std::string MarkdownView::to_html(const std::string &md) const {
   md_html(md.c_str(), (MD_SIZE)md.size(), cb, &html, 0, 0);
   return html;
 #else
-  // Minimal fallback HTML: convert pure image links per-line; otherwise escape as paragraphs
+  // Minimal fallback HTML: convert pure image links per-line; otherwise escape
+  // as paragraphs
   std::istringstream iss(md);
   std::ostringstream out;
   std::string line;
@@ -1043,10 +1203,12 @@ std::string MarkdownView::to_html(const std::string &md) const {
     std::string tl = to_lower(t);
     // Case 1: whole-line is an image URL
     if (!t.empty() && is_probable_url(t) && has_image_extension(tl)) {
-      out << "<img src=\"" << t << "\" style=\"max-width:100%;height:auto;border-radius:8px;\">\n";
+      out << "<img src=\"" << t
+          << "\" style=\"max-width:100%;height:auto;border-radius:8px;\">\n";
       continue;
     }
-    if (t.empty()) continue;
+    if (t.empty())
+      continue;
 
     // Case 2: parse inline markdown image syntax: ![alt](url)
     std::string rendered;
@@ -1081,7 +1243,10 @@ std::string MarkdownView::to_html(const std::string &md) const {
       std::string url_l = to_lower(url);
       // Emit image only if URL seems valid
       if (is_probable_url(url) || has_image_extension(url_l)) {
-        rendered.append(std::string("<img src=\"") + html_escape(url) + "\" alt=\"" + html_escape(alt) + "\" style=\"max-width:100%;height:auto;border-radius:8px;\">");
+        rendered.append(
+            std::string("<img src=\"") + html_escape(url) + "\" alt=\"" +
+            html_escape(alt) +
+            "\" style=\"max-width:100%;height:auto;border-radius:8px;\">");
         has_img = true;
       } else {
         // Not a valid URL, fall back to text
@@ -1089,14 +1254,16 @@ std::string MarkdownView::to_html(const std::string &md) const {
       }
       pos = rp + 1;
     }
-    // Wrap line: if we inserted images, allow them without extra <p>; include any surrounding text in <p>
+    // Wrap line: if we inserted images, allow them without extra <p>; include
+    // any surrounding text in <p>
     if (has_img) {
       out << rendered << "\n";
     } else {
       out << "<p>" << rendered << "</p>\n";
     }
   }
-  return out.str().empty() ? std::string("<pre>") + html_escape(md) + "</pre>" : out.str();
+  return out.str().empty() ? std::string("<pre>") + html_escape(md) + "</pre>"
+                           : out.str();
 #endif
 }
 
@@ -1119,9 +1286,11 @@ bool MarkdownView::export_pdf_to_file(const std::string &file_path) {
 bool MarkdownView::export_pdf_with_webkit(const std::string &file_path) {
 #if DUOROU_HAVE_WEBKIT2GTK
   // Print the inner WebKit view, not the outer GTK box
-  WebKitPrintOperation *op = webkit_print_operation_new(WEBKIT_WEB_VIEW(content_view_));
+  WebKitPrintOperation *op =
+      webkit_print_operation_new(WEBKIT_WEB_VIEW(content_view_));
   GtkPrintSettings *settings = gtk_print_settings_new();
-  gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT, "pdf");
+  gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT,
+                         "pdf");
   gchar *uri = g_filename_to_uri(file_path.c_str(), nullptr, nullptr);
   if (uri) {
     gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_URI, uri);
@@ -1143,16 +1312,18 @@ bool MarkdownView::export_pdf_with_cairo(const std::string &file_path) {
   // If Cairo headers are unavailable, indicate failure gracefully
 #if DUOROU_HAVE_CAIRO
   // Very simple PDF export: write raw markdown text; formatting minimal
-  cairo_surface_t *surface = cairo_pdf_surface_create(file_path.c_str(), 595, 842); // A4 in points
+  cairo_surface_t *surface =
+      cairo_pdf_surface_create(file_path.c_str(), 595, 842); // A4 in points
   cairo_t *cr = cairo_create(surface);
 
   // Use Pango for layout if available
 #if __has_include(<pango/pangocairo.h>)
-  #include <pango/pangocairo.h>
+#include <pango/pangocairo.h>
   PangoLayout *layout = pango_cairo_create_layout(cr);
   pango_layout_set_width(layout, 555 * PANGO_SCALE);
   pango_layout_set_text(layout, markdown_.c_str(), (int)markdown_.size());
-  PangoFontDescription *desc = pango_font_description_from_string("Monospace 10");
+  PangoFontDescription *desc =
+      pango_font_description_from_string("Monospace 10");
   pango_layout_set_font_description(layout, desc);
   pango_cairo_update_layout(cr, layout);
   cairo_move_to(cr, 20, 20);
@@ -1161,7 +1332,8 @@ bool MarkdownView::export_pdf_with_cairo(const std::string &file_path) {
   pango_font_description_free(desc);
 #else
   // Fallback: very basic Cairo text
-  cairo_select_font_face(cr, "Monaco", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  cairo_select_font_face(cr, "Monaco", CAIRO_FONT_SLANT_NORMAL,
+                         CAIRO_FONT_WEIGHT_NORMAL);
   cairo_set_font_size(cr, 10);
   double x = 20, y = 30;
   std::istringstream iss(markdown_);
@@ -1188,10 +1360,10 @@ bool MarkdownView::export_pdf_with_cairo(const std::string &file_path) {
 } // namespace duorou
 #if !__has_include(<gtk/gtk.h>)
 #ifndef gtk_widget_get_first_child
-#define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+#define gtk_widget_get_first_child(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_widget_get_next_sibling
-#define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+#define gtk_widget_get_next_sibling(...) ((GtkWidget *)nullptr)
 #endif
 #ifndef gtk_box_remove
 #define gtk_box_remove(...) ((void)0)

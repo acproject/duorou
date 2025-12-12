@@ -1,0 +1,16 @@
+Date,Product,Category,Region,Sales,Quantity
+2023-01-01,Laptop,Electronics,North,1200,1
+2023-01-02,Mouse,Accessories,North,25,5
+2023-01-03,Monitor,Electronics,South,300,2
+2023-01-04,Keyboard,Accessories,South,45,3
+2023-01-05,Laptop,Electronics,East,1200,1
+2023-01-06,Phone,Electronics,West,800,2
+2023-01-07,Mouse,Accessories,West,25,10
+2023-01-08,Headphones,Accessories,North,100,4
+2023-01-09,Monitor,Electronics,East,300,1
+2023-01-10,Laptop,Electronics,South,1200,2
+2023-01-11,Phone,Electronics,North,800,1
+2023-01-12,Keyboard,Accessories,East,45,2
+2023-01-13,Mouse,Accessories,South,25,3
+2023-01-14,Monitor,Electronics,West,300,3
+2023-01-15,Headphones,Accessories,East,100,5

@@ -1340,13 +1340,17 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
         full_message += "```\n" + content + "\n```";
         std::cout << "Attached file content length: " << content.length()
                   << " chars" << std::endl;
+        std::cout << "DEBUG: Full message ready to send." << std::endl;
       } else {
         full_message += "File: " + filename;
+        std::cout << "DEBUG: No parser found for file." << std::endl;
       }
     }
 
     // Send message
+    std::cout << "DEBUG: Calling chat_view->send_message..." << std::endl;
     chat_view->send_message(full_message);
+    std::cout << "DEBUG: chat_view->send_message returned." << std::endl;
 
     // Clear selected file paths and reset button tooltips
     if (has_image) {
@@ -1433,13 +1437,17 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
         full_message += "```\n" + content + "\n```";
         std::cout << "Attached file content length: " << content.length()
                   << " chars" << std::endl;
+        std::cout << "DEBUG: Full message ready to send." << std::endl;
       } else {
         full_message += "File: " + filename;
+        std::cout << "DEBUG: No parser found for file." << std::endl;
       }
     }
 
     // Send message
+    std::cout << "DEBUG: Calling chat_view->send_message..." << std::endl;
     chat_view->send_message(full_message);
+    std::cout << "DEBUG: chat_view->send_message returned." << std::endl;
 
     // Clear selected file paths and reset button tooltips
     if (has_image) {
@@ -1512,6 +1520,9 @@ void ChatView::on_upload_file_button_clicked(GtkWidget *widget,
   gtk_file_filter_add_pattern(filter, "*.pptx");
   gtk_file_filter_add_pattern(filter, "*.pdf");
   gtk_file_filter_add_pattern(filter, "*.txt");
+  gtk_file_filter_add_pattern(filter, "*.csv");
+  gtk_file_filter_add_pattern(filter, "*.json");
+  gtk_file_filter_add_pattern(filter, "*.xml");
   gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
 
   // 显示对话框
