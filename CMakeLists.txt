@@ -562,6 +562,7 @@ set(DUOROU_SOURCES_LIST
     # src/api/api_server.cpp  # 注释：暂时禁用API服务器
     src/media/video_capture.cpp
     src/media/audio_capture.cpp
+    src/media/media_file_decoder.cpp
 )
 
 # macOS平台特定源文件
@@ -610,6 +611,7 @@ set(DUOROU_HEADERS_LIST
     src/media/video_capture.h
     src/media/audio_capture.h
     src/media/video_frame.h
+    src/media/media_file_decoder.h
 )
 
 # macOS平台特定头文件
