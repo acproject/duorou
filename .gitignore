@@ -168,3 +168,4 @@ third_party/stable-diffusion.cpp/**
 third_party/llama.cpp/ggml/src/ggml-cuda/CMakeLists.txt
 build.vs
 D:\workspace\cpp_projects\duorou\third_party\llama.cpp\ggml\src\ggml-cuda\CMakeLists.txt
+third_party/MiniMemory
