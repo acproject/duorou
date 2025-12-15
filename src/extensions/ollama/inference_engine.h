@@ -112,6 +112,9 @@ public:
       return std::string("[Engine not ready] ") + prompt;
     }
 
+    // Ensure the KV cache is clear for the new generation
+        llama_memory_clear(llama_get_memory(ctx_), false);
+
     const llama_vocab *vocab = llama_model_get_vocab(model_);
     if (!vocab) {
       return std::string("[Vocab error] ") + prompt;
@@ -260,6 +263,9 @@ public:
     if (!isReady()) {
       return std::string("[Engine not ready] ") + prompt;
     }
+
+    // Ensure the KV cache is clear for the new generation
+    llama_memory_clear(llama_get_memory(ctx_), false);
 
     const llama_vocab *vocab = llama_model_get_vocab(model_);
     if (!vocab) {
