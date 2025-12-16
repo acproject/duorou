@@ -192,6 +192,7 @@ private:
   GtkWidget *send_button_;         // Send button
   GtkWidget *upload_image_button_; // Upload image button
   GtkWidget *upload_file_button_;  // Upload file button
+  GtkWidget *upload_video_button_; // Upload video file button
   GtkWidget *video_record_button_; // Video record button (GtkToggleButton)
   GtkWidget *file_preview_label_;  // Label to show selected file
 
@@ -233,6 +234,10 @@ private:
   std::chrono::steady_clock::time_point last_video_update_; // Last video update time
   static constexpr int VIDEO_UPDATE_INTERVAL_MS =
       66; // Video update interval (about 15fps, reduce flicker)
+  std::chrono::steady_clock::time_point
+      last_video_analysis_time_; // Last video analysis time
+  static constexpr int VIDEO_ANALYSIS_INTERVAL_MS =
+      3000; // Video analysis interval (ms)
 
   // Audio frame cache related
   std::vector<duorou::media::AudioFrame> cached_audio_frames_; // Cached audio frames
@@ -270,6 +275,8 @@ private:
                                              gpointer user_data);
   static void on_upload_file_button_clicked(GtkWidget *widget,
                                             gpointer user_data);
+  static void on_upload_video_button_clicked(GtkWidget *widget,
+                                             gpointer user_data);
   static void on_video_record_button_clicked(GtkWidget *widget,
                                              gpointer user_data);
   static void on_video_record_button_toggled(GtkToggleButton *toggle_button,
@@ -279,12 +286,17 @@ private:
                                        gpointer user_data);
   static void on_file_dialog_response(GtkDialog *dialog, gint response_id,
                                       gpointer user_data);
+  static void on_video_file_dialog_response(GtkDialog *dialog, gint response_id,
+                                            gpointer user_data);
 
   // Video capture methods
   void show_video_source_dialog();
   void start_desktop_capture();
   void start_camera_capture();
   void stop_recording();
+
+  // Periodic video analysis
+  void analyze_video_frame(const duorou::media::VideoFrame &frame);
 
   // Video source selection callback
   void on_video_source_selected(VideoSourceDialog::VideoSource source);

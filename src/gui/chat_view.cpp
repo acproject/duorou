@@ -6,7 +6,9 @@
 #include "../core/text_generator.h"
 #include "../extensions/ollama/ollama_model_manager.h"
 #include "../media/audio_capture.h"
+#include "../media/media_file_decoder.h"
 #include "../media/video_capture.h"
+#include "../core/image_generator.h"
 #include "chat_session_manager.h"
 #include "markdown_view.h"
 #ifdef __APPLE__
@@ -18,6 +20,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <filesystem>
 #include <thread>
 
 #ifdef _WIN32
@@ -490,7 +493,7 @@ ChatView::ChatView()
     : main_widget_(nullptr), chat_scrolled_(nullptr), chat_box_(nullptr),
       input_box_(nullptr), input_entry_(nullptr), send_button_(nullptr),
       upload_image_button_(nullptr), upload_file_button_(nullptr),
-      video_record_button_(nullptr), selected_image_path_(""),
+      upload_video_button_(nullptr), video_record_button_(nullptr), selected_image_path_(""),
       selected_file_path_(""), model_selector_(nullptr),
       input_container_(nullptr), welcome_cleared_(false),
       video_capture_(nullptr), audio_capture_(nullptr),
@@ -500,6 +503,7 @@ ChatView::ChatView()
       session_manager_(nullptr), model_manager_(nullptr),
       config_manager_(nullptr), cached_video_frame_(nullptr),
       last_video_update_(std::chrono::steady_clock::now()),
+      last_video_analysis_time_(std::chrono::steady_clock::now()),
       last_audio_update_(std::chrono::steady_clock::now()),
       file_preview_label_(nullptr) {
   // Initialize enhanced video window
@@ -615,6 +619,8 @@ ChatView::ChatView()
                                       EnhancedVideoCaptureWindow::CaptureMode::
                                           CAMERA);
                                 }
+
+                                chat_view->analyze_video_frame(*frame_ptr);
                               } catch (const std::exception &e) {
                                 std::cout
                                     << "Error updating camera video frame: "
@@ -961,6 +967,62 @@ void ChatView::clear_chat() {
   }
 }
 
+void ChatView::analyze_video_frame(const duorou::media::VideoFrame &frame) {
+  if (!is_recording_) {
+    return;
+  }
+
+  if (is_streaming_) {
+    return;
+  }
+
+  if (!model_manager_) {
+    return;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - last_video_analysis_time_)
+                        .count();
+  if (elapsed_ms < VIDEO_ANALYSIS_INTERVAL_MS) {
+    return;
+  }
+  last_video_analysis_time_ = now;
+
+  duorou::core::ImageGenerationResult img;
+  img.width = frame.width;
+  img.height = frame.height;
+  img.channels = frame.channels;
+  img.image_data = frame.data;
+  img.success = true;
+
+  std::string objects_dir = duorou::utils::ObjectStore::objects_dir();
+  std::filesystem::path base(objects_dir);
+
+  long long ts_ms = static_cast<long long>(frame.timestamp * 1000.0);
+  std::string filename_part =
+      "live_frame_" + std::to_string(ts_ms) + ".png";
+  std::filesystem::path out_path = base / filename_part;
+  std::string out_path_str = out_path.string();
+
+  bool saved =
+      duorou::core::ImageGenerator::saveImage(img, out_path_str, "png");
+  if (!saved) {
+    std::cout << "Failed to save live frame image: " << out_path_str
+              << std::endl;
+    return;
+  }
+
+  std::string file_uri = duorou::utils::ObjectStore::to_file_uri(out_path_str);
+  if (file_uri.empty()) {
+    return;
+  }
+
+  std::string message =
+      std::string("请分析当前画面：") + "![](" + file_uri + ")";
+  send_message(message);
+}
+
 void ChatView::remove_last_message() {
   if (chat_box_) {
     // Get the last child component
@@ -1131,6 +1193,11 @@ void ChatView::create_input_area() {
   gtk_widget_set_tooltip_text(upload_file_button_,
                               "Upload File (MD, DOC, Excel, PPT, PDF)");
 
+  upload_video_button_ = gtk_button_new_with_label("Video");
+  gtk_widget_add_css_class(upload_video_button_, "upload-button");
+  gtk_widget_set_size_request(upload_video_button_, 40, 40);
+  gtk_widget_set_tooltip_text(upload_video_button_, "Upload Video");
+
   // Create video recording button icon - using relative path
   std::string icon_path_base = "src/gui/";
   // video_off_image_ =
@@ -1178,6 +1245,7 @@ void ChatView::create_input_area() {
   // Add to input container
   gtk_box_append(GTK_BOX(input_container_), upload_image_button_);
   gtk_box_append(GTK_BOX(input_container_), upload_file_button_);
+  gtk_box_append(GTK_BOX(input_container_), upload_video_button_);
   gtk_box_append(GTK_BOX(input_container_), input_entry_);
   gtk_box_append(GTK_BOX(input_container_), video_record_button_);
   gtk_box_append(GTK_BOX(input_container_), send_button_);
@@ -1249,6 +1317,9 @@ void ChatView::connect_signals() {
   // Connect upload file button signal
   g_signal_connect(upload_file_button_, "clicked",
                    G_CALLBACK(on_upload_file_button_clicked), this);
+
+  g_signal_connect(upload_video_button_, "clicked",
+                   G_CALLBACK(on_upload_video_button_clicked), this);
 
   // Connect video record button signal
   g_signal_connect(video_record_button_, "clicked",
@@ -1536,6 +1607,34 @@ void ChatView::on_upload_file_button_clicked(GtkWidget *widget,
                    NULL);
 }
 
+void ChatView::on_upload_video_button_clicked(GtkWidget *widget,
+                                              gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(user_data);
+
+  GtkWidget *dialog = gtk_file_chooser_dialog_new(
+      "Select Video", GTK_WINDOW(gtk_widget_get_root(widget)),
+      GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel", GTK_RESPONSE_CANCEL, "_Open",
+      GTK_RESPONSE_ACCEPT, NULL);
+
+  GtkFileFilter *filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter, "Video files");
+  gtk_file_filter_add_mime_type(filter, "video/mp4");
+  gtk_file_filter_add_mime_type(filter, "video/x-matroska");
+  gtk_file_filter_add_mime_type(filter, "video/x-msvideo");
+  gtk_file_filter_add_mime_type(filter, "video/webm");
+  gtk_file_filter_add_pattern(filter, "*.mp4");
+  gtk_file_filter_add_pattern(filter, "*.mkv");
+  gtk_file_filter_add_pattern(filter, "*.avi");
+  gtk_file_filter_add_pattern(filter, "*.mov");
+  gtk_file_filter_add_pattern(filter, "*.webm");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+
+  gtk_widget_show(dialog);
+  g_object_set_data(G_OBJECT(dialog), "chat_view", chat_view);
+  g_signal_connect(dialog, "response",
+                   G_CALLBACK(on_video_file_dialog_response), NULL);
+}
+
 void ChatView::on_image_dialog_response(GtkDialog *dialog, gint response_id,
                                         gpointer user_data) {
   ChatView *chat_view =
@@ -1619,6 +1718,103 @@ void ChatView::on_file_dialog_response(GtkDialog *dialog, gint response_id,
           gtk_label_set_text(GTK_LABEL(chat_view->file_preview_label_),
                              label_text.c_str());
           gtk_widget_set_visible(chat_view->file_preview_label_, TRUE);
+        }
+
+        g_free(filename);
+      }
+      g_object_unref(file);
+    }
+  }
+
+  gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+void ChatView::on_video_file_dialog_response(GtkDialog *dialog,
+                                             gint response_id,
+                                             gpointer user_data) {
+  ChatView *chat_view =
+      static_cast<ChatView *>(g_object_get_data(G_OBJECT(dialog), "chat_view"));
+
+  if (response_id == GTK_RESPONSE_ACCEPT && chat_view) {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+    GFile *file = gtk_file_chooser_get_file(chooser);
+    if (file) {
+      char *filename = g_file_get_path(file);
+      if (filename) {
+        char *basename = g_path_get_basename(filename);
+        if (basename && chat_view->upload_video_button_) {
+          std::string tooltip = "Video selected: " + std::string(basename);
+          gtk_widget_set_tooltip_text(chat_view->upload_video_button_,
+                                      tooltip.c_str());
+        }
+        if (basename) {
+          g_free(basename);
+        }
+
+        std::string video_path(filename);
+
+        std::vector<duorou::media::VideoFrame> frames;
+        duorou::media::VideoFileDecodeOptions options;
+        options.frame_interval_seconds = 1.0;
+        options.target_width = 0;
+        options.target_height = 0;
+
+        bool decoded =
+            duorou::media::decode_video_file(video_path, frames, options);
+
+        if (decoded && !frames.empty() && chat_view->input_entry_) {
+          std::string objects_dir = duorou::utils::ObjectStore::objects_dir();
+          std::filesystem::path base(objects_dir);
+
+          const size_t max_frames = 4;
+          size_t frame_count = frames.size();
+          if (frame_count > max_frames) {
+            frame_count = max_frames;
+          }
+
+          const char *curr =
+              gtk_editable_get_text(GTK_EDITABLE(chat_view->input_entry_));
+          std::string curr_text = curr ? std::string(curr) : std::string();
+
+          for (size_t i = 0; i < frame_count; ++i) {
+            const auto &frame = frames[i];
+
+            duorou::core::ImageGenerationResult img;
+            img.width = frame.width;
+            img.height = frame.height;
+            img.channels = frame.channels;
+            img.image_data = frame.data;
+            img.success = true;
+
+            long long ts_ms =
+                static_cast<long long>(frame.timestamp * 1000.0);
+            std::string filename_part =
+                "video_frame_" + std::to_string(ts_ms) + "_" +
+                std::to_string(static_cast<long long>(i)) + ".png";
+            std::filesystem::path out_path = base / filename_part;
+            std::string out_path_str = out_path.string();
+
+            bool saved =
+                duorou::core::ImageGenerator::saveImage(img, out_path_str,
+                                                        "png");
+            if (!saved) {
+              continue;
+            }
+
+            std::string file_uri =
+                duorou::utils::ObjectStore::to_file_uri(out_path_str);
+
+            if (!curr_text.empty() && curr_text.back() != ' ') {
+              curr_text += ' ';
+            }
+            curr_text += "![](" + file_uri + ")";
+          }
+
+          gtk_editable_set_text(GTK_EDITABLE(chat_view->input_entry_),
+                                curr_text.c_str());
+        } else if (!decoded) {
+          std::cout << "Failed to decode video file: " << video_path
+                    << std::endl;
         }
 
         g_free(filename);
@@ -1814,6 +2010,8 @@ void ChatView::start_desktop_capture() {
                     chat_view->enhanced_video_window_->show(
                         EnhancedVideoCaptureWindow::CaptureMode::DESKTOP);
                   }
+
+                  chat_view->analyze_video_frame(*frame_ptr);
                 } catch (const std::exception &e) {
                   std::cout << "Error updating video frame: " << e.what()
                             << std::endl;
@@ -2094,6 +2292,8 @@ void ChatView::start_camera_capture() {
                     chat_view->enhanced_video_window_->show(
                         EnhancedVideoCaptureWindow::CaptureMode::CAMERA);
                   }
+
+                  chat_view->analyze_video_frame(*frame_ptr);
                 } catch (const std::exception &e) {
                   std::cout << "Error updating camera video frame: " << e.what()
                             << std::endl;
