@@ -22,6 +22,8 @@
 #include <iostream>
 #include <filesystem>
 #include <thread>
+#include <algorithm>
+#include <cctype>
 
 #ifdef _WIN32
 #include <string>
@@ -472,7 +474,6 @@ typedef void GtkWindow;
 namespace duorou {
 namespace gui {
 
-// 将本地文件路径转换为 file:// URI，失败时回退为直接拼接前缀
 static std::string path_to_file_uri(const std::string &path) {
   if (path.empty())
     return "";
@@ -487,6 +488,61 @@ static std::string path_to_file_uri(const std::string &path) {
     g_error_free(err);
   }
   return std::string("file://") + path;
+}
+
+static bool contains_summary_keyword(const std::string &text) {
+  if (text.find("总结") != std::string::npos ||
+      text.find("概括") != std::string::npos ||
+      text.find("概述") != std::string::npos) {
+    return true;
+  }
+
+  std::string lower = text;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  if (lower.find("summary") != std::string::npos ||
+      lower.find("summarize") != std::string::npos ||
+      lower.find("overview") != std::string::npos) {
+    return true;
+  }
+
+  return false;
+}
+
+static std::string build_segmented_pdf_content(const std::string &user_text,
+                                               const std::string &pdf_text) {
+  if (pdf_text.empty()) {
+    return pdf_text;
+  }
+
+  if (!contains_summary_keyword(user_text)) {
+    return pdf_text;
+  }
+
+  if (pdf_text.rfind("[PDF OCR]", 0) == 0) {
+    return pdf_text;
+  }
+
+  const size_t segment_size = 4000;
+  std::ostringstream oss;
+
+  oss << "[PDF 长文档分段内容]\n";
+  oss << "下面是这个 PDF 文档按顺序拆分后的若干段落。请按如下要求回答：\n";
+  oss << "1) 依次给出每段的小结，使用格式：\"段 i 小结：...\"，使用你自己的语言，不要逐行抄写原文。\n";
+  oss << "2) 在阅读完所有分段后，给出整体总结，使用格式：\"整体总结：...\"，侧重全局结构和关键信息。\n\n";
+
+  size_t total = pdf_text.size();
+  size_t segment_index = 0;
+
+  for (size_t offset = 0; offset < total; offset += segment_size) {
+    ++segment_index;
+    std::string chunk = pdf_text.substr(offset, segment_size);
+    oss << "[段 " << segment_index << "]\n";
+    oss << chunk << "\n\n";
+  }
+
+  return oss.str();
 }
 
 ChatView::ChatView()
@@ -1388,7 +1444,6 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       }
     }
 
-    // Add document information
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
@@ -1400,15 +1455,29 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
       if (parser) {
         std::string content = parser->parse(chat_view->selected_file_path_);
 
-        // Truncate content if too long
         const size_t MAX_CONTENT_LENGTH = 20000;
         if (content.length() > MAX_CONTENT_LENGTH) {
           content = content.substr(0, MAX_CONTENT_LENGTH) +
                     "\n\n[Content truncated due to length...]";
         }
 
-        full_message += "File Content (" + filename + "):\n";
-        full_message += "```\n" + content + "\n```";
+        std::filesystem::path file_path(chat_view->selected_file_path_);
+        std::string ext = file_path.extension().string();
+        std::string lower_ext = ext;
+        std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(),
+                       ::tolower);
+        bool is_pdf = (lower_ext == ".pdf");
+
+        if (is_pdf) {
+          std::string segmented =
+              build_segmented_pdf_content(message_text, content);
+          full_message += "File (" + filename + "):\n";
+          full_message += segmented;
+        } else {
+          full_message += "File Content (" + filename + "):\n";
+          full_message += "```\n" + content + "\n```";
+        }
+
         std::cout << "Attached file content length: " << content.length()
                   << " chars" << std::endl;
         std::cout << "DEBUG: Full message ready to send." << std::endl;
@@ -1485,7 +1554,6 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       }
     }
 
-    // Add document information
     if (has_file) {
       if (!full_message.empty())
         full_message += "\n";
@@ -1497,15 +1565,29 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
       if (parser) {
         std::string content = parser->parse(chat_view->selected_file_path_);
 
-        // Truncate content if too long
         const size_t MAX_CONTENT_LENGTH = 20000;
         if (content.length() > MAX_CONTENT_LENGTH) {
           content = content.substr(0, MAX_CONTENT_LENGTH) +
                     "\n\n[Content truncated due to length...]";
         }
 
-        full_message += "File Content (" + filename + "):\n";
-        full_message += "```\n" + content + "\n```";
+        std::filesystem::path file_path(chat_view->selected_file_path_);
+        std::string ext = file_path.extension().string();
+        std::string lower_ext = ext;
+        std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(),
+                       ::tolower);
+        bool is_pdf = (lower_ext == ".pdf");
+
+        if (is_pdf) {
+          std::string segmented =
+              build_segmented_pdf_content(message_text, content);
+          full_message += "File (" + filename + "):\n";
+          full_message += segmented;
+        } else {
+          full_message += "File Content (" + filename + "):\n";
+          full_message += "```\n" + content + "\n```";
+        }
+
         std::cout << "Attached file content length: " << content.length()
                   << " chars" << std::endl;
         std::cout << "DEBUG: Full message ready to send." << std::endl;
