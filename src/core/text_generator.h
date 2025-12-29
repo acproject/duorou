@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef __cplusplus
+
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -9,6 +11,14 @@
 // #include "../../third_party/llama.cpp/include/llama.h"  //
 // Note: Temporarily disable llama-related functionality
 #include "../extensions/ollama/ollama_model_manager.h"
+
+#ifdef DUOROU_ENABLE_MNN
+namespace MNN {
+namespace Transformer {
+class Llm;
+}
+}
+#endif
 
 namespace duorou {
 namespace core {
@@ -65,6 +75,8 @@ typedef std::function<void(int token, const std::string &text, bool finished)>
  */
 class TextGenerator {
 public:
+  struct MnnBackendTag {};
+
   /**
    * @brief Constructor
    * @param model llama model pointer
@@ -77,6 +89,8 @@ public:
    * @param model_path Model path
    */
   TextGenerator(const std::string &model_path = "");
+
+  TextGenerator(MnnBackendTag, const std::string &config_path);
 
   /**
    * @brief Constructor (using OllamaModelManager)
@@ -218,6 +232,15 @@ private:
       model_manager_;
   std::string model_id_; ///< Currently used model ID
   bool use_ollama_;      ///< Whether to use Ollama model
+
+#ifdef DUOROU_ENABLE_MNN
+  struct MnnLlmDeleter {
+    void operator()(MNN::Transformer::Llm* p) const;
+  };
+  std::unique_ptr<MNN::Transformer::Llm, MnnLlmDeleter> mnn_llm_;
+  bool use_mnn_;
+  std::string mnn_config_path_;
+#endif
 };
 
 /**
@@ -237,3 +260,5 @@ public:
 
 } // namespace core
 } // namespace duorou
+
+#endif // __cplusplus

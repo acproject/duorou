@@ -8,16 +8,51 @@
 #include <sstream>
 #include <thread>
 
+#ifdef DUOROU_ENABLE_MNN
+#include <MNN/llm/llm.hpp>
+#endif
+
 namespace duorou {
 namespace core {
 
 // Default constructor implementation
 TextGenerator::TextGenerator(const std::string &model_path)
-    : context_size_(2048), vocab_size_(32000), use_ollama_(false) {
+    : context_size_(2048), vocab_size_(32000), use_ollama_(false)
+#ifdef DUOROU_ENABLE_MNN
+    , use_mnn_(false)
+#endif
+{
   // Initialize random number generator
   std::random_device rd;
   rng_.seed(rd());
 }
+
+#ifdef DUOROU_ENABLE_MNN
+void TextGenerator::MnnLlmDeleter::operator()(MNN::Transformer::Llm* p) const {
+  if (!p) return;
+  MNN::Transformer::Llm::destroy(p);
+}
+
+TextGenerator::TextGenerator(MnnBackendTag, const std::string &config_path)
+    : context_size_(2048), vocab_size_(32000), use_ollama_(false),
+      use_mnn_(true), mnn_config_path_(config_path) {
+  std::random_device rd;
+  rng_.seed(rd());
+  mnn_llm_.reset(MNN::Transformer::Llm::createLLM(mnn_config_path_));
+  if (mnn_llm_) {
+    if (!mnn_llm_->load()) {
+      mnn_llm_.reset();
+      mnn_llm_.reset(MNN::Transformer::Llm::createLLM(mnn_config_path_));
+      if (mnn_llm_) {
+        mnn_llm_->set_config(R"({"has_talker":false})");
+        if (!mnn_llm_->load()) {
+          mnn_llm_.reset();
+        }
+      }
+    }
+  }
+}
+#endif
 
 // Ollama model manager constructor
 TextGenerator::TextGenerator(
@@ -25,7 +60,11 @@ TextGenerator::TextGenerator(
         model_manager,
     const std::string &model_id)
     : context_size_(2048), vocab_size_(32000), model_manager_(model_manager),
-      model_id_(normalizeModelId(model_id)), use_ollama_(true) {
+      model_id_(normalizeModelId(model_id)), use_ollama_(true)
+#ifdef DUOROU_ENABLE_MNN
+    , use_mnn_(false)
+#endif
+{
   // Initialize random number generator
   std::random_device rd;
   rng_.seed(rd());
@@ -42,6 +81,44 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
 
   std::lock_guard<std::mutex> lock(mutex_);
   GenerationResult result;
+
+#ifdef DUOROU_ENABLE_MNN
+  if (use_mnn_) {
+    if (!mnn_llm_) {
+      result.text = "Error: MNN LLM not initialized";
+      result.finished = true;
+      result.stop_reason = "error";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = 0;
+      result.generation_time = 0.0;
+      return result;
+    }
+
+    try {
+      std::ostringstream oss;
+      auto start_time = std::chrono::high_resolution_clock::now();
+      mnn_llm_->response(prompt, &oss, nullptr, params.max_tokens);
+      auto end_time = std::chrono::high_resolution_clock::now();
+
+      result.text = oss.str();
+      result.finished = true;
+      result.stop_reason = "completed";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = countTokens(result.text);
+      result.generation_time =
+          std::chrono::duration<double>(end_time - start_time).count();
+      return result;
+    } catch (const std::exception &e) {
+      result.text = std::string("Error: MNN inference exception: ") + e.what();
+      result.finished = true;
+      result.stop_reason = "exception";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = 0;
+      result.generation_time = 0.0;
+      return result;
+    }
+  }
+#endif
 
   if (use_ollama_ && model_manager_) {
 
@@ -131,6 +208,76 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
     result.generation_time = 0.0;
     return result;
   }
+
+#ifdef DUOROU_ENABLE_MNN
+  if (use_mnn_) {
+    if (!mnn_llm_) {
+      std::string error_msg = "Error: MNN LLM not initialized";
+      callback(0, error_msg, true);
+      result.text = error_msg;
+      result.finished = true;
+      result.stop_reason = "error";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = 0;
+      result.generation_time = 0.0;
+      return result;
+    }
+
+    struct CallbackStreambuf : public std::streambuf {
+      StreamCallback cb;
+      std::string buffer;
+      size_t token_index = 0;
+
+      explicit CallbackStreambuf(StreamCallback callback) : cb(std::move(callback)) {}
+
+      std::streamsize xsputn(const char* s, std::streamsize count) override {
+        if (count > 0) {
+          buffer.append(s, static_cast<size_t>(count));
+          cb(static_cast<int>(token_index++), std::string(s, static_cast<size_t>(count)), false);
+        }
+        return count;
+      }
+
+      int overflow(int ch) override {
+        if (ch == EOF) return EOF;
+        char c = static_cast<char>(ch);
+        buffer.push_back(c);
+        cb(static_cast<int>(token_index++), std::string(1, c), false);
+        return ch;
+      }
+    };
+
+    CallbackStreambuf cb_buf(callback);
+    std::ostream os(&cb_buf);
+
+    try {
+      auto start_time = std::chrono::high_resolution_clock::now();
+      mnn_llm_->response(prompt, &os, nullptr, params.max_tokens);
+      auto end_time = std::chrono::high_resolution_clock::now();
+
+      callback(static_cast<int>(cb_buf.token_index), "", true);
+
+      result.text = cb_buf.buffer;
+      result.finished = true;
+      result.stop_reason = "completed";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = countTokens(result.text);
+      result.generation_time =
+          std::chrono::duration<double>(end_time - start_time).count();
+      return result;
+    } catch (const std::exception &e) {
+      std::string error_msg = std::string("Error: MNN streaming inference exception: ") + e.what();
+      callback(static_cast<int>(cb_buf.token_index), error_msg, true);
+      result.text = error_msg;
+      result.finished = true;
+      result.stop_reason = "exception";
+      result.prompt_tokens = countTokens(prompt);
+      result.generated_tokens = 0;
+      result.generation_time = 0.0;
+      return result;
+    }
+  }
+#endif
 
   if (use_ollama_ && model_manager_) {
 
@@ -243,7 +390,14 @@ size_t TextGenerator::countTokens(const std::string &text) const {
 
 // Check if generation is possible
 bool TextGenerator::canGenerate() const {
-  // Enable text generation functionality
+#ifdef DUOROU_ENABLE_MNN
+  if (use_mnn_) {
+    return static_cast<bool>(mnn_llm_);
+  }
+#endif
+  if (use_ollama_) {
+    return static_cast<bool>(model_manager_);
+  }
   return true;
 }
 

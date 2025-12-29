@@ -91,6 +91,7 @@ option(DUOROU_ENABLE_CUDA "Enable CUDA support" OFF)
 option(DUOROU_ENABLE_METAL "Enable Metal support (macOS only)" OFF)
 option(DUOROU_ENABLE_VULKAN "Enable Vulkan support" OFF)
 option(DUOROU_ENABLE_OPENCL "Enable OpenCL support" OFF)
+option(DUOROU_ENABLE_MNN "Enable MNN (MNN-LLM) support" OFF)
 
 option(DUOROU_BUILD_EXAMPLES "Build examples" OFF)
 # 新增：可选构建 GUI（GTK4）
@@ -500,6 +501,34 @@ add_subdirectory(src/extensions)
 # 添加 kvcache 模块
 add_subdirectory(src/kvcache)
 
+# MNN / MNN-LLM (External build to avoid polluting global compiler flags)
+if(DUOROU_ENABLE_MNN)
+    include(ExternalProject)
+    set(DUOROU_MNN_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party_install/mnn" CACHE PATH "MNN install prefix")
+    set(DUOROU_MNN_LIB_PATH "${DUOROU_MNN_INSTALL_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}MNN${CMAKE_SHARED_LIBRARY_SUFFIX}")
+
+    ExternalProject_Add(duorou_mnn_ep
+        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/MNN"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/third_party_build/mnn"
+        INSTALL_DIR "${DUOROU_MNN_INSTALL_DIR}"
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+            -DMNN_BUILD_SHARED_LIBS=ON
+            -DMNN_SEP_BUILD=OFF
+            -DMNN_BUILD_LLM=ON
+            -DMNN_BUILD_LLM_OMNI=OFF
+            -DMNN_BUILD_TOOLS=OFF
+            -DMNN_BUILD_CONVERTER=OFF
+            -DMNN_BUILD_TRAIN=OFF
+            -DMNN_BUILD_DEMO=OFF
+        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config ${CMAKE_BUILD_TYPE}
+        INSTALL_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install --config ${CMAKE_BUILD_TYPE}
+        BUILD_BYPRODUCTS
+            "${DUOROU_MNN_LIB_PATH}"
+    )
+endif()
+
 # 移除自研 ml 模块，仅保留 llama.cpp 作为推理引擎
 # add_subdirectory(src/ml)
 
@@ -698,6 +727,18 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         OpenSSL::SSL
         OpenSSL::Crypto
     )
+
+    if(DUOROU_ENABLE_MNN)
+        add_dependencies(duorou duorou_mnn_ep)
+        target_compile_definitions(duorou PRIVATE DUOROU_ENABLE_MNN)
+        target_include_directories(duorou PRIVATE
+            "${DUOROU_MNN_INSTALL_DIR}/include"
+        )
+        target_link_libraries(duorou "${DUOROU_MNN_LIB_PATH}")
+        set_target_properties(duorou PROPERTIES
+            BUILD_RPATH "${DUOROU_MNN_INSTALL_DIR}/lib"
+        )
+    endif()
     if(GTK4_FOUND)
         target_link_libraries(duorou ${GTK4_LIBRARIES})
     endif()

@@ -16,6 +16,7 @@
 #include "../../third_party/llama.cpp/src/models/models.h"
 #include "../../third_party/llama.cpp/tools/mtmd/mtmd-helper.h"
 #include "../../third_party/llama.cpp/tools/mtmd/mtmd.h"
+#include "core/model_manager.h"
 #include "extensions/ollama/gguf_parser.h"
 #include "extensions/ollama/ollama_model_manager.h"
 #include "extensions/ollama/ollama_path_resolver.h"
@@ -23,6 +24,61 @@ using namespace duorou::extensions::ollama;
 
 // 测试输入文本
 const std::string TEST_INPUT = "你好，你有名字吗？";
+
+static void run_mnn_scan_config_validation_test() {
+#ifdef DUOROU_ENABLE_MNN
+  duorou::core::ModelManager mm;
+  assert(mm.initialize());
+
+  const auto base =
+      std::filesystem::temp_directory_path() /
+      ("duorou_mnn_scan_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+  const auto bad_dir = base / "Qwen2.5-Omni-3B";
+  std::filesystem::create_directories(bad_dir);
+  {
+    std::ofstream llm(bad_dir / "llm.mnn", std::ios::binary);
+    llm << "";
+  }
+  {
+    std::ofstream cfg(bad_dir / "config.json", std::ios::binary);
+    cfg << R"({"model_type":"qwen2_5_omni","architectures":["Qwen2_5OmniForConditionalGeneration"]})";
+  }
+
+  const auto good_dir = base / "mnn-good";
+  std::filesystem::create_directories(good_dir);
+  {
+    std::ofstream llm(good_dir / "llm.mnn", std::ios::binary);
+    llm << "";
+  }
+  {
+    std::ofstream cfg(good_dir / "config.json", std::ios::binary);
+    cfg << R"({"backend_type":"cpu","llm_model":"llm.mnn"})";
+  }
+
+  mm.rescanModelDirectory(base.string());
+  auto models = mm.getAllModels();
+
+  bool found_bad = false;
+  bool found_good = false;
+  for (const auto &info : models) {
+    if (info.id == "llm_mnn_Qwen2.5-Omni-3B") {
+      found_bad = true;
+    }
+    if (info.id == "llm_mnn_mnn-good") {
+      found_good = true;
+      assert(info.format == duorou::core::ModelFormat::MNN);
+    }
+  }
+
+  assert(!found_bad);
+  assert(found_good);
+
+  std::error_code ec;
+  std::filesystem::remove_all(base, ec);
+#endif
+}
 
 // 默认的 Hugging Face 模型目录（作为未设置 OVERRIDE_MODEL_DIR 时的默认值）
 static constexpr const char *DEFAULT_OVERRIDE_MODEL_DIR =
@@ -173,12 +229,7 @@ static std::string getModelPath() {
     }
   }
 
-  // 默认为当前硬编码的 Ollama 路径
-  return std::string("/Users/acproject/.ollama/models/blobs/"
-                     "sha256-"
-                     "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0"
-                     "b8e686f" /** qwen3:8b */
-  );
+  return std::string();
 }
 
 static std::string getMmprojPathFallback(const std::string &model_path) {
@@ -363,8 +414,58 @@ int main() {
   // 加载所有动态后端（如有）
   ggml_backend_load_all();
 
+  run_mnn_scan_config_validation_test();
+
+  if (const char *only = std::getenv("DUOROU_ONLY_MNN_SCAN")) {
+    if (std::string(only) == "1") {
+      duorou::core::ModelManager mm;
+      if (!mm.initialize()) {
+        std::cerr << "ModelManager initialize failed" << std::endl;
+        return 1;
+      }
+      std::string scan_dir = "/Users/acproject/workspace/cpp_projects/duorou/models";
+      if (const char *env_dir = std::getenv("DUOROU_MNN_SCAN_DIR")) {
+        scan_dir = env_dir;
+      }
+      mm.rescanModelDirectory(scan_dir);
+      auto models = mm.getAllModels();
+      for (const auto &info : models) {
+        if (info.format == duorou::core::ModelFormat::MNN) {
+          std::cout << "MNN model: " << info.id << " path=" << info.path << std::endl;
+        }
+      }
+      return 0;
+    }
+  }
+
+  if (const char *only = std::getenv("DUOROU_ONLY_MNN_LOAD")) {
+    if (std::string(only) == "1") {
+      duorou::core::ModelManager mm;
+      if (!mm.initialize()) {
+        std::cerr << "ModelManager initialize failed" << std::endl;
+        return 1;
+      }
+      std::string scan_dir = "/Users/acproject/workspace/cpp_projects/duorou/models";
+      if (const char *env_dir = std::getenv("DUOROU_MNN_SCAN_DIR")) {
+        scan_dir = env_dir;
+      }
+      mm.rescanModelDirectory(scan_dir);
+      std::string model_id = "llm_mnn_Qwen2.5-Omni-3B";
+      if (const char *env_id = std::getenv("DUOROU_MNN_MODEL_ID")) {
+        model_id = env_id;
+      }
+      bool ok = mm.loadModel(model_id);
+      std::cout << "MNN load " << (ok ? "OK" : "FAIL") << ": " << model_id << std::endl;
+      return ok ? 0 : 2;
+    }
+  }
+
   // 初始化模型参数并加载模型
   std::string model_path = getModelPath();
+  if (model_path.empty() || !std::filesystem::exists(std::filesystem::path(model_path))) {
+    std::cout << "SKIP: 未找到可用 GGUF 模型。请设置 OVERRIDE_MODEL_PATH/OVERRIDE_MODEL_DIR。" << std::endl;
+    return 0;
+  }
   std::cout << "Using model: " << model_path << std::endl;
 
   // 如果是 safetensors，提示用户先转换为 GGUF 并退出

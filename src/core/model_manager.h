@@ -29,6 +29,14 @@ enum class ModelType {
     DIFFUSION_MODEL     ///< Diffusion model (Stable Diffusion)
 };
 
+enum class ModelFormat {
+    UNKNOWN,
+    GGUF,
+    MNN,
+    SAFETENSORS,
+    CKPT,
+};
+
 /**
  * @brief Model status enumeration
  */
@@ -47,11 +55,12 @@ struct ModelManagerInfo {
     std::string name;               ///< Model name
     std::string path;               ///< Model file path
     ModelType type;                 ///< Model type
+    ModelFormat format;             ///< Model format
     ModelStatus status;             ///< Model status
     size_t memory_usage;            ///< Memory usage (bytes)
     std::string description;        ///< Model description
     
-    ModelManagerInfo() : type(ModelType::LANGUAGE_MODEL), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
+    ModelManagerInfo() : type(ModelType::LANGUAGE_MODEL), format(ModelFormat::UNKNOWN), status(ModelStatus::NOT_LOADED), memory_usage(0) {}
 };
 
 /**

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -150,6 +151,150 @@ private:
   mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
   duorou::core::ModelManagerInfo model_info_;
 };
+
+class PlaceholderTextModelImpl : public duorou::core::BaseModel {
+public:
+  explicit PlaceholderTextModelImpl(const duorou::core::ModelManagerInfo &info)
+      : info_(info), loaded_(false) {
+    info_.type = duorou::core::ModelType::LANGUAGE_MODEL;
+    info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    info_.memory_usage = 0;
+  }
+
+  bool load(const std::string &model_path) override {
+    text_generator_ = std::make_unique<duorou::core::TextGenerator>();
+    loaded_ = true;
+    info_.status = duorou::core::ModelStatus::LOADED;
+    info_.path = model_path;
+    info_.memory_usage = 0;
+    return true;
+  }
+
+  void unload() override {
+    text_generator_.reset();
+    loaded_ = false;
+    info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    info_.memory_usage = 0;
+  }
+
+  bool isLoaded() const override { return loaded_; }
+  duorou::core::ModelManagerInfo getInfo() const override { return info_; }
+  size_t getMemoryUsage() const override { return 0; }
+
+  duorou::core::TextGenerator *getTextGenerator() const {
+    if (!loaded_ || !text_generator_) return nullptr;
+    return text_generator_.get();
+  }
+
+private:
+  mutable duorou::core::ModelManagerInfo info_;
+  bool loaded_;
+  mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
+};
+
+#ifdef DUOROU_ENABLE_MNN
+static bool looksLikeMnnLlmRuntimeConfig(const std::filesystem::path& config_path) {
+  std::ifstream in(config_path, std::ios::binary);
+  if (!in) return false;
+
+  std::string content;
+  content.resize(64 * 1024);
+  in.read(content.data(), static_cast<std::streamsize>(content.size()));
+  content.resize(static_cast<size_t>(in.gcount()));
+  if (content.empty()) return false;
+
+  const bool has_backend =
+      (content.find("\"backend_type\"") != std::string::npos) ||
+      (content.find("\"backend\"") != std::string::npos);
+  const bool has_llm_model = (content.find("\"llm_model\"") != std::string::npos);
+  const bool has_llm_weight = (content.find("\"llm_weight\"") != std::string::npos);
+  const bool has_llm_config = (content.find("\"llm_config\"") != std::string::npos);
+
+  return has_backend && (has_llm_model || has_llm_weight || has_llm_config);
+}
+#endif
+
+#ifdef DUOROU_ENABLE_MNN
+class MnnModelImpl : public duorou::core::BaseModel {
+public:
+  explicit MnnModelImpl(const std::string &model_path)
+      : model_path_(model_path), loaded_(false), memory_usage_(0) {
+    model_info_.name = model_path;
+    model_info_.type = duorou::core::ModelType::LANGUAGE_MODEL;
+    model_info_.format = duorou::core::ModelFormat::MNN;
+    model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    model_info_.memory_usage = 0;
+    model_info_.path = model_path;
+  }
+
+  bool load(const std::string &model_path) override {
+    std::error_code ec;
+    std::filesystem::path p(model_path);
+    std::filesystem::path config_path;
+
+    if (std::filesystem::is_directory(p, ec)) {
+      config_path = p / "config.json";
+    } else if (p.extension() == ".json") {
+      config_path = p;
+    } else if (p.extension() == ".mnn") {
+      config_path = p.parent_path() / "config.json";
+    } else {
+      config_path = p;
+    }
+
+    if (!std::filesystem::exists(config_path, ec) || !std::filesystem::is_regular_file(config_path, ec)) {
+      return false;
+    }
+
+    std::filesystem::path abs_config_path = std::filesystem::absolute(config_path, ec);
+    if (ec) {
+      abs_config_path = config_path;
+      ec.clear();
+    }
+
+    auto generator = std::make_unique<duorou::core::TextGenerator>(
+        duorou::core::TextGenerator::MnnBackendTag{}, abs_config_path.string());
+    if (!generator->canGenerate()) {
+      return false;
+    }
+
+    text_generator_ = std::move(generator);
+    loaded_ = true;
+    memory_usage_ = 1024 * 1024 * 1024;
+    model_info_.status = duorou::core::ModelStatus::LOADED;
+    model_info_.memory_usage = memory_usage_;
+    model_info_.path = abs_config_path.string();
+    model_info_.name = abs_config_path.parent_path().filename().string();
+    return true;
+  }
+
+  void unload() override {
+    text_generator_.reset();
+    loaded_ = false;
+    memory_usage_ = 0;
+    model_info_.status = duorou::core::ModelStatus::NOT_LOADED;
+    model_info_.memory_usage = 0;
+  }
+
+  bool isLoaded() const override { return loaded_; }
+  duorou::core::ModelManagerInfo getInfo() const override { return model_info_; }
+  size_t getMemoryUsage() const override { return memory_usage_; }
+
+  duorou::core::TextGenerator *getTextGenerator() const {
+    if (!loaded_ || !text_generator_) {
+      return nullptr;
+    }
+    return text_generator_.get();
+  }
+
+private:
+  std::string model_path_;
+  bool loaded_;
+  size_t memory_usage_;
+  mutable std::unique_ptr<duorou::core::TextGenerator> text_generator_;
+  duorou::core::ModelManagerInfo model_info_;
+};
+#endif
 
 namespace duorou {
 namespace core {
@@ -804,6 +949,16 @@ ModelManager::getTextGenerator(const std::string &model_id) const {
     auto text_generator = ollama_model->getTextGenerator();
     return text_generator;
   }
+#ifdef DUOROU_ENABLE_MNN
+  auto mnn_model = std::dynamic_pointer_cast<MnnModelImpl>(it->second);
+  if (mnn_model) {
+    return mnn_model->getTextGenerator();
+  }
+#endif
+  auto placeholder = std::dynamic_pointer_cast<PlaceholderTextModelImpl>(it->second);
+  if (placeholder) {
+    return placeholder->getTextGenerator();
+  }
   return nullptr;
 }
 
@@ -1012,6 +1167,11 @@ ModelManager::createModel(const ModelManagerInfo &model_info) {
   
 
   if (model_info.type == ModelType::LANGUAGE_MODEL) {
+#ifdef DUOROU_ENABLE_MNN
+    if (model_info.format == ModelFormat::MNN) {
+      return std::make_shared<MnnModelImpl>(model_info.path);
+    }
+#endif
     // Check if it's an Ollama model
     
 
@@ -1043,6 +1203,8 @@ ModelManager::createModel(const ModelManagerInfo &model_info) {
       auto model = std::make_shared<OllamaModelImpl>(isGGUFPath ? model_info.path : model_info.name);
       
       return model;
+    } else if (model_info.format == ModelFormat::UNKNOWN) {
+      return std::make_shared<PlaceholderTextModelImpl>(model_info);
     } else {
       // return std::make_shared<LlamaModel>(model_info.path);  // Disabled -
       // llama.h not found
@@ -1089,6 +1251,7 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
           // Stable Diffusion model file
           info.id = "sd_" + info.name;
           info.type = ModelType::DIFFUSION_MODEL;
+          info.format = (extension == ".ckpt") ? ModelFormat::CKPT : ModelFormat::SAFETENSORS;
           info.description = "Diffusion model (Stable Diffusion)";
         } else if (extension == ".gguf") {
           // 处理 .gguf：既包含 LLM，也可能是 mmproj 投影权重
@@ -1122,8 +1285,58 @@ void ModelManager::scanModelDirectory(const std::string &directory) {
             // 本地 LLM GGUF 文件
             info.id = "llm_" + info.name;
             info.type = ModelType::LANGUAGE_MODEL;
+            info.format = ModelFormat::GGUF;
             info.description = "Local GGUF language model";
           }
+        } else if (extension == ".mnn") {
+#ifndef DUOROU_ENABLE_MNN
+          continue;
+#else
+          if (entry.path().filename().string() != "llm.mnn") {
+            continue;
+          }
+          std::error_code ec;
+          std::filesystem::path p(path);
+          std::filesystem::path model_dir = p.parent_path();
+          std::filesystem::path runtime_config_path = model_dir / "config.json";
+
+          const auto is_good_runtime_config = [&](const std::filesystem::path &cp) -> bool {
+            return std::filesystem::exists(cp, ec) &&
+                   std::filesystem::is_regular_file(cp, ec) &&
+                   looksLikeMnnLlmRuntimeConfig(cp);
+          };
+
+          if (!is_good_runtime_config(runtime_config_path)) {
+            runtime_config_path.clear();
+            for (const auto &cfg_entry : std::filesystem::directory_iterator(model_dir, ec)) {
+              if (ec) break;
+              if (!cfg_entry.is_regular_file(ec) || ec) continue;
+              if (cfg_entry.path().extension() != ".json") continue;
+              if (!looksLikeMnnLlmRuntimeConfig(cfg_entry.path())) continue;
+              runtime_config_path = cfg_entry.path();
+              break;
+            }
+          }
+
+          if (runtime_config_path.empty()) {
+            continue;
+          }
+
+          std::error_code abs_ec;
+          std::filesystem::path abs_runtime_config_path =
+              std::filesystem::absolute(runtime_config_path, abs_ec);
+          if (abs_ec) {
+            abs_runtime_config_path = runtime_config_path;
+            abs_ec.clear();
+          }
+
+          info.path = abs_runtime_config_path.string();
+          info.name = p.parent_path().filename().string();
+          info.id = "llm_mnn_" + info.name;
+          info.type = ModelType::LANGUAGE_MODEL;
+          info.format = ModelFormat::MNN;
+          info.description = "Local MNN language model";
+#endif
         } else {
           continue; // Skip unsupported file types
         }

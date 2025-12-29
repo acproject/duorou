@@ -14,6 +14,12 @@ endif()
 # 创建集成测试可执行文件
 add_executable(module_integration_test
     ${DUOROU_SRC_DIR}/test_module_integration.cpp
+    ${DUOROU_SRC_DIR}/core/image_generator.cpp
+    ${DUOROU_SRC_DIR}/core/logger.cpp
+    ${DUOROU_SRC_DIR}/core/model_downloader.cpp
+    ${DUOROU_SRC_DIR}/core/model_manager.cpp
+    ${DUOROU_SRC_DIR}/core/model_path_manager.cpp
+    ${DUOROU_SRC_DIR}/core/stb_impl.cpp
     ${DUOROU_SRC_DIR}/core/text_generator.cpp
 )
 
@@ -39,7 +45,26 @@ target_link_libraries(module_integration_test
     duorou_model
     llama
     mtmd
+    stable-diffusion
+    $<$<BOOL:${DUOROU_ENABLE_OLLAMA}>:duorou_ollama_extension>
+    nlohmann_json::nlohmann_json
+    CURL::libcurl
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
+
+if(DUOROU_ENABLE_MNN)
+    add_dependencies(module_integration_test duorou_mnn_ep)
+    target_compile_definitions(module_integration_test PRIVATE DUOROU_ENABLE_MNN)
+    target_include_directories(module_integration_test PRIVATE
+        "${DUOROU_MNN_INSTALL_DIR}/include"
+    )
+    set(DUOROU_MNN_LIB_PATH "${DUOROU_MNN_INSTALL_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}MNN${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    target_link_libraries(module_integration_test "${DUOROU_MNN_LIB_PATH}")
+    set_target_properties(module_integration_test PROPERTIES
+        BUILD_RPATH "${DUOROU_MNN_INSTALL_DIR}/lib"
+    )
+endif()
 
 # 编译器标志
 if(MSVC)

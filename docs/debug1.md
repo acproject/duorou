@@ -52,3 +52,100 @@ RMSNorm 不应该改变 shape。
 ggml 的矩阵乘法默认是 (A @ B)，即列主序。
 
 不要在不必要的地方再手动 transpose。
+
+
+
+
+---
+
+## 使用 MNN 转换工具导出/转换模型（本仓库路径）
+
+本仓库已经集成了 MNN 的 LLM 导出/转换脚本，入口在：
+
+- `third_party/MNN/transformers/llm/export/llmexport.py`：从 HF/本地 PyTorch 模型直接导出 MNN-LLM 目录（包含结构 + 权重 + tokenizer 等）
+- `third_party/MNN/transformers/llm/export/safetensors2mnn.py`：读取 safetensors 权重，写入到已有的 `llm.mnn.json` 结构里，再生成 `llm.mnn / llm.mnn.weight`
+
+### 前置条件
+
+1. 安装 Python 依赖（导出脚本目录下）
+
+```bash
+cd third_party/MNN/transformers/llm/export
+python3 -m pip install -r requirements.txt
+```
+
+2. 准备 `MNNConvert`
+
+`safetensors2mnn.py` 会通过环境变量 `MNNCONVERT`（或 `MNN_CONVERT`）找到转换器；若不设置，会默认尝试：
+
+- `third_party/MNN/build/MNNConvert`（以脚本路径为基准的 `../../../build/MNNConvert`）
+
+### 方式 A：直接导出（推荐）
+
+适合环境依赖齐全、希望一次性产出完整目录（包括 `llm.mnn.json / llm_config.json / tokenizer.txt / config.json` 等）的情况。
+
+```bash
+python3 third_party/MNN/transformers/llm/export/llmexport.py \
+  --path models/Qwen2.5-Omni-3B \
+  --dst_path models/Qwen2.5-Omni-3B \
+  --export mnn \
+  --quant_bit 4 \
+  --quant_block 128 \
+  --lm_quant_bit 4
+```
+
+导出目录一般包含（不同模型可能略有差异）：
+
+- `llm.mnn`
+- `llm.mnn.weight`
+- `llm.mnn.json`（后续改权重/LoRA/GPTQ 等常用）
+- `llm_config.json`
+- `tokenizer.txt`
+- `config.json`（运行时配置，用于推理）
+- `embeddings_bf16.bin`（当 embedding 与 lm_head 不共享或被拆分时可能出现）
+
+### 方式 B：仅写入权重（safetensors → mnn）
+
+适合你已经拿到模型“结构文件”，只想把 safetensors 权重写进去（减少导出依赖、也更方便复用结构）。
+
+#### 1) 准备 `mnn_dir` 里的结构文件
+
+`safetensors2mnn.py` 需要至少：
+
+- `llm.mnn.json`
+- `llm_config.json`
+
+如果你只有 `llm.mnn`，可以先把它转出 `llm.mnn.json`：
+
+```bash
+third_party/MNN/build/MNNConvert \
+  -f MNN \
+  --modelFile models/Qwen2.5-Omni-3B/llm.mnn \
+  --JsonFile models/Qwen2.5-Omni-3B/llm.mnn.json
+```
+
+#### 2) 执行 safetensors 写入
+
+```bash
+MNNCONVERT=third_party/MNN/build/MNNConvert \
+python3 third_party/MNN/transformers/llm/export/safetensors2mnn.py \
+  --path models/Qwen2.5-Omni-3B \
+  --mnn_dir models/Qwen2.5-Omni-3B \
+  --quant_bit 4 \
+  --quant_block 128 \
+  --lm_quant_bit 4
+```
+
+该脚本会：
+
+- 读取 `--path` 下的 `.safetensors`（支持 `model.safetensors.index.json` 分片索引）
+- 生成/覆盖 `models/Qwen2.5-Omni-3B/llm.mnn.weight`
+- 生成/覆盖 `models/Qwen2.5-Omni-3B/llm.mnn`
+- 可能生成 `embeddings_bf16.bin`
+- 更新 `llm_config.json`（例如写入 `tie_embeddings` 信息）
+
+### 常见问题
+
+- 报错找不到 `embed_tokens.weight`：通常是权重不完整（git lfs 没拉全 / shard 缺失）。
+- 找不到 `MNNConvert`：确保 `third_party/MNN/build/MNNConvert` 存在，或设置 `MNNCONVERT=/abs/path/to/MNNConvert`。
+- Qwen2.5-Omni 推理侧 Talker 模块报缺输出：如果只需要纯文本路径，运行时配置里可关闭 `has_talker`（避免加载 Talker 子模块）。
