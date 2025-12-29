@@ -68,6 +68,9 @@ typedef int gint; typedef void* gpointer;
 #include <memory>
 #include <string>
 #include <vector>
+#include <deque>
+#include <mutex>
+#include <atomic>
 
 namespace duorou {
   namespace media {
@@ -190,6 +193,7 @@ private:
   GtkWidget *input_box_;           // Input area container
   GtkWidget *input_entry_;         // Input entry
   GtkWidget *send_button_;         // Send button
+  GtkWidget *play_button_;         // Play button
   GtkWidget *upload_image_button_; // Upload image button
   GtkWidget *upload_file_button_;  // Upload file button
   GtkWidget *upload_video_button_; // Upload video file button
@@ -227,6 +231,9 @@ private:
   MarkdownView *streaming_md_ = nullptr; // 当前流式助手气泡的 MarkdownView
   bool is_streaming_ = false;            // Streaming flag
   std::string streaming_buffer_;         // Accumulated streamed text
+  std::string last_assistant_message_;
+  int tts_pid_ = -1;
+  std::mutex tts_mutex_;
 
   // Video frame cache related
   std::shared_ptr<duorou::media::VideoFrame>
@@ -244,6 +251,25 @@ private:
   std::chrono::steady_clock::time_point last_audio_update_; // Last audio update time
   static constexpr int AUDIO_UPDATE_INTERVAL_MS = 100;      // Audio update interval
 
+  struct PendingLiveChunk {
+    std::vector<float> audio;
+    int sample_rate = 0;
+    int channels = 0;
+    std::shared_ptr<duorou::media::VideoFrame> video;
+    double timestamp = 0.0;
+  };
+
+  std::mutex live_mutex_;
+  std::vector<float> live_audio_buffer_;
+  size_t live_audio_read_pos_ = 0;
+  int live_audio_sample_rate_ = 0;
+  int live_audio_channels_ = 0;
+  std::deque<PendingLiveChunk> pending_live_chunks_;
+  std::vector<std::string> live_generated_files_;
+  std::atomic<bool> live_idle_scheduled_{false};
+  std::mutex cached_video_mutex_;
+  std::atomic<bool> live_mnn_omni_enabled_{false};
+
   /**
    * Create chat display area
    */
@@ -259,6 +285,12 @@ private:
    */
   void create_input_area();
 
+  void push_live_audio_frame(const duorou::media::AudioFrame &frame);
+  void schedule_try_send_live_chunks();
+  void try_send_live_chunks_on_main_thread();
+  bool current_model_is_mnn_omni() const;
+  void cleanup_live_generated_files_locked();
+
   /**
    * Connect signals
    */
@@ -271,6 +303,7 @@ private:
 
   // Static callback functions
   static void on_send_button_clicked(GtkWidget *widget, gpointer user_data);
+  static void on_play_button_clicked(GtkWidget *widget, gpointer user_data);
   static void on_upload_image_button_clicked(GtkWidget *widget,
                                              gpointer user_data);
   static void on_upload_file_button_clicked(GtkWidget *widget,
@@ -303,6 +336,7 @@ private:
 
   // State management methods
   void verify_button_state();
+  void play_last_assistant_message();
 
   /**
    * Reset all states to prevent segmentation faults

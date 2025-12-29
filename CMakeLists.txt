@@ -91,7 +91,7 @@ option(DUOROU_ENABLE_CUDA "Enable CUDA support" OFF)
 option(DUOROU_ENABLE_METAL "Enable Metal support (macOS only)" OFF)
 option(DUOROU_ENABLE_VULKAN "Enable Vulkan support" OFF)
 option(DUOROU_ENABLE_OPENCL "Enable OpenCL support" OFF)
-option(DUOROU_ENABLE_MNN "Enable MNN (MNN-LLM) support" OFF)
+option(DUOROU_ENABLE_MNN "Enable MNN (MNN-LLM) support" ON)
 
 option(DUOROU_BUILD_EXAMPLES "Build examples" OFF)
 # 新增：可选构建 GUI（GTK4）

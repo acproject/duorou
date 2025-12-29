@@ -491,10 +491,66 @@ bool ModelManager::initialize() {
   std::lock_guard<std::mutex> lock(mutex_);
 
   try {
-    // Scan default model directory
-    std::string models_dir = "./models";
-    if (std::filesystem::exists(models_dir)) {
-      scanModelDirectory(models_dir);
+    std::vector<std::filesystem::path> candidates;
+
+    if (const char *env_dir = std::getenv("DUOROU_MODELS_DIR"); env_dir && *env_dir) {
+      candidates.emplace_back(env_dir);
+    }
+
+    candidates.emplace_back("models");
+
+    std::error_code ec;
+    std::filesystem::path cur = std::filesystem::current_path(ec);
+    if (!ec) {
+      for (int i = 0; i < 6; ++i) {
+        candidates.push_back(cur / "models");
+        if (!cur.has_parent_path()) break;
+        auto parent = cur.parent_path();
+        if (parent == cur) break;
+        cur = parent;
+      }
+    }
+
+    bool scanned_any = false;
+    bool found_any_dir = false;
+    std::vector<std::string> tried;
+    tried.reserve(candidates.size());
+    for (const auto &p : candidates) {
+      std::filesystem::path cand = p;
+      std::error_code aec;
+      cand = std::filesystem::absolute(cand, aec);
+      if (aec) {
+        cand = p;
+      }
+      const std::string cand_str = cand.string();
+      if (std::find(tried.begin(), tried.end(), cand_str) != tried.end()) {
+        continue;
+      }
+      tried.push_back(cand_str);
+
+      std::error_code exists_ec;
+      if (std::filesystem::exists(cand, exists_ec) &&
+          std::filesystem::is_directory(cand, exists_ec)) {
+        found_any_dir = true;
+        const size_t before_models = registered_models_.size();
+        scanModelDirectory(cand_str);
+        if (registered_models_.size() > before_models) {
+          scanned_any = true;
+          break;
+        }
+      }
+    }
+
+    if (!scanned_any) {
+      if (!found_any_dir) {
+        std::cerr << "[WARN] Local models directory not found; tried:";
+      } else {
+        std::cerr << "[WARN] No local models discovered; tried:";
+      }
+      for (const auto &t : tried) {
+        std::cerr << " " << t;
+      }
+      std::cerr << std::endl;
     }
 
     initialized_ = true;

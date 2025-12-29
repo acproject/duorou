@@ -3,7 +3,9 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <regex>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -14,6 +16,106 @@
 
 namespace duorou {
 namespace core {
+
+#ifdef DUOROU_ENABLE_MNN
+static std::string readFilePrefix(const std::string &path, size_t max_bytes) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return std::string();
+  std::string content;
+  content.resize(max_bytes);
+  in.read(content.data(), static_cast<std::streamsize>(content.size()));
+  content.resize(static_cast<size_t>(in.gcount()));
+  return content;
+}
+
+static bool detectOmniRuntimeConfig(const std::string &config_path) {
+  const std::string content = readFilePrefix(config_path, 256 * 1024);
+  if (content.empty()) return false;
+  if (content.find("\"visual_model\"") != std::string::npos) return true;
+  if (content.find("\"audio_model\"") != std::string::npos) return true;
+  if (content.find("\"global_image\"") != std::string::npos) return true;
+  if (content.find("\"vision_start\"") != std::string::npos) return true;
+  if (content.find("\"image_pad\"") != std::string::npos) return true;
+  return false;
+}
+
+static int hexToInt(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+  return -1;
+}
+
+static std::string urlDecodePercent(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (size_t i = 0; i < s.size(); ++i) {
+    char c = s[i];
+    if (c == '%' && i + 2 < s.size()) {
+      int hi = hexToInt(s[i + 1]);
+      int lo = hexToInt(s[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+        continue;
+      }
+    }
+    out.push_back(c);
+  }
+  return out;
+}
+
+static std::string trim(std::string s) {
+  auto notSpace = [](unsigned char ch) { return !std::isspace(ch); };
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
+  s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
+  return s;
+}
+
+static std::string stripAngleOrQuotes(std::string s) {
+  s = trim(std::move(s));
+  if (s.size() >= 2 && ((s.front() == '<' && s.back() == '>') ||
+                        (s.front() == '"' && s.back() == '"') ||
+                        (s.front() == '\'' && s.back() == '\''))) {
+    s = s.substr(1, s.size() - 2);
+  }
+  return trim(std::move(s));
+}
+
+static std::string fileUriToPath(const std::string &uri) {
+  std::string s = stripAngleOrQuotes(uri);
+  const std::string prefix = "file://";
+  if (s.rfind(prefix, 0) != 0) {
+    return s;
+  }
+  s.erase(0, prefix.size());
+  const std::string localhost = "localhost/";
+  if (s.rfind(localhost, 0) == 0) {
+    s.erase(0, localhost.size() - 1);
+  }
+  return urlDecodePercent(s);
+}
+
+static std::string preprocessMnnOmniPrompt(const std::string &prompt) {
+  static const std::regex md_img(R"(!\[[^\]]*\]\(([^)]+)\))");
+  std::string out;
+  out.reserve(prompt.size());
+  std::sregex_iterator it(prompt.begin(), prompt.end(), md_img);
+  std::sregex_iterator end;
+  size_t last = 0;
+  for (; it != end; ++it) {
+    const std::smatch &m = *it;
+    out.append(prompt, last, static_cast<size_t>(m.position()) - last);
+    std::string target = fileUriToPath(m.str(1));
+    out.append("<img>");
+    out.append(target);
+    out.append("</img>");
+    last = static_cast<size_t>(m.position() + m.length());
+  }
+  out.append(prompt, last, std::string::npos);
+  return out;
+}
+#endif
 
 // Default constructor implementation
 TextGenerator::TextGenerator(const std::string &model_path)
@@ -38,6 +140,7 @@ TextGenerator::TextGenerator(MnnBackendTag, const std::string &config_path)
       use_mnn_(true), mnn_config_path_(config_path) {
   std::random_device rd;
   rng_.seed(rd());
+  mnn_is_omni_ = detectOmniRuntimeConfig(mnn_config_path_);
   mnn_llm_.reset(MNN::Transformer::Llm::createLLM(mnn_config_path_));
   if (mnn_llm_) {
     if (!mnn_llm_->load()) {
@@ -95,9 +198,11 @@ GenerationResult TextGenerator::generate(const std::string &prompt,
     }
 
     try {
+      const std::string effective_prompt =
+          mnn_is_omni_ ? preprocessMnnOmniPrompt(prompt) : prompt;
       std::ostringstream oss;
       auto start_time = std::chrono::high_resolution_clock::now();
-      mnn_llm_->response(prompt, &oss, nullptr, params.max_tokens);
+      mnn_llm_->response(effective_prompt, &oss, nullptr, params.max_tokens);
       auto end_time = std::chrono::high_resolution_clock::now();
 
       result.text = oss.str();
@@ -251,8 +356,10 @@ GenerationResult TextGenerator::generateStream(const std::string &prompt,
     std::ostream os(&cb_buf);
 
     try {
+      const std::string effective_prompt =
+          mnn_is_omni_ ? preprocessMnnOmniPrompt(prompt) : prompt;
       auto start_time = std::chrono::high_resolution_clock::now();
-      mnn_llm_->response(prompt, &os, nullptr, params.max_tokens);
+      mnn_llm_->response(effective_prompt, &os, nullptr, params.max_tokens);
       auto end_time = std::chrono::high_resolution_clock::now();
 
       callback(static_cast<int>(cb_buf.token_index), "", true);

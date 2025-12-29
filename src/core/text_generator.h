@@ -240,6 +240,7 @@ private:
   std::unique_ptr<MNN::Transformer::Llm, MnnLlmDeleter> mnn_llm_;
   bool use_mnn_;
   std::string mnn_config_path_;
+  bool mnn_is_omni_ = false;
 #endif
 };
 
