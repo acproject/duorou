@@ -21,6 +21,18 @@
 typedef void GtkWidget; typedef void GtkDialog; typedef void GtkButton; typedef void GtkToggleButton; typedef void GtkStyleContext; typedef void GtkCssProvider;
 typedef void GtkEntry; typedef void GtkScrolledWindow; typedef void GtkDropDown; typedef void GtkLabel; typedef void GtkImage;
 typedef int gint; typedef void* gpointer;
+typedef unsigned int guint;
+typedef int gboolean;
+typedef void GdkFrameClock;
+#ifndef GTK_IS_WIDGET
+#define GTK_IS_WIDGET(x) (true)
+#endif
+#ifndef GTK_IS_TOGGLE_BUTTON
+#define GTK_IS_TOGGLE_BUTTON(x) (true)
+#endif
+#ifndef GTK_IS_BUTTON
+#define GTK_IS_BUTTON(x) (true)
+#endif
 #ifndef TRUE
 #define TRUE 1
 #endif
@@ -51,6 +63,9 @@ typedef int gint; typedef void* gpointer;
 #ifndef G_SOURCE_REMOVE
 #define G_SOURCE_REMOVE 0
 #endif
+#ifndef G_SOURCE_CONTINUE
+#define G_SOURCE_CONTINUE 1
+#endif
 // Additional common constants
 #ifndef GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
 #define GTK_STYLE_PROVIDER_PRIORITY_APPLICATION 600
@@ -71,6 +86,8 @@ typedef int gint; typedef void* gpointer;
 #include <deque>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
+#include <thread>
 
 namespace duorou {
   namespace media {
@@ -193,6 +210,7 @@ private:
   GtkWidget *input_box_;           // Input area container
   GtkWidget *input_entry_;         // Input entry
   GtkWidget *send_button_;         // Send button
+  GtkWidget *voice_button_;        // Voice button
   GtkWidget *play_button_;         // Play button
   GtkWidget *upload_image_button_; // Upload image button
   GtkWidget *upload_file_button_;  // Upload file button
@@ -234,6 +252,22 @@ private:
   std::string last_assistant_message_;
   int tts_pid_ = -1;
   std::mutex tts_mutex_;
+  std::mutex tts_queue_mutex_;
+  std::condition_variable tts_queue_cv_;
+  std::deque<std::string> tts_queue_;
+  std::thread tts_worker_;
+  std::atomic<bool> tts_worker_stop_{false};
+  bool tts_worker_started_ = false;
+  bool voice_response_tts_ = false;
+  std::string tts_stream_pending_;
+
+  bool is_voice_recording_ = false;
+  bool voice_send_pending_ = false;
+  std::unique_ptr<media::AudioCapture> voice_audio_capture_;
+  std::mutex voice_audio_mutex_;
+  std::vector<float> voice_audio_buffer_;
+  int voice_audio_sample_rate_ = 0;
+  int voice_audio_channels_ = 0;
 
   // Video frame cache related
   std::shared_ptr<duorou::media::VideoFrame>
@@ -269,6 +303,9 @@ private:
   std::atomic<bool> live_idle_scheduled_{false};
   std::mutex cached_video_mutex_;
   std::atomic<bool> live_mnn_omni_enabled_{false};
+  std::atomic<bool> live_inference_enabled_{false};
+  guint bubble_width_tick_id_ = 0;
+  int bubble_width_last_px_ = 0;
 
   /**
    * Create chat display area
@@ -288,6 +325,7 @@ private:
   void push_live_audio_frame(const duorou::media::AudioFrame &frame);
   void schedule_try_send_live_chunks();
   void try_send_live_chunks_on_main_thread();
+  void send_user_message(const std::string &message);
   bool current_model_is_mnn_omni() const;
   void cleanup_live_generated_files_locked();
 
@@ -303,6 +341,8 @@ private:
 
   // Static callback functions
   static void on_send_button_clicked(GtkWidget *widget, gpointer user_data);
+  static void on_voice_button_toggled(GtkToggleButton *toggle_button,
+                                      gpointer user_data);
   static void on_play_button_clicked(GtkWidget *widget, gpointer user_data);
   static void on_upload_image_button_clicked(GtkWidget *widget,
                                              gpointer user_data);
@@ -337,6 +377,13 @@ private:
   // State management methods
   void verify_button_state();
   void play_last_assistant_message();
+  void start_voice_recording();
+  void stop_voice_recording();
+  void enqueue_tts_segment(const std::string &text);
+  void stop_all_tts();
+  void ensure_tts_worker_started();
+  void tts_worker_loop();
+  void feed_streaming_tts(const std::string &delta, bool finished);
 
   /**
    * Reset all states to prevent segmentation faults

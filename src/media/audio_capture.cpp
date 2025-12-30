@@ -1,5 +1,4 @@
 #include "audio_capture.h"
-#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -11,7 +10,6 @@ namespace media {
 
 // Global PortAudio management
 static std::mutex g_pa_mutex;
-static std::atomic<int> g_pa_ref_count{0};
 static bool g_pa_initialized = false;
 
 static bool ensure_portaudio_initialized() {
@@ -28,7 +26,6 @@ static bool ensure_portaudio_initialized() {
     g_pa_initialized = true;
     std::cout << "PortAudio initialized successfully" << std::endl;
   }
-  g_pa_ref_count++;
   return true;
 #else
   return false;
@@ -38,15 +35,8 @@ static bool ensure_portaudio_initialized() {
 static void release_portaudio() {
   // Release PortAudio
 #ifdef HAVE_PORTAUDIO
-  std::lock_guard<std::mutex> lock(g_pa_mutex);
-  if (g_pa_ref_count > 0) {
-    g_pa_ref_count--;
-    if (g_pa_ref_count == 0 && g_pa_initialized) {
-      Pa_Terminate();
-      g_pa_initialized = false;
-      std::cout << "PortAudio terminated" << std::endl;
-    }
-  }
+  (void)g_pa_mutex;
+  (void)g_pa_initialized;
 #endif
 }
 
@@ -166,25 +156,34 @@ AudioCapture::~AudioCapture() {
   stop_capture();
 
 #ifdef HAVE_PORTAUDIO
-  // Close stream and release PortAudio reference
-  if (pImpl && pImpl->pa_stream) {
-    Pa_CloseStream(pImpl->pa_stream);
-    pImpl->pa_stream = nullptr;
-  }
   release_portaudio();
 #endif
 }
 
 bool AudioCapture::initialize(AudioSource source, int device_id) {
-  std::lock_guard<std::mutex> lock(pImpl->mutex);
+  PaStream *old_stream = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
 
-  if (pImpl->capturing) {
-    std::cout << "Audio capture is already running, please stop first" << std::endl;
-    return false;
+    if (pImpl->capturing) {
+      std::cout << "Audio capture is already running, please stop first" << std::endl;
+      return false;
+    }
+
+#ifdef HAVE_PORTAUDIO
+    old_stream = pImpl->pa_stream;
+    pImpl->pa_stream = nullptr;
+#endif
+
+    pImpl->source = source;
+    pImpl->device_id = device_id;
   }
 
-  pImpl->source = source;
-  pImpl->device_id = device_id;
+#ifdef HAVE_PORTAUDIO
+  if (old_stream) {
+    Pa_CloseStream(old_stream);
+  }
+#endif
 
   switch (source) {
   case AudioSource::MICROPHONE:
@@ -227,25 +226,32 @@ bool AudioCapture::start_capture() {
 }
 
 void AudioCapture::stop_capture() {
+  PaStream *stream = nullptr;
+  bool should_print = false;
   {
     std::lock_guard<std::mutex> lock(pImpl->mutex);
+    should_print = pImpl->capturing;
     pImpl->capturing = false;
+#ifdef HAVE_PORTAUDIO
+    stream = pImpl->pa_stream;
+    pImpl->pa_stream = nullptr;
+#endif
   }
 
 #ifdef HAVE_PORTAUDIO
-  if (pImpl->pa_stream) {
-    // Safely stop and close stream
-    PaError err = Pa_IsStreamActive(pImpl->pa_stream);
-    if (err == 1) { // Stream is running
-      Pa_StopStream(pImpl->pa_stream);
+  if (stream) {
+    should_print = true;
+    PaError err = Pa_IsStreamActive(stream);
+    if (err == 1) {
+      Pa_StopStream(stream);
     }
-
-    Pa_CloseStream(pImpl->pa_stream);
-    pImpl->pa_stream = nullptr;
+    Pa_CloseStream(stream);
   }
 #endif
 
-  std::cout << "Stopping audio capture" << std::endl;
+  if (should_print) {
+    std::cout << "Stopping audio capture" << std::endl;
+  }
 }
 
 bool AudioCapture::is_capturing() const {

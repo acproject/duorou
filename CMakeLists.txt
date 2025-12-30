@@ -598,6 +598,7 @@ set(DUOROU_SOURCES_LIST
 if(APPLE)
     list(APPEND DUOROU_SOURCES_LIST src/platform/macos_tray.mm)
     list(APPEND DUOROU_SOURCES_LIST src/media/macos_screen_capture.mm)
+    list(APPEND DUOROU_SOURCES_LIST src/media/macos_speech_recognition.mm)
 endif()
 
 # Windows平台特定源文件
@@ -647,6 +648,7 @@ set(DUOROU_HEADERS_LIST
 if(APPLE)
     list(APPEND DUOROU_HEADERS_LIST src/platform/macos_tray.h)
     list(APPEND DUOROU_HEADERS_LIST src/media/macos_screen_capture.h)
+    list(APPEND DUOROU_HEADERS_LIST src/media/macos_speech_recognition.h)
 endif()
 
 # Windows平台特定头文件
@@ -690,7 +692,20 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     message(STATUS "Found ${DUOROU_SOURCES_COUNT} source files, building executable...")
     
     # 主可执行文件
-    add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
+    if(APPLE)
+        set(DUOROU_BUNDLE_IDENTIFIER "com.duorou.app")
+        set(DUOROU_MACOS_INFO_PLIST_IN "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos_info.plist.in")
+        set(DUOROU_MACOS_INFO_PLIST_OUT "${CMAKE_CURRENT_BINARY_DIR}/duorou_info.plist")
+        configure_file(${DUOROU_MACOS_INFO_PLIST_IN} ${DUOROU_MACOS_INFO_PLIST_OUT} @ONLY)
+
+        add_executable(duorou MACOSX_BUNDLE ${DUOROU_SOURCES} ${DUOROU_HEADERS})
+        set_target_properties(duorou PROPERTIES
+            MACOSX_BUNDLE_INFO_PLIST ${DUOROU_MACOS_INFO_PLIST_OUT}
+            MACOSX_BUNDLE_GUI_IDENTIFIER ${DUOROU_BUNDLE_IDENTIFIER}
+        )
+    else()
+        add_executable(duorou ${DUOROU_SOURCES} ${DUOROU_HEADERS})
+    endif()
     # 仅对主可执行目标启用 Unicode 宽字符宏，避免影响第三方库
     if(WIN32)
         target_compile_definitions(duorou PRIVATE UNICODE _UNICODE)
@@ -786,6 +801,7 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework AVFoundation"
+            "-framework Speech"
         )
     elseif(WIN32)
         target_link_libraries(duorou
@@ -809,6 +825,7 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
     
     # 安装配置
     install(TARGETS duorou
+        BUNDLE DESTINATION .
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib

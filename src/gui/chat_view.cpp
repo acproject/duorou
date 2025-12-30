@@ -13,6 +13,7 @@
 #include "markdown_view.h"
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
+#include "../media/macos_speech_recognition.h"
 #include <spawn.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -378,6 +379,9 @@ typedef int gboolean;
 #ifndef gtk_toggle_button_new
 #define gtk_toggle_button_new(...) ((GtkWidget *)nullptr)
 #endif
+#ifndef gtk_toggle_button_new_with_label
+#define gtk_toggle_button_new_with_label(...) ((GtkWidget *)nullptr)
+#endif
 // Button/toggle helpers
 #ifndef GTK_BUTTON
 #define GTK_BUTTON(x) (x)
@@ -653,6 +657,7 @@ static std::string build_segmented_pdf_content(const std::string &user_text,
 ChatView::ChatView()
     : main_widget_(nullptr), chat_scrolled_(nullptr), chat_box_(nullptr),
       input_box_(nullptr), input_entry_(nullptr), send_button_(nullptr),
+      voice_button_(nullptr),
       play_button_(nullptr),
       upload_image_button_(nullptr), upload_file_button_(nullptr),
       upload_video_button_(nullptr), video_record_button_(nullptr), selected_image_path_(""),
@@ -822,6 +827,24 @@ ChatView::ChatView()
 ChatView::~ChatView() {
   std::cout << "ChatView destruction started..." << std::endl;
 
+#ifdef DUOROU_HAVE_GTK
+  if (bubble_width_tick_id_ != 0 && chat_scrolled_ &&
+      GTK_IS_WIDGET(chat_scrolled_)) {
+    gtk_widget_remove_tick_callback(chat_scrolled_, bubble_width_tick_id_);
+    bubble_width_tick_id_ = 0;
+  }
+#endif
+
+  stop_all_tts();
+  {
+    std::unique_lock<std::mutex> lock(tts_queue_mutex_);
+    tts_worker_stop_.store(true);
+    tts_queue_cv_.notify_all();
+  }
+  if (tts_worker_started_ && tts_worker_.joinable()) {
+    tts_worker_.join();
+  }
+
 #ifdef __APPLE__
   {
     std::lock_guard<std::mutex> lock(tts_mutex_);
@@ -856,6 +879,18 @@ ChatView::~ChatView() {
         audio_capture_->stop_capture();
       } catch (const std::exception &e) {
         std::cout << "Exception stopping audio capture during destruction: "
+                  << e.what() << std::endl;
+      }
+    }
+  }
+
+  if (is_voice_recording_) {
+    is_voice_recording_ = false;
+    if (voice_audio_capture_) {
+      try {
+        voice_audio_capture_->stop_capture();
+      } catch (const std::exception &e) {
+        std::cout << "Exception stopping voice audio capture during destruction: "
                   << e.what() << std::endl;
       }
     }
@@ -926,9 +961,24 @@ bool ChatView::initialize() {
   return true;
 }
 
+void ChatView::send_user_message(const std::string &message) {
+  if (is_recording_) {
+    live_inference_enabled_.store(true);
+  }
+  send_message(message);
+}
+
 void ChatView::send_message(const std::string &message) {
   if (message.empty()) {
     return;
+  }
+
+  const bool enable_voice_tts = voice_send_pending_;
+  voice_send_pending_ = false;
+  voice_response_tts_ = enable_voice_tts;
+  if (enable_voice_tts) {
+    stop_all_tts();
+    tts_stream_pending_.clear();
   }
 
   // Add user message to chat display
@@ -1283,6 +1333,9 @@ void ChatView::try_send_live_chunks_on_main_thread() {
   if (is_streaming_ || !is_recording_) {
     return;
   }
+  if (!live_inference_enabled_.load()) {
+    return;
+  }
   if (!live_mnn_omni_enabled_.load() || !current_model_is_mnn_omni()) {
     return;
   }
@@ -1363,6 +1416,10 @@ void ChatView::analyze_video_frame(const duorou::media::VideoFrame &frame) {
   }
 
   if (!model_manager_) {
+    return;
+  }
+
+  if (!live_inference_enabled_.load()) {
     return;
   }
 
@@ -1447,16 +1504,26 @@ void ChatView::create_chat_area() {
   gtk_box_append(GTK_BOX(main_widget_), chat_scrolled_);
   // Apply initial 70% bubble width based on current right area
   update_bubble_max_width();
-  // Listen to size changes of the scrolled window to recompute bubble widths
-#if defined(g_signal_connect)
-  g_signal_connect(chat_scrolled_, "size-allocate",
-                   G_CALLBACK(+[](GtkWidget * /*w*/, gpointer /*alloc*/,
-                                  gpointer user_data) {
-                     auto *self = static_cast<ChatView *>(user_data);
-                     if (self)
-                       self->update_bubble_max_width();
-                   }),
-                   this);
+#ifdef DUOROU_HAVE_GTK
+  if (bubble_width_tick_id_ == 0) {
+    bubble_width_last_px_ = 0;
+    bubble_width_tick_id_ = gtk_widget_add_tick_callback(
+        chat_scrolled_,
+        +[](GtkWidget * /*w*/, GdkFrameClock * /*clock*/,
+            gpointer user_data) -> gboolean {
+          auto *self = static_cast<ChatView *>(user_data);
+          if (!self || !self->chat_scrolled_) {
+            return G_SOURCE_REMOVE;
+          }
+          int right_w = gtk_widget_get_allocated_width(self->chat_scrolled_);
+          if (right_w > 0 && right_w != self->bubble_width_last_px_) {
+            self->bubble_width_last_px_ = right_w;
+            self->update_bubble_max_width();
+          }
+          return G_SOURCE_CONTINUE;
+        },
+        this, nullptr);
+  }
 #endif
 }
 
@@ -1634,6 +1701,11 @@ void ChatView::create_input_area() {
   gtk_widget_add_css_class(send_button_, "send-button");
   gtk_widget_set_size_request(send_button_, 40, 40);
 
+  voice_button_ = gtk_toggle_button_new_with_label("Mic");
+  gtk_widget_add_css_class(voice_button_, "upload-button");
+  gtk_widget_set_size_request(voice_button_, 40, 40);
+  gtk_widget_set_tooltip_text(voice_button_, "Voice input");
+
   play_button_ = gtk_button_new_with_label("Play");
   gtk_widget_add_css_class(play_button_, "upload-button");
   gtk_widget_set_size_request(play_button_, 40, 40);
@@ -1647,6 +1719,7 @@ void ChatView::create_input_area() {
   gtk_box_append(GTK_BOX(input_container_), input_entry_);
   gtk_box_append(GTK_BOX(input_container_), video_record_button_);
   gtk_box_append(GTK_BOX(input_container_), send_button_);
+  gtk_box_append(GTK_BOX(input_container_), voice_button_);
   gtk_box_append(GTK_BOX(input_container_), play_button_);
 
   // Add to main input container
@@ -1708,6 +1781,10 @@ void ChatView::connect_signals() {
   // Connect send button signal
   g_signal_connect(send_button_, "clicked", G_CALLBACK(on_send_button_clicked),
                    this);
+  if (voice_button_) {
+    g_signal_connect(voice_button_, "toggled",
+                     G_CALLBACK(on_voice_button_toggled), this);
+  }
   if (play_button_) {
     g_signal_connect(play_button_, "clicked",
                      G_CALLBACK(on_play_button_clicked), this);
@@ -1836,7 +1913,7 @@ void ChatView::on_send_button_clicked(GtkWidget *widget, gpointer user_data) {
 
     // Send message
     std::cout << "DEBUG: Calling chat_view->send_message..." << std::endl;
-    chat_view->send_message(full_message);
+    chat_view->send_user_message(full_message);
     std::cout << "DEBUG: chat_view->send_message returned." << std::endl;
 
     // Clear selected file paths and reset button tooltips
@@ -1946,7 +2023,7 @@ void ChatView::on_input_entry_activate(GtkWidget *widget, gpointer user_data) {
 
     // Send message
     std::cout << "DEBUG: Calling chat_view->send_message..." << std::endl;
-    chat_view->send_message(full_message);
+    chat_view->send_user_message(full_message);
     std::cout << "DEBUG: chat_view->send_message returned." << std::endl;
 
     // Clear selected file paths and reset button tooltips
@@ -2501,6 +2578,7 @@ void ChatView::start_desktop_capture() {
       if (audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
         if (audio_capture_->start_capture()) {
           is_recording_ = true;
+          live_inference_enabled_.store(false);
 
           // Only update button state, icon is handled by toggle callback
           if (video_record_button_) {
@@ -2786,6 +2864,7 @@ void ChatView::start_camera_capture() {
       if (audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
         if (audio_capture_->start_capture()) {
           is_recording_ = true;
+          live_inference_enabled_.store(false);
 
           // Only update button state, icon is handled by toggle callback
           if (video_record_button_) {
@@ -2907,6 +2986,7 @@ void ChatView::stop_recording() {
   // First set recording status to false
   is_recording_ = false;
   live_mnn_omni_enabled_.store(false);
+  live_inference_enabled_.store(false);
 
   // Stop video capture
   if (video_capture_) {
@@ -3209,17 +3289,45 @@ void ChatView::reset_state() {
     audio_capture_.reset();
   }
 
+  if (is_voice_recording_) {
+    is_voice_recording_ = false;
+    if (voice_audio_capture_) {
+      try {
+        voice_audio_capture_->stop_capture();
+      } catch (const std::exception &e) {
+        std::cout << "Exception stopping voice audio capture during state reset: "
+                  << e.what() << std::endl;
+      }
+    }
+  }
+  if (voice_audio_capture_) {
+    voice_audio_capture_.reset();
+  }
+  {
+    std::lock_guard<std::mutex> lock(voice_audio_mutex_);
+    voice_audio_buffer_.clear();
+    voice_audio_sample_rate_ = 0;
+    voice_audio_channels_ = 0;
+  }
+  if (voice_button_ && GTK_IS_TOGGLE_BUTTON(voice_button_)) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+  }
+
   // reset button status
-  if (video_record_button_) {
+  if (video_record_button_ && GTK_IS_TOGGLE_BUTTON(video_record_button_)) {
     updating_button_state_ = true;
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
                                  FALSE);
-    gtk_widget_set_sensitive(video_record_button_, TRUE);
+    if (GTK_IS_WIDGET(video_record_button_)) {
+      gtk_widget_set_sensitive(video_record_button_, TRUE);
+    }
 
     // Reset button icon to off state
     if (video_off_image_ && GTK_IS_WIDGET(video_off_image_)) {
       gtk_widget_set_visible(video_off_image_, TRUE);
-      gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+      if (GTK_IS_BUTTON(video_record_button_)) {
+        gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+      }
       gtk_widget_remove_css_class(video_record_button_, "recording");
       gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
                                   "Start recording");
@@ -3245,6 +3353,151 @@ void ChatView::reset_state() {
   last_audio_update_ = std::chrono::steady_clock::now();
 
   std::cout << "ChatView state reset completed" << std::endl;
+}
+
+void ChatView::start_voice_recording() {
+  if (is_voice_recording_) {
+    return;
+  }
+
+  if (is_recording_) {
+    if (voice_button_) {
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    }
+    add_message("Error: Voice input is unavailable during recording.", false);
+    return;
+  }
+
+  if (!media::AudioCapture::is_microphone_available()) {
+    if (voice_button_) {
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    }
+    add_message("Error: Microphone is not available.", false);
+    return;
+  }
+
+  voice_audio_capture_ = std::make_unique<media::AudioCapture>();
+  voice_audio_capture_->set_frame_callback([this](const duorou::media::AudioFrame &frame) {
+    std::lock_guard<std::mutex> lock(voice_audio_mutex_);
+    if (!is_voice_recording_) {
+      return;
+    }
+    if (voice_audio_sample_rate_ == 0) {
+      voice_audio_sample_rate_ = frame.sample_rate;
+      voice_audio_channels_ = frame.channels;
+    }
+    voice_audio_buffer_.insert(voice_audio_buffer_.end(), frame.data.begin(),
+                               frame.data.end());
+  });
+
+  if (!voice_audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
+    voice_audio_capture_.reset();
+    if (voice_button_) {
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    }
+    add_message("Error: Failed to initialize microphone.", false);
+    return;
+  }
+  if (!voice_audio_capture_->start_capture()) {
+    voice_audio_capture_.reset();
+    if (voice_button_) {
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    }
+    add_message("Error: Failed to start microphone capture.", false);
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(voice_audio_mutex_);
+    voice_audio_buffer_.clear();
+    voice_audio_sample_rate_ = 0;
+    voice_audio_channels_ = 0;
+  }
+  is_voice_recording_ = true;
+  gtk_widget_set_tooltip_text(voice_button_, "Stop voice input");
+}
+
+void ChatView::stop_voice_recording() {
+  if (!is_voice_recording_) {
+    return;
+  }
+
+  is_voice_recording_ = false;
+  if (voice_audio_capture_) {
+    voice_audio_capture_->stop_capture();
+    voice_audio_capture_.reset();
+  }
+
+  std::vector<float> audio;
+  int sr = 0;
+  int ch = 0;
+  {
+    std::lock_guard<std::mutex> lock(voice_audio_mutex_);
+    audio = voice_audio_buffer_;
+    sr = voice_audio_sample_rate_;
+    ch = voice_audio_channels_;
+    voice_audio_buffer_.clear();
+    voice_audio_sample_rate_ = 0;
+    voice_audio_channels_ = 0;
+  }
+  gtk_widget_set_tooltip_text(voice_button_, "Voice input");
+
+  if (audio.empty() || sr <= 0 || ch <= 0) {
+    add_message("Error: No voice audio captured.", false);
+    return;
+  }
+
+  std::filesystem::path out_dir;
+  std::error_code ec;
+  out_dir = std::filesystem::temp_directory_path(ec);
+  if (ec) {
+    out_dir = std::filesystem::current_path(ec);
+  }
+  const auto now_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count();
+  std::filesystem::path wav_path =
+      out_dir / ("duorou_voice_" + std::to_string(now_ms) + ".wav");
+
+  if (!write_wav_pcm16(wav_path.string(), audio, sr, ch)) {
+    add_message("Error: Failed to write voice wav.", false);
+    return;
+  }
+
+  std::thread([this, wav_path_str = wav_path.string()]() {
+    std::string err;
+#ifdef __APPLE__
+    std::string text = duorou::media::macos_transcribe_wav(wav_path_str, &err);
+#else
+    std::string text;
+    err = "Speech recognition is only supported on macOS currently.";
+#endif
+    std::error_code remove_ec;
+    std::filesystem::remove(wav_path_str, remove_ec);
+
+    struct Data {
+      ChatView *self;
+      std::string text;
+      std::string err;
+    };
+    auto *d = new Data{this, std::move(text), std::move(err)};
+    g_idle_add(
+        [](gpointer u) -> gboolean {
+          auto *d = static_cast<Data *>(u);
+          if (!d->text.empty()) {
+            d->self->voice_send_pending_ = true;
+            d->self->send_user_message(d->text);
+          } else {
+            std::string msg = d->err.empty() ? "Error: Voice recognition failed."
+                                            : ("Error: " + d->err);
+            d->self->add_message(msg, false);
+          }
+          delete d;
+          return G_SOURCE_REMOVE;
+        },
+        d);
+  }).detach();
 }
 
 void ChatView::set_session_manager(ChatSessionManager *session_manager) {
@@ -3451,6 +3704,20 @@ std::string ChatView::generate_ai_response(const std::string &message) {
   }
 }
 
+void ChatView::on_voice_button_toggled(GtkToggleButton *toggle_button,
+                                       gpointer user_data) {
+  ChatView *chat_view = static_cast<ChatView *>(user_data);
+  if (!chat_view || !chat_view->voice_button_) {
+    return;
+  }
+  const bool active = gtk_toggle_button_get_active(toggle_button);
+  if (active) {
+    chat_view->start_voice_recording();
+  } else {
+    chat_view->stop_voice_recording();
+  }
+}
+
 void ChatView::append_stream_text(const std::string &delta, bool finished) {
   // Update assistant bubble text incrementally on main thread
   if (streaming_md_) {
@@ -3462,6 +3729,8 @@ void ChatView::append_stream_text(const std::string &delta, bool finished) {
     // Keep view scrolled to bottom while streaming
     scroll_to_bottom();
   }
+
+  feed_streaming_tts(delta, finished);
 
   if (finished) {
     // Re-enable controls
@@ -3487,6 +3756,7 @@ void ChatView::append_stream_text(const std::string &delta, bool finished) {
     streaming_md_ = nullptr;
     streaming_buffer_.clear();
     is_streaming_ = false;
+    voice_response_tts_ = false;
     schedule_try_send_live_chunks();
   }
 }
@@ -3513,6 +3783,52 @@ void ChatView::play_last_assistant_message() {
     if (c == '\n' || c == '\r') c = ' ';
   }
 
+  stop_all_tts();
+  enqueue_tts_segment(text);
+}
+
+void ChatView::ensure_tts_worker_started() {
+  std::lock_guard<std::mutex> lock(tts_queue_mutex_);
+  if (tts_worker_started_) {
+    return;
+  }
+  tts_worker_stop_.store(false);
+  tts_worker_ = std::thread([this]() { tts_worker_loop(); });
+  tts_worker_started_ = true;
+}
+
+void ChatView::enqueue_tts_segment(const std::string &text) {
+  std::string trimmed = text;
+  while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\n' ||
+                              trimmed.back() == '\r' || trimmed.back() == '\t')) {
+    trimmed.pop_back();
+  }
+  size_t start = 0;
+  while (start < trimmed.size() &&
+         (trimmed[start] == ' ' || trimmed[start] == '\n' ||
+          trimmed[start] == '\r' || trimmed[start] == '\t')) {
+    ++start;
+  }
+  if (start > 0) {
+    trimmed.erase(0, start);
+  }
+  if (trimmed.empty()) {
+    return;
+  }
+
+  ensure_tts_worker_started();
+  {
+    std::lock_guard<std::mutex> lock(tts_queue_mutex_);
+    tts_queue_.push_back(trimmed);
+  }
+  tts_queue_cv_.notify_one();
+}
+
+void ChatView::stop_all_tts() {
+  {
+    std::lock_guard<std::mutex> lock(tts_queue_mutex_);
+    tts_queue_.clear();
+  }
 #ifdef __APPLE__
   std::lock_guard<std::mutex> lock(tts_mutex_);
   if (tts_pid_ > 0) {
@@ -3521,24 +3837,118 @@ void ChatView::play_last_assistant_message() {
     waitpid(tts_pid_, &status, WNOHANG);
     tts_pid_ = -1;
   }
-
-  std::vector<std::string> args;
-  args.emplace_back("/usr/bin/say");
-  args.emplace_back(text);
-
-  std::vector<char *> argv;
-  argv.reserve(args.size() + 1);
-  for (auto &a : args) {
-    argv.push_back(a.data());
-  }
-  argv.push_back(nullptr);
-
-  pid_t pid = -1;
-  int rc = posix_spawn(&pid, argv[0], nullptr, nullptr, argv.data(), environ);
-  if (rc == 0 && pid > 0) {
-    tts_pid_ = pid;
-  }
 #endif
+}
+
+void ChatView::tts_worker_loop() {
+  while (true) {
+    std::string segment;
+    {
+      std::unique_lock<std::mutex> lock(tts_queue_mutex_);
+      tts_queue_cv_.wait(lock, [this]() {
+        return tts_worker_stop_.load() || !tts_queue_.empty();
+      });
+      if (tts_worker_stop_.load() && tts_queue_.empty()) {
+        break;
+      }
+      segment = std::move(tts_queue_.front());
+      tts_queue_.pop_front();
+    }
+
+    if (segment.empty()) {
+      continue;
+    }
+
+#ifdef __APPLE__
+    std::vector<std::string> args;
+    args.emplace_back("/usr/bin/say");
+    args.emplace_back(segment);
+
+    std::vector<char *> argv;
+    argv.reserve(args.size() + 1);
+    for (auto &a : args) {
+      argv.push_back(a.data());
+    }
+    argv.push_back(nullptr);
+
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, argv[0], nullptr, nullptr, argv.data(), environ);
+    if (rc == 0 && pid > 0) {
+      {
+        std::lock_guard<std::mutex> lock(tts_mutex_);
+        tts_pid_ = pid;
+      }
+      int status = 0;
+      waitpid(pid, &status, 0);
+      {
+        std::lock_guard<std::mutex> lock(tts_mutex_);
+        if (tts_pid_ == pid) {
+          tts_pid_ = -1;
+        }
+      }
+    }
+#endif
+  }
+}
+
+void ChatView::feed_streaming_tts(const std::string &delta, bool finished) {
+  if (!voice_response_tts_) {
+    return;
+  }
+  if (!delta.empty()) {
+    tts_stream_pending_ += delta;
+  }
+
+  auto find_next_boundary = [](const std::string &s) -> size_t {
+    const char *utf8_bounds[] = {"\xE3\x80\x82", "\xEF\xBC\x81", "\xEF\xBC\x9F",
+                                 "\xEF\xBC\x9B", "\xEF\xBC\x9A"};
+    size_t best = std::string::npos;
+    auto consider = [&](size_t p) {
+      if (p == std::string::npos) return;
+      if (best == std::string::npos || p < best) best = p;
+    };
+
+    consider(s.find('.'));
+    consider(s.find('!'));
+    consider(s.find('?'));
+    consider(s.find(';'));
+    consider(s.find(':'));
+    consider(s.find('\n'));
+    consider(s.find('\r'));
+    for (const char *pat : utf8_bounds) {
+      consider(s.find(pat));
+    }
+    return best;
+  };
+
+  while (true) {
+    size_t p = find_next_boundary(tts_stream_pending_);
+    if (p == std::string::npos) {
+      break;
+    }
+    size_t consume = 1;
+    if (p + 3 <= tts_stream_pending_.size()) {
+      const std::string three = tts_stream_pending_.substr(p, 3);
+      if (three == "\xE3\x80\x82") {
+        consume = 3;
+      }
+    }
+    if (p + 3 <= tts_stream_pending_.size()) {
+      const std::string three = tts_stream_pending_.substr(p, 3);
+      if (three == "\xEF\xBC\x81" || three == "\xEF\xBC\x9F" ||
+          three == "\xEF\xBC\x9B" || three == "\xEF\xBC\x9A") {
+        consume = 3;
+      }
+    }
+    std::string seg = tts_stream_pending_.substr(0, p + consume);
+    tts_stream_pending_.erase(0, p + consume);
+    enqueue_tts_segment(seg);
+  }
+
+  if (finished && !tts_stream_pending_.empty()) {
+    enqueue_tts_segment(tts_stream_pending_);
+    tts_stream_pending_.clear();
+  }
 }
 
 void ChatView::stream_ai_response(const std::string &message) {
