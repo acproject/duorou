@@ -831,14 +831,6 @@ if(DUOROU_BUILD_GUI AND DUOROU_SOURCES)
         ARCHIVE DESTINATION lib
     )
 
-    # 复制 Windows 托盘图标到可执行文件目录，确保运行时可找到
-    if(WIN32)
-        add_custom_command(TARGET duorou POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/seo_page_browser_web_window_view_icon.ico
-                $<TARGET_FILE_DIR:duorou>/seo_page_browser_web_window_view_icon.ico
-        )
-    endif()
 elseif(NOT DUOROU_BUILD_GUI)
     message(STATUS "DUOROU_BUILD_GUI=OFF: Skipping GUI executable build.")
 else()
@@ -891,25 +883,60 @@ endif()
 
 include(CPack)
 
-# 复制GUI资源文件到build目录（仅在启用 GUI 时）
-if(DUOROU_BUILD_GUI)
-    set(GUI_BUILD_DIR "${CMAKE_BINARY_DIR}/src/gui")
-    file(MAKE_DIRECTORY "${GUI_BUILD_DIR}")
-
-    # 复制CSS和图片文件
-    set(GUI_RESOURCE_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/styles.css"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/duorou01.png"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-off.png"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/video-on.png"
+if(DUOROU_BUILD_GUI AND TARGET duorou)
+    file(GLOB DUOROU_GUI_RESOURCE_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/*.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/*.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/*.ico"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/*.icns"
     )
 
-    foreach(RESOURCE_FILE ${GUI_RESOURCE_FILES})
-        get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
-        configure_file(${RESOURCE_FILE} "${GUI_BUILD_DIR}/${FILENAME}" COPYONLY)
-    endforeach()
+    set(DUOROU_TRAY_ICON_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/seo_page_browser_web_window_view_icon.icns"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/seo_page_browser_web_window_view_icon.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/seo_page_browser_web_window_view_icon.ico"
+    )
 
-    message(STATUS "GUI resources copied to: ${GUI_BUILD_DIR}")
+    list(REMOVE_ITEM DUOROU_GUI_RESOURCE_FILES ${DUOROU_TRAY_ICON_FILES})
+
+    if(APPLE)
+        foreach(RESOURCE_FILE ${DUOROU_GUI_RESOURCE_FILES})
+            set_source_files_properties(${RESOURCE_FILE} PROPERTIES
+                MACOSX_PACKAGE_LOCATION "Resources/gui"
+            )
+        endforeach()
+
+        foreach(ICON_FILE ${DUOROU_TRAY_ICON_FILES})
+            set_source_files_properties(${ICON_FILE} PROPERTIES
+                MACOSX_PACKAGE_LOCATION "Resources"
+            )
+        endforeach()
+
+        target_sources(duorou PRIVATE ${DUOROU_GUI_RESOURCE_FILES} ${DUOROU_TRAY_ICON_FILES})
+    else()
+        add_custom_command(TARGET duorou POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:duorou>/gui"
+        )
+
+        foreach(RESOURCE_FILE ${DUOROU_GUI_RESOURCE_FILES} ${DUOROU_TRAY_ICON_FILES})
+            get_filename_component(FILENAME ${RESOURCE_FILE} NAME)
+            add_custom_command(TARGET duorou POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${RESOURCE_FILE}"
+                    "$<TARGET_FILE_DIR:duorou>/gui/${FILENAME}"
+            )
+        endforeach()
+    endif()
+
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/"
+        DESTINATION share/duorou/gui
+        FILES_MATCHING
+        PATTERN "*.png"
+        PATTERN "*.css"
+        PATTERN "*.ico"
+        PATTERN "*.icns"
+    )
 endif()
 
 # 显示配置摘要

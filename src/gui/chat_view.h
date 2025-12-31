@@ -1,6 +1,10 @@
 #ifndef DUOROU_GUI_CHAT_VIEW_H
 #define DUOROU_GUI_CHAT_VIEW_H
 
+#ifndef __cplusplus
+typedef struct duorou_gui_chat_view ChatView;
+#else
+
 #include "../media/audio_capture.h"
 #include "../media/video_frame.h"
 #include "enhanced_video_capture_window.h"
@@ -282,8 +286,31 @@ private:
 
   // Audio frame cache related
   std::vector<duorou::media::AudioFrame> cached_audio_frames_; // Cached audio frames
+  std::mutex cached_audio_mutex_;
   std::chrono::steady_clock::time_point last_audio_update_; // Last audio update time
   static constexpr int AUDIO_UPDATE_INTERVAL_MS = 100;      // Audio update interval
+
+  guint live_speech_timer_id_ = 0;
+  std::atomic<bool> live_speech_inflight_{false};
+  std::string live_last_speech_text_;
+  bool live_speech_error_reported_ = false;
+  std::atomic<bool> voice_qa_enabled_{false};
+
+  std::thread voice_qa_worker_;
+  std::atomic<bool> voice_qa_worker_stop_{false};
+  bool voice_qa_worker_started_ = false;
+  std::mutex voice_qa_mutex_;
+  std::condition_variable voice_qa_cv_;
+  std::deque<std::string> voice_qa_queue_;
+  std::mutex voice_qa_response_mutex_;
+  std::condition_variable voice_qa_response_cv_;
+  bool voice_qa_waiting_response_ = false;
+
+  std::mutex live_speech_mutex_;
+  std::vector<float> live_speech_audio_buffer_;
+  size_t live_speech_audio_read_pos_ = 0;
+  int live_speech_sample_rate_ = 0;
+  int live_speech_channels_ = 0;
 
   struct PendingLiveChunk {
     std::vector<float> audio;
@@ -298,12 +325,20 @@ private:
   size_t live_audio_read_pos_ = 0;
   int live_audio_sample_rate_ = 0;
   int live_audio_channels_ = 0;
+  bool live_utterance_active_ = false;
+  int live_utterance_voice_ms_ = 0;
+  int live_utterance_silence_ms_ = 0;
+  std::vector<float> live_utterance_audio_;
+  double live_noise_floor_ = 0.0;
+  bool live_noise_floor_initialized_ = false;
   std::deque<PendingLiveChunk> pending_live_chunks_;
   std::vector<std::string> live_generated_files_;
   std::atomic<bool> live_idle_scheduled_{false};
   std::mutex cached_video_mutex_;
   std::atomic<bool> live_mnn_omni_enabled_{false};
   std::atomic<bool> live_inference_enabled_{false};
+  std::atomic<bool> live_omni_listening_{false};
+  std::atomic<bool> live_omni_processing_{false};
   guint bubble_width_tick_id_ = 0;
   int bubble_width_last_px_ = 0;
 
@@ -323,8 +358,15 @@ private:
   void create_input_area();
 
   void push_live_audio_frame(const duorou::media::AudioFrame &frame);
+  void push_live_speech_audio_frame(const duorou::media::AudioFrame &frame);
   void schedule_try_send_live_chunks();
   void try_send_live_chunks_on_main_thread();
+  void start_live_speech_transcription_timer();
+  void stop_live_speech_transcription_timer();
+  void tick_live_speech_transcription_on_main_thread();
+  void ensure_voice_qa_worker_started();
+  void enqueue_voice_qa_question(const std::string &text);
+  void voice_qa_worker_loop();
   void send_user_message(const std::string &message);
   bool current_model_is_mnn_omni() const;
   void cleanup_live_generated_files_locked();
@@ -401,4 +443,5 @@ private:
 } // namespace gui
 } // namespace duorou
 
+#endif
 #endif // DUOROU_GUI_CHAT_VIEW_H

@@ -7,7 +7,88 @@
 #include "settings_dialog.h"
 #include "system_tray.h"
 
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <limits.h>
+#include <unistd.h>
+#elif defined(__linux__)
+#include <limits.h>
+#include <unistd.h>
+#endif
+
+namespace {
+namespace fs = std::filesystem;
+
+static std::string duorou_executable_path() {
+#if defined(_WIN32)
+  char buf[MAX_PATH];
+  DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+  if (n == 0 || n == MAX_PATH) return std::string();
+  return std::string(buf, n);
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  if (size == 0) return std::string();
+  std::string tmp(size, '\0');
+  if (_NSGetExecutablePath(tmp.data(), &size) != 0) return std::string();
+  std::string raw(tmp.c_str());
+  char resolved[PATH_MAX];
+  if (realpath(raw.c_str(), resolved)) return std::string(resolved);
+  return raw;
+#elif defined(__linux__)
+  char buf[PATH_MAX];
+  ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (n <= 0) return std::string();
+  buf[n] = '\0';
+  return std::string(buf);
+#else
+  return std::string();
+#endif
+}
+
+static fs::path duorou_executable_dir() {
+  std::string exe = duorou_executable_path();
+  if (exe.empty()) return fs::path();
+  return fs::path(exe).parent_path();
+}
+
+static std::string duorou_resolve_gui_resource(const std::string &filename) {
+  std::vector<fs::path> bases;
+  if (const char *env = std::getenv("DUOROU_GUI_DIR")) {
+    if (*env) bases.emplace_back(env);
+  }
+
+  fs::path exe_dir = duorou_executable_dir();
+  if (!exe_dir.empty()) {
+    bases.emplace_back(exe_dir / "gui");
+#if !defined(_WIN32)
+    bases.emplace_back(exe_dir / ".." / "share" / "duorou" / "gui");
+#endif
+#if defined(__APPLE__)
+    bases.emplace_back(exe_dir / ".." / "Resources" / "gui");
+    bases.emplace_back(exe_dir / ".." / "Resources");
+#endif
+  }
+
+  bases.emplace_back(fs::path("gui"));
+  bases.emplace_back(fs::path("src") / "gui");
+
+  std::error_code ec;
+  for (const auto &base : bases) {
+    fs::path p = base / filename;
+    if (fs::exists(p, ec) && !ec) return p.string();
+    ec.clear();
+  }
+  return (fs::path("src") / "gui" / filename).string();
+}
+} // namespace
 
 namespace duorou {
 namespace gui {
@@ -184,7 +265,8 @@ bool MainWindow::initialize() {
     std::cout << "Windows system tray initialized successfully" << std::endl;
 
     windows_tray_->setSystemIcon();
-    windows_tray_->setIconFromFile("src/gui/seo_page_browser_web_window_view_icon.ico");
+    windows_tray_->setIconFromFile(
+        duorou_resolve_gui_resource("seo_page_browser_web_window_view_icon.ico"));
     windows_tray_->setTooltip("Duorou - AI Desktop Assistant");
 
     windows_tray_->setLeftClickCallback([this]() { restore_from_tray(); });
@@ -555,7 +637,8 @@ void MainWindow::setup_styling() {
   GtkCssProvider *css_provider = gtk_css_provider_new();
 
   // Try to load CSS file
-  const char *css_file_path = "src/gui/styles.css";
+  std::string css_path = duorou_resolve_gui_resource("styles.css");
+  const char *css_file_path = css_path.c_str();
 
   GFile *css_file = g_file_new_for_path(css_file_path);
   gtk_css_provider_load_from_file(css_provider, css_file);

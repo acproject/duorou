@@ -14,6 +14,8 @@
 #ifdef __APPLE__
 #include "../media/macos_screen_capture.h"
 #include "../media/macos_speech_recognition.h"
+#include <mach-o/dyld.h>
+#include <limits.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -28,6 +30,7 @@ extern char **environ;
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <vector>
 #include <thread>
 #include <algorithm>
 #include <cctype>
@@ -35,6 +38,7 @@ extern char **environ;
 
 #ifdef _WIN32
 #include <string>
+#include <windows.h>
 // Windows 兼容 setenv/unsetenv 封装
 static inline int setenv(const char *name, const char *value, int overwrite) {
   if (!overwrite && std::getenv(name)) {
@@ -49,7 +53,77 @@ static inline int unsetenv(const char *name) {
 }
 #endif
 
+#ifdef __linux__
+#include <limits.h>
+#include <unistd.h>
+#endif
+
 namespace {
+
+namespace fs = std::filesystem;
+
+static std::string duorou_executable_path() {
+#if defined(_WIN32)
+  char buf[MAX_PATH];
+  DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+  if (n == 0 || n == MAX_PATH) return std::string();
+  return std::string(buf, n);
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  if (size == 0) return std::string();
+  std::string tmp(size, '\0');
+  if (_NSGetExecutablePath(tmp.data(), &size) != 0) return std::string();
+  std::string raw(tmp.c_str());
+  char resolved[PATH_MAX];
+  if (realpath(raw.c_str(), resolved)) return std::string(resolved);
+  return raw;
+#elif defined(__linux__)
+  char buf[PATH_MAX];
+  ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (n <= 0) return std::string();
+  buf[n] = '\0';
+  return std::string(buf);
+#else
+  return std::string();
+#endif
+}
+
+static fs::path duorou_executable_dir() {
+  std::string exe = duorou_executable_path();
+  if (exe.empty()) return fs::path();
+  return fs::path(exe).parent_path();
+}
+
+static std::string duorou_resolve_gui_resource(const std::string &filename) {
+  std::vector<fs::path> bases;
+  if (const char *env = std::getenv("DUOROU_GUI_DIR")) {
+    if (*env) bases.emplace_back(env);
+  }
+
+  fs::path exe_dir = duorou_executable_dir();
+  if (!exe_dir.empty()) {
+    bases.emplace_back(exe_dir / "gui");
+#if !defined(_WIN32)
+    bases.emplace_back(exe_dir / ".." / "share" / "duorou" / "gui");
+#endif
+#if defined(__APPLE__)
+    bases.emplace_back(exe_dir / ".." / "Resources" / "gui");
+    bases.emplace_back(exe_dir / ".." / "Resources");
+#endif
+  }
+
+  bases.emplace_back(fs::path("gui"));
+  bases.emplace_back(fs::path("src") / "gui");
+
+  std::error_code ec;
+  for (const auto &base : bases) {
+    fs::path p = base / filename;
+    if (fs::exists(p, ec) && !ec) return p.string();
+    ec.clear();
+  }
+  return (fs::path("src") / "gui" / filename).string();
+}
 
 static std::string read_file_prefix(const std::string &path, size_t max_bytes) {
   std::ifstream in(path, std::ios::binary);
@@ -143,6 +217,68 @@ static bool write_wav_pcm16(const std::string &path,
   }
 
   return static_cast<bool>(out);
+}
+
+static std::vector<float> downmix_to_mono(const std::vector<float> &interleaved,
+                                         int channels) {
+  if (channels <= 1) {
+    return interleaved;
+  }
+  if (interleaved.empty() ||
+      (interleaved.size() % static_cast<size_t>(channels) != 0)) {
+    return {};
+  }
+  const size_t frames = interleaved.size() / static_cast<size_t>(channels);
+  std::vector<float> mono;
+  mono.resize(frames);
+  for (size_t i = 0; i < frames; ++i) {
+    double sum = 0.0;
+    const size_t base = i * static_cast<size_t>(channels);
+    for (int c = 0; c < channels; ++c) {
+      sum += interleaved[base + static_cast<size_t>(c)];
+    }
+    mono[i] = static_cast<float>(sum / static_cast<double>(channels));
+  }
+  return mono;
+}
+
+static std::vector<float> resample_linear_mono(const std::vector<float> &mono,
+                                               int src_sr, int dst_sr) {
+  if (src_sr <= 0 || dst_sr <= 0 || mono.empty()) {
+    return {};
+  }
+  if (src_sr == dst_sr) {
+    return mono;
+  }
+  const double ratio = static_cast<double>(dst_sr) / static_cast<double>(src_sr);
+  const size_t out_len =
+      static_cast<size_t>(std::llround(static_cast<double>(mono.size()) * ratio));
+  if (out_len < 2) {
+    return {};
+  }
+  std::vector<float> out;
+  out.resize(out_len);
+  for (size_t i = 0; i < out_len; ++i) {
+    const double src_pos = static_cast<double>(i) / ratio;
+    const size_t idx0 =
+        static_cast<size_t>(std::floor(std::fmax(0.0, src_pos)));
+    const size_t idx1 = std::min(idx0 + 1, mono.size() - 1);
+    const double frac = src_pos - static_cast<double>(idx0);
+    const double v0 = mono[idx0];
+    const double v1 = mono[idx1];
+    out[i] = static_cast<float>((1.0 - frac) * v0 + frac * v1);
+  }
+  return out;
+}
+
+static std::vector<float> convert_audio_for_models(
+    const std::vector<float> &interleaved, int sample_rate, int channels,
+    int target_sample_rate, int target_channels) {
+  if (target_channels != 1) {
+    return {};
+  }
+  std::vector<float> mono = downmix_to_mono(interleaved, channels);
+  return resample_linear_mono(mono, sample_rate, target_sample_rate);
 }
 
 } // namespace
@@ -412,6 +548,9 @@ typedef int gboolean;
 // Timer helper used for delayed UI updates
 #ifndef g_timeout_add
 #define g_timeout_add(...) (0)
+#endif
+#ifndef g_source_remove
+#define g_source_remove(...) ((void)0)
 #endif
 #ifndef G_CALLBACK
 #define G_CALLBACK(f) ((void *)(f))
@@ -845,6 +984,13 @@ ChatView::~ChatView() {
     tts_worker_.join();
   }
 
+  voice_qa_worker_stop_.store(true);
+  voice_qa_cv_.notify_all();
+  voice_qa_response_cv_.notify_all();
+  if (voice_qa_worker_started_ && voice_qa_worker_.joinable()) {
+    voice_qa_worker_.join();
+  }
+
 #ifdef __APPLE__
   {
     std::lock_guard<std::mutex> lock(tts_mutex_);
@@ -962,9 +1108,6 @@ bool ChatView::initialize() {
 }
 
 void ChatView::send_user_message(const std::string &message) {
-  if (is_recording_) {
-    live_inference_enabled_.store(true);
-  }
   send_message(message);
 }
 
@@ -1262,6 +1405,12 @@ void ChatView::push_live_audio_frame(const duorou::media::AudioFrame &frame) {
   if (!live_mnn_omni_enabled_.load()) {
     return;
   }
+  if (!live_omni_listening_.load()) {
+    return;
+  }
+  if (live_omni_processing_.load()) {
+    return;
+  }
 
   std::lock_guard<std::mutex> lock(live_mutex_);
   if (frame.sample_rate <= 0 || frame.channels <= 0 ||
@@ -1281,6 +1430,12 @@ void ChatView::push_live_audio_frame(const duorou::media::AudioFrame &frame) {
     live_audio_buffer_.clear();
     live_audio_read_pos_ = 0;
     pending_live_chunks_.clear();
+    live_utterance_active_ = false;
+    live_utterance_voice_ms_ = 0;
+    live_utterance_silence_ms_ = 0;
+    live_utterance_audio_.clear();
+    live_noise_floor_ = 0.0;
+    live_noise_floor_initialized_ = false;
     live_audio_sample_rate_ = frame.sample_rate;
     live_audio_channels_ = frame.channels;
   }
@@ -1289,30 +1444,93 @@ void ChatView::push_live_audio_frame(const duorou::media::AudioFrame &frame) {
                             frame.data.begin(),
                             frame.data.end());
 
-  const int chunk_ms = 2000;
+  const int chunk_ms = 250;
   const size_t frames_per_chunk =
       static_cast<size_t>(live_audio_sample_rate_) *
       static_cast<size_t>(chunk_ms) / 1000u;
   const size_t samples_per_chunk =
       frames_per_chunk * static_cast<size_t>(live_audio_channels_);
 
+  bool should_schedule = false;
   while (live_audio_buffer_.size() - live_audio_read_pos_ >= samples_per_chunk) {
-    PendingLiveChunk chunk;
-    chunk.sample_rate = live_audio_sample_rate_;
-    chunk.channels = live_audio_channels_;
-    chunk.timestamp = frame.timestamp;
-    chunk.audio.resize(samples_per_chunk);
+    std::vector<float> chunk_audio;
+    chunk_audio.resize(samples_per_chunk);
     std::copy(live_audio_buffer_.begin() + static_cast<long>(live_audio_read_pos_),
               live_audio_buffer_.begin() + static_cast<long>(live_audio_read_pos_ + samples_per_chunk),
-              chunk.audio.begin());
+              chunk_audio.begin());
+    live_audio_read_pos_ += samples_per_chunk;
 
-    {
-      std::lock_guard<std::mutex> vlock(cached_video_mutex_);
-      chunk.video = cached_video_frame_;
+    double sum_abs = 0.0;
+    for (float f : chunk_audio) {
+      sum_abs += std::fabs(static_cast<double>(f));
+    }
+    const double avg_abs =
+        chunk_audio.empty() ? 0.0 : (sum_abs / chunk_audio.size());
+
+    if (!live_utterance_active_) {
+      if (!live_noise_floor_initialized_) {
+        live_noise_floor_initialized_ = true;
+        live_noise_floor_ = avg_abs;
+      } else {
+        live_noise_floor_ = (live_noise_floor_ * 0.95) + (avg_abs * 0.05);
+      }
     }
 
-    pending_live_chunks_.push_back(std::move(chunk));
-    live_audio_read_pos_ += samples_per_chunk;
+    const double start_threshold = std::max(0.002, live_noise_floor_ * 6.0);
+    const double continue_threshold = std::max(0.001, live_noise_floor_ * 3.0);
+    const int end_silence_ms = 450;
+    const int min_voice_ms = 300;
+    const int max_utterance_ms = 12000;
+
+    if (!live_utterance_active_) {
+      if (avg_abs >= start_threshold) {
+        live_utterance_active_ = true;
+        live_utterance_voice_ms_ = chunk_ms;
+        live_utterance_silence_ms_ = 0;
+        live_utterance_audio_.clear();
+        live_utterance_audio_.insert(live_utterance_audio_.end(),
+                                     chunk_audio.begin(), chunk_audio.end());
+      }
+      continue;
+    }
+
+    live_utterance_audio_.insert(live_utterance_audio_.end(),
+                                 chunk_audio.begin(), chunk_audio.end());
+    if (avg_abs >= continue_threshold) {
+      live_utterance_voice_ms_ += chunk_ms;
+      live_utterance_silence_ms_ = 0;
+    } else {
+      live_utterance_silence_ms_ += chunk_ms;
+    }
+
+    if (live_utterance_voice_ms_ >= max_utterance_ms) {
+      live_utterance_silence_ms_ = end_silence_ms;
+    }
+
+    if (live_utterance_silence_ms_ < end_silence_ms) {
+      continue;
+    }
+
+    if (live_utterance_voice_ms_ >= min_voice_ms &&
+        !live_omni_processing_.exchange(true)) {
+      PendingLiveChunk final_chunk;
+      final_chunk.sample_rate = live_audio_sample_rate_;
+      final_chunk.channels = live_audio_channels_;
+      final_chunk.timestamp = frame.timestamp;
+      final_chunk.audio = std::move(live_utterance_audio_);
+      {
+        std::lock_guard<std::mutex> vlock(cached_video_mutex_);
+        final_chunk.video = cached_video_frame_;
+      }
+      pending_live_chunks_.clear();
+      pending_live_chunks_.push_back(std::move(final_chunk));
+      live_inference_enabled_.store(true);
+      should_schedule = true;
+    }
+    live_utterance_active_ = false;
+    live_utterance_voice_ms_ = 0;
+    live_utterance_silence_ms_ = 0;
+    live_utterance_audio_.clear();
   }
 
   if (live_audio_read_pos_ > 0 &&
@@ -1321,9 +1539,182 @@ void ChatView::push_live_audio_frame(const duorou::media::AudioFrame &frame) {
                              live_audio_buffer_.begin() + static_cast<long>(live_audio_read_pos_));
     live_audio_read_pos_ = 0;
   }
-
-  if (!pending_live_chunks_.empty()) {
+  if (should_schedule && !pending_live_chunks_.empty()) {
     schedule_try_send_live_chunks();
+  }
+}
+
+void ChatView::push_live_speech_audio_frame(const duorou::media::AudioFrame &frame) {
+#ifdef __APPLE__
+  if (!is_recording_) {
+    return;
+  }
+  if (!voice_qa_enabled_.load()) {
+    return;
+  }
+  if (current_model_is_mnn_omni()) {
+    return;
+  }
+  if (frame.sample_rate <= 0 || frame.channels <= 0 || frame.data.empty()) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(live_speech_mutex_);
+
+  if (live_speech_sample_rate_ == 0) {
+    live_speech_sample_rate_ = frame.sample_rate;
+  }
+  if (live_speech_channels_ == 0) {
+    live_speech_channels_ = frame.channels;
+  }
+
+  if (frame.sample_rate != live_speech_sample_rate_ ||
+      frame.channels != live_speech_channels_) {
+    live_speech_audio_buffer_.clear();
+    live_speech_audio_read_pos_ = 0;
+    live_speech_sample_rate_ = frame.sample_rate;
+    live_speech_channels_ = frame.channels;
+  }
+
+  live_speech_audio_buffer_.insert(live_speech_audio_buffer_.end(),
+                                   frame.data.begin(), frame.data.end());
+
+  const size_t max_samples =
+      static_cast<size_t>(live_speech_sample_rate_) *
+      static_cast<size_t>(live_speech_channels_) * 30u;
+  if (live_speech_audio_buffer_.size() > max_samples) {
+    const size_t overflow = live_speech_audio_buffer_.size() - max_samples;
+    size_t remove = overflow;
+    if (remove > live_speech_audio_buffer_.size()) {
+      remove = live_speech_audio_buffer_.size();
+    }
+    if (remove > 0) {
+      if (live_speech_audio_read_pos_ >= remove) {
+        live_speech_audio_read_pos_ -= remove;
+      } else {
+        live_speech_audio_read_pos_ = 0;
+      }
+      live_speech_audio_buffer_.erase(live_speech_audio_buffer_.begin(),
+                                      live_speech_audio_buffer_.begin() +
+                                          static_cast<long>(remove));
+    }
+  }
+#else
+  (void)frame;
+#endif
+}
+
+void ChatView::ensure_voice_qa_worker_started() {
+  if (voice_qa_worker_started_) {
+    return;
+  }
+  voice_qa_worker_started_ = true;
+  voice_qa_worker_stop_.store(false);
+  voice_qa_worker_ = std::thread([this]() { voice_qa_worker_loop(); });
+}
+
+void ChatView::enqueue_voice_qa_question(const std::string &text) {
+  if (text.empty()) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(voice_qa_mutex_);
+    voice_qa_queue_.push_back(text);
+  }
+  voice_qa_cv_.notify_one();
+}
+
+void ChatView::voice_qa_worker_loop() {
+  while (!voice_qa_worker_stop_.load()) {
+    std::string question;
+    {
+      std::unique_lock<std::mutex> lock(voice_qa_mutex_);
+      voice_qa_cv_.wait(lock, [this]() {
+        return voice_qa_worker_stop_.load() || !voice_qa_queue_.empty();
+      });
+      if (voice_qa_worker_stop_.load()) {
+        return;
+      }
+      question = std::move(voice_qa_queue_.front());
+      voice_qa_queue_.pop_front();
+    }
+
+    if (!is_recording_ || !voice_qa_enabled_.load()) {
+      continue;
+    }
+
+    {
+      std::unique_lock<std::mutex> lock(voice_qa_response_mutex_);
+      voice_qa_response_cv_.wait(lock, [this]() {
+        return voice_qa_worker_stop_.load() || !voice_qa_waiting_response_;
+      });
+      if (voice_qa_worker_stop_.load()) {
+        return;
+      }
+    }
+
+    std::shared_ptr<duorou::media::VideoFrame> frame;
+    {
+      std::lock_guard<std::mutex> lock(cached_video_mutex_);
+      frame = cached_video_frame_;
+    }
+
+    std::string frame_uri;
+    std::string image_path_str;
+    if (frame && !frame->data.empty() && frame->width > 0 && frame->height > 0 &&
+        frame->channels > 0) {
+      duorou::core::ImageGenerationResult img;
+      img.width = frame->width;
+      img.height = frame->height;
+      img.channels = frame->channels;
+      img.image_data = frame->data;
+      img.success = true;
+
+      std::string objects_dir = duorou::utils::ObjectStore::objects_dir();
+      std::filesystem::path base(objects_dir);
+      const auto now_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count();
+      std::filesystem::path img_path =
+          base / ("voice_qa_frame_" + std::to_string(now_ms) + ".png");
+      image_path_str = img_path.string();
+      bool saved =
+          duorou::core::ImageGenerator::saveImage(img, image_path_str, "png");
+      if (saved) {
+        frame_uri = duorou::utils::ObjectStore::to_file_uri(image_path_str);
+      } else {
+        std::error_code ec;
+        std::filesystem::remove(img_path, ec);
+      }
+    }
+
+    std::string msg = "请根据语音指令分析当前画面：";
+    msg += question;
+    if (!frame_uri.empty()) {
+      msg += "\n![](" + frame_uri + ")";
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(voice_qa_response_mutex_);
+      voice_qa_waiting_response_ = true;
+    }
+
+    struct Data {
+      ChatView *self;
+      std::string message;
+    };
+    auto *d = new Data{this, std::move(msg)};
+    g_idle_add(
+        [](gpointer u) -> gboolean {
+          auto *d = static_cast<Data *>(u);
+          if (d && d->self) {
+            d->self->send_user_message(d->message);
+          }
+          delete d;
+          return G_SOURCE_REMOVE;
+        },
+        d);
   }
 }
 
@@ -1333,12 +1724,16 @@ void ChatView::try_send_live_chunks_on_main_thread() {
   if (is_streaming_ || !is_recording_) {
     return;
   }
+  if (!live_omni_processing_.load()) {
+    return;
+  }
   if (!live_inference_enabled_.load()) {
     return;
   }
   if (!live_mnn_omni_enabled_.load() || !current_model_is_mnn_omni()) {
     return;
   }
+  live_inference_enabled_.store(false);
 
   PendingLiveChunk chunk;
   {
@@ -1359,8 +1754,20 @@ void ChatView::try_send_live_chunks_on_main_thread() {
   std::filesystem::path audio_path = base / ("live_audio_" + std::to_string(ts_ms) + ".wav");
   std::string audio_path_str = audio_path.string();
 
-  if (!write_wav_pcm16(audio_path_str, chunk.audio, chunk.sample_rate,
-                       chunk.channels)) {
+  const int target_sr = 16000;
+  const int target_ch = 1;
+  std::vector<float> converted =
+      convert_audio_for_models(chunk.audio, chunk.sample_rate, chunk.channels,
+                               target_sr, target_ch);
+  const bool converted_ok = !converted.empty();
+  if (!converted_ok) {
+    converted = chunk.audio;
+  }
+
+  const int out_sr = converted_ok ? target_sr : chunk.sample_rate;
+  const int out_ch = converted_ok ? target_ch : chunk.channels;
+
+  if (!write_wav_pcm16(audio_path_str, converted, out_sr, out_ch)) {
     std::error_code ec;
     std::filesystem::remove(audio_path, ec);
     return;
@@ -1406,70 +1813,190 @@ void ChatView::try_send_live_chunks_on_main_thread() {
   send_message(prompt);
 }
 
+void ChatView::start_live_speech_transcription_timer() {
+#ifdef __APPLE__
+  if (live_speech_timer_id_ != 0) {
+    return;
+  }
+  live_speech_timer_id_ = g_timeout_add(
+      3500,
+      [](gpointer data) -> gboolean {
+        auto *self = static_cast<ChatView *>(data);
+        if (!self) {
+          return G_SOURCE_REMOVE;
+        }
+        if (!self->is_recording_) {
+          self->live_speech_timer_id_ = 0;
+          return G_SOURCE_REMOVE;
+        }
+        self->tick_live_speech_transcription_on_main_thread();
+        return G_SOURCE_CONTINUE;
+      },
+      this);
+#endif
+}
+
+void ChatView::stop_live_speech_transcription_timer() {
+#ifdef __APPLE__
+  if (live_speech_timer_id_ == 0) {
+    return;
+  }
+  g_source_remove(live_speech_timer_id_);
+  live_speech_timer_id_ = 0;
+  live_speech_inflight_.store(false);
+  live_speech_error_reported_ = false;
+  live_last_speech_text_.clear();
+  {
+    std::lock_guard<std::mutex> lock(live_speech_mutex_);
+    live_speech_audio_buffer_.clear();
+    live_speech_audio_read_pos_ = 0;
+    live_speech_sample_rate_ = 0;
+    live_speech_channels_ = 0;
+  }
+#endif
+}
+
+void ChatView::tick_live_speech_transcription_on_main_thread() {
+#ifdef __APPLE__
+  if (!is_recording_ || is_streaming_) {
+    return;
+  }
+  if (!voice_qa_enabled_.load()) {
+    return;
+  }
+  if (current_model_is_mnn_omni()) {
+    return;
+  }
+  bool expected = false;
+  if (!live_speech_inflight_.compare_exchange_strong(expected, true)) {
+    return;
+  }
+
+  std::vector<float> audio;
+  int sr = 0;
+  int ch = 0;
+  {
+    std::lock_guard<std::mutex> lock(live_speech_mutex_);
+    if (live_speech_sample_rate_ <= 0 || live_speech_channels_ <= 0) {
+      live_speech_inflight_.store(false);
+      return;
+    }
+    const int chunk_ms = 3000;
+    const size_t frames_per_chunk =
+        static_cast<size_t>(live_speech_sample_rate_) *
+        static_cast<size_t>(chunk_ms) / 1000u;
+    const size_t samples_per_chunk =
+        frames_per_chunk * static_cast<size_t>(live_speech_channels_);
+    if (live_speech_audio_buffer_.size() - live_speech_audio_read_pos_ <
+        samples_per_chunk) {
+      live_speech_inflight_.store(false);
+      return;
+    }
+    audio.resize(samples_per_chunk);
+    std::copy(live_speech_audio_buffer_.begin() +
+                  static_cast<long>(live_speech_audio_read_pos_),
+              live_speech_audio_buffer_.begin() +
+                  static_cast<long>(live_speech_audio_read_pos_ +
+                                    samples_per_chunk),
+              audio.begin());
+    live_speech_audio_read_pos_ += samples_per_chunk;
+    sr = live_speech_sample_rate_;
+    ch = live_speech_channels_;
+
+    if (live_speech_audio_read_pos_ > 0 &&
+        live_speech_audio_read_pos_ >= (live_speech_audio_buffer_.size() / 2)) {
+      live_speech_audio_buffer_.erase(
+          live_speech_audio_buffer_.begin(),
+          live_speech_audio_buffer_.begin() +
+              static_cast<long>(live_speech_audio_read_pos_));
+      live_speech_audio_read_pos_ = 0;
+    }
+  }
+
+  double sum_abs = 0.0;
+  for (float f : audio) {
+    sum_abs += std::fabs(static_cast<double>(f));
+  }
+  const double avg_abs = audio.empty() ? 0.0 : (sum_abs / audio.size());
+  if (avg_abs < 0.0008) {
+    live_speech_inflight_.store(false);
+    return;
+  }
+
+  const int target_sr = 16000;
+  const int target_ch = 1;
+  std::vector<float> converted =
+      convert_audio_for_models(audio, sr, ch, target_sr, target_ch);
+  const bool converted_ok = !converted.empty();
+  if (converted_ok) {
+    audio = std::move(converted);
+    sr = target_sr;
+    ch = target_ch;
+  }
+
+  std::string objects_dir = duorou::utils::ObjectStore::objects_dir();
+  std::filesystem::path base(objects_dir);
+  const auto now_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count();
+  std::filesystem::path wav_path =
+      base / ("live_speech_" + std::to_string(now_ms) + ".wav");
+  std::string wav_path_str = wav_path.string();
+
+  if (!write_wav_pcm16(wav_path_str, audio, sr, ch)) {
+    std::error_code ec;
+    std::filesystem::remove(wav_path, ec);
+    live_speech_inflight_.store(false);
+    return;
+  }
+
+  std::thread([this, wav_path_str]() {
+    std::string err;
+    std::string text = duorou::media::macos_transcribe_wav(wav_path_str, &err);
+    std::error_code remove_ec;
+    std::filesystem::remove(wav_path_str, remove_ec);
+
+    struct Data {
+      ChatView *self;
+      std::string text;
+      std::string err;
+    };
+    auto *d = new Data{this, std::move(text), std::move(err)};
+    g_idle_add(
+        [](gpointer u) -> gboolean {
+          auto *d = static_cast<Data *>(u);
+          d->self->live_speech_inflight_.store(false);
+
+          if (!d->text.empty()) {
+            std::string normalized = d->text;
+            if (normalized != d->self->live_last_speech_text_) {
+              d->self->live_last_speech_text_ = normalized;
+              d->self->enqueue_voice_qa_question(normalized);
+            }
+          } else if (!d->err.empty() &&
+                     !d->self->live_speech_error_reported_) {
+            d->self->live_speech_error_reported_ = true;
+            d->self->add_message("Error: " + d->err, false);
+          }
+
+          delete d;
+          return G_SOURCE_REMOVE;
+        },
+        d);
+  }).detach();
+#endif
+}
+
 void ChatView::analyze_video_frame(const duorou::media::VideoFrame &frame) {
   if (!is_recording_) {
     return;
   }
 
-  if (is_streaming_) {
-    return;
-  }
-
-  if (!model_manager_) {
-    return;
-  }
-
-  if (!live_inference_enabled_.load()) {
-    return;
-  }
-
-  if (current_model_is_mnn_omni()) {
+  {
     std::lock_guard<std::mutex> lock(cached_video_mutex_);
     cached_video_frame_ = std::make_shared<duorou::media::VideoFrame>(frame);
-    return;
   }
-
-  auto now = std::chrono::steady_clock::now();
-  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - last_video_analysis_time_)
-                        .count();
-  if (elapsed_ms < VIDEO_ANALYSIS_INTERVAL_MS) {
-    return;
-  }
-  last_video_analysis_time_ = now;
-
-  duorou::core::ImageGenerationResult img;
-  img.width = frame.width;
-  img.height = frame.height;
-  img.channels = frame.channels;
-  img.image_data = frame.data;
-  img.success = true;
-
-  std::string objects_dir = duorou::utils::ObjectStore::objects_dir();
-  std::filesystem::path base(objects_dir);
-
-  long long ts_ms = static_cast<long long>(frame.timestamp * 1000.0);
-  std::string filename_part =
-      "live_frame_" + std::to_string(ts_ms) + ".png";
-  std::filesystem::path out_path = base / filename_part;
-  std::string out_path_str = out_path.string();
-
-  bool saved =
-      duorou::core::ImageGenerator::saveImage(img, out_path_str, "png");
-  if (!saved) {
-    std::cout << "Failed to save live frame image: " << out_path_str
-              << std::endl;
-    return;
-  }
-
-  std::string file_uri = duorou::utils::ObjectStore::to_file_uri(out_path_str);
-  if (file_uri.empty()) {
-    return;
-  }
-
-  std::string message =
-      std::string("请分析当前画面：") + "![](" + file_uri + ")";
-  send_message(message);
 }
 
 void ChatView::remove_last_message() {
@@ -1657,30 +2184,18 @@ void ChatView::create_input_area() {
   gtk_widget_set_size_request(upload_video_button_, 40, 40);
   gtk_widget_set_tooltip_text(upload_video_button_, "Upload Video");
 
-  // Create video recording button icon - using relative path
-  std::string icon_path_base = "src/gui/";
-  // video_off_image_ =
-  // gtk_picture_new_for_filename((icon_path_base +
-  // "video-off.png").c_str());
-  video_off_image_ =
-      gtk_picture_new_for_filename((icon_path_base + "video-on.png").c_str());
+  std::string video_off_path = duorou_resolve_gui_resource("video-off.png");
+  video_off_image_ = gtk_picture_new_for_filename(video_off_path.c_str());
 
   // Check if icon loaded successfully
-  if (!video_off_image_ || !video_off_image_) {
+  if (!video_off_image_) {
     std::cout << "Warning: Unable to load recording button icon, using text "
                  "alternative"
               << std::endl;
-    // If icon loading fails, create text label as alternative
-    if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("stop");
-    }
-    if (!video_off_image_) {
-      video_off_image_ = gtk_label_new("start");
-    }
+    video_off_image_ = gtk_label_new("stop");
   }
 
   // Set icon size
-  gtk_widget_set_size_request(video_off_image_, 24, 24);
   gtk_widget_set_size_request(video_off_image_, 24, 24);
 
   // Create video recording button (using GtkToggleButton)
@@ -1740,16 +2255,8 @@ void ChatView::create_welcome_screen() {
   gtk_widget_set_hexpand(welcome_container, TRUE);
 
   // Create application icon (using duorou01.png image)
-  // Use absolute path to ensure image file can be found
-  const char *icon_path =
-      "/Users/acproject/workspace/cpp_projects/duorou/src/gui/duorou01.png";
-  GtkWidget *icon_picture = gtk_picture_new_for_filename(icon_path);
-
-  // If absolute path fails, try relative path
-  if (!gtk_picture_get_file(GTK_PICTURE(icon_picture))) {
-    g_object_unref(icon_picture);
-    icon_picture = gtk_picture_new_for_filename("src/gui/duorou01.png");
-  }
+  std::string icon_path = duorou_resolve_gui_resource("duorou01.png");
+  GtkWidget *icon_picture = gtk_picture_new_for_filename(icon_path.c_str());
 
   gtk_picture_set_content_fit(GTK_PICTURE(icon_picture),
                               GTK_CONTENT_FIT_CONTAIN);
@@ -2282,6 +2789,37 @@ void ChatView::on_video_file_dialog_response(GtkDialog *dialog,
               gtk_editable_get_text(GTK_EDITABLE(chat_view->input_entry_));
           std::string curr_text = curr ? std::string(curr) : std::string();
 
+          {
+            duorou::media::AudioFrame audio_frame;
+            duorou::media::AudioFileDecodeOptions audio_options;
+            audio_options.target_sample_rate = 16000;
+            audio_options.target_channels = 1;
+            bool audio_decoded =
+                duorou::media::decode_audio_file(video_path, audio_frame,
+                                                 audio_options);
+            if (audio_decoded && !audio_frame.data.empty() &&
+                audio_frame.sample_rate > 0 && audio_frame.channels > 0) {
+              long long ts_ms =
+                  static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count());
+              std::filesystem::path audio_path =
+                  base / ("video_audio_" + std::to_string(ts_ms) + ".wav");
+              std::string audio_path_str = audio_path.string();
+              if (write_wav_pcm16(audio_path_str, audio_frame.data,
+                                  audio_frame.sample_rate,
+                                  audio_frame.channels)) {
+                if (!curr_text.empty() && curr_text.back() != ' ') {
+                  curr_text += ' ';
+                }
+                curr_text += "<audio>" + audio_path_str + "</audio>";
+              } else {
+                std::error_code ec;
+                std::filesystem::remove(audio_path, ec);
+              }
+            }
+          }
+
           for (size_t i = 0; i < frame_count; ++i) {
             const auto &frame = frames[i];
 
@@ -2318,6 +2856,13 @@ void ChatView::on_video_file_dialog_response(GtkDialog *dialog,
 
           gtk_editable_set_text(GTK_EDITABLE(chat_view->input_entry_),
                                 curr_text.c_str());
+
+          if (chat_view->file_preview_label_) {
+            std::string label_text = "Attached: " + std::filesystem::path(video_path).filename().string();
+            gtk_label_set_text(GTK_LABEL(chat_view->file_preview_label_),
+                               label_text.c_str());
+            gtk_widget_set_visible(chat_view->file_preview_label_, TRUE);
+          }
         } else if (!decoded) {
           std::cout << "Failed to decode video file: " << video_path
                     << std::endl;
@@ -2467,6 +3012,9 @@ void ChatView::start_desktop_capture() {
 
   // Initialize audio capture
   audio_capture_ = std::make_unique<media::AudioCapture>();
+  if (audio_capture_) {
+    audio_capture_->set_channels(1);
+  }
 
   live_mnn_omni_enabled_.store(current_model_is_mnn_omni());
 
@@ -2539,6 +3087,7 @@ void ChatView::start_desktop_capture() {
   // frequency
   audio_capture_->set_frame_callback([this](const media::AudioFrame &frame) {
     push_live_audio_frame(frame);
+    push_live_speech_audio_frame(frame);
     // Static counter, only output frame info at the beginning
     static int audio_frame_count = 0;
     audio_frame_count++;
@@ -2575,10 +3124,27 @@ void ChatView::start_desktop_capture() {
   if (video_capture_->initialize(media::VideoSource::DESKTOP_CAPTURE)) {
     if (video_capture_->start_capture()) {
       // Initialize microphone audio capture
-      if (audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
+      bool audio_started = false;
+      for (int sr : {16000, 48000, 44100}) {
+        audio_capture_->set_sample_rate(sr);
+        audio_capture_->set_channels(1);
+        if (!audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
+          continue;
+        }
         if (audio_capture_->start_capture()) {
+          audio_started = true;
+          break;
+        }
+        audio_capture_->stop_capture();
+      }
+      if (audio_started) {
           is_recording_ = true;
           live_inference_enabled_.store(false);
+          if (voice_button_ && GTK_IS_TOGGLE_BUTTON(voice_button_)) {
+            if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(voice_button_))) {
+              gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), TRUE);
+            }
+          }
 
           // Only update button state, icon is handled by toggle callback
           if (video_record_button_) {
@@ -2598,27 +3164,25 @@ void ChatView::start_desktop_capture() {
 
           // Reset initialization flag
           initializing = false;
-        } else {
-          std::cout << "Audio capture startup failed" << std::endl;
-          // Reset button state, use flag to prevent recursive calls
-          if (video_record_button_) {
-            updating_button_state_ = true;
-            gtk_toggle_button_set_active(
-                GTK_TOGGLE_BUTTON(video_record_button_), FALSE);
-            // Directly update icon to off state
-            if (video_off_image_) {
-              gtk_button_set_child(GTK_BUTTON(video_record_button_),
-                                   video_off_image_);
-              gtk_widget_set_tooltip_text(
-                  GTK_WIDGET(video_record_button_),
-                  "Start video recording/desktop capture");
-            }
-            updating_button_state_ = false;
-          }
-          initializing = false;
-        }
       } else {
         std::cout << "Audio capture initialization failed" << std::endl;
+        if (video_capture_) {
+          try {
+            video_capture_->stop_capture();
+          } catch (const std::exception &) {
+          }
+          video_capture_.reset();
+        }
+        if (audio_capture_) {
+          audio_capture_->stop_capture();
+          audio_capture_.reset();
+        }
+        if (enhanced_video_window_) {
+          try {
+            enhanced_video_window_->hide();
+          } catch (const std::exception &) {
+          }
+        }
         // Reset button state, use flag to prevent recursive calls
         if (video_record_button_) {
           updating_button_state_ = true;
@@ -2634,6 +3198,7 @@ void ChatView::start_desktop_capture() {
           }
           updating_button_state_ = false;
         }
+        add_message("Error: Failed to start microphone capture. Please check microphone permission and device settings.", false);
         initializing = false;
       }
     } else {
@@ -2753,6 +3318,9 @@ void ChatView::start_camera_capture() {
 
   // Initialize audio capture
   audio_capture_ = std::make_unique<media::AudioCapture>();
+  if (audio_capture_) {
+    audio_capture_->set_channels(1);
+  }
 
   live_mnn_omni_enabled_.store(current_model_is_mnn_omni());
 
@@ -2825,6 +3393,7 @@ void ChatView::start_camera_capture() {
   // frequency
   audio_capture_->set_frame_callback([this](const media::AudioFrame &frame) {
     push_live_audio_frame(frame);
+    push_live_speech_audio_frame(frame);
     // Static counter, only output frame info at the beginning
     static int camera_audio_frame_count = 0;
     camera_audio_frame_count++;
@@ -2861,10 +3430,27 @@ void ChatView::start_camera_capture() {
   if (video_capture_->initialize(media::VideoSource::CAMERA, 0)) {
     if (video_capture_->start_capture()) {
       // Initialize microphone audio capture
-      if (audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
+      bool audio_started = false;
+      for (int sr : {16000, 48000, 44100}) {
+        audio_capture_->set_sample_rate(sr);
+        audio_capture_->set_channels(1);
+        if (!audio_capture_->initialize(media::AudioSource::MICROPHONE)) {
+          continue;
+        }
         if (audio_capture_->start_capture()) {
+          audio_started = true;
+          break;
+        }
+        audio_capture_->stop_capture();
+      }
+      if (audio_started) {
           is_recording_ = true;
           live_inference_enabled_.store(false);
+          if (voice_button_ && GTK_IS_TOGGLE_BUTTON(voice_button_)) {
+            if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(voice_button_))) {
+              gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), TRUE);
+            }
+          }
 
           // Only update button state, icon is handled by toggle callback
           if (video_record_button_) {
@@ -2880,26 +3466,25 @@ void ChatView::start_camera_capture() {
           std::cout << "Camera recording started - capturing camera video and "
                        "microphone audio"
                     << std::endl;
-        } else {
-          std::cout << "Audio capture startup failed" << std::endl;
-          // Reset button state, use flag to prevent recursive calls
-          if (video_record_button_) {
-            updating_button_state_ = true;
-            gtk_toggle_button_set_active(
-                GTK_TOGGLE_BUTTON(video_record_button_), FALSE);
-            // Directly update icon to off state
-            if (video_off_image_) {
-              gtk_button_set_child(GTK_BUTTON(video_record_button_),
-                                   video_off_image_);
-              gtk_widget_set_tooltip_text(
-                  GTK_WIDGET(video_record_button_),
-                  "Start video recording/desktop capture");
-            }
-            updating_button_state_ = false;
-          }
-        }
       } else {
         std::cout << "Audio capture initialization failed" << std::endl;
+        if (video_capture_) {
+          try {
+            video_capture_->stop_capture();
+          } catch (const std::exception &) {
+          }
+          video_capture_.reset();
+        }
+        if (audio_capture_) {
+          audio_capture_->stop_capture();
+          audio_capture_.reset();
+        }
+        if (enhanced_video_window_) {
+          try {
+            enhanced_video_window_->hide();
+          } catch (const std::exception &) {
+          }
+        }
         // Reset button state, use flag to prevent recursive calls
         if (video_record_button_) {
           updating_button_state_ = true;
@@ -2915,6 +3500,7 @@ void ChatView::start_camera_capture() {
           }
           updating_button_state_ = false;
         }
+        add_message("Error: Failed to start microphone capture. Please check microphone permission and device settings.", false);
       }
     } else {
       std::cout << "Camera capture startup failed" << std::endl;
@@ -2984,9 +3570,34 @@ void ChatView::stop_recording() {
   stopping = true;
 
   // First set recording status to false
-  is_recording_ = false;
   live_mnn_omni_enabled_.store(false);
   live_inference_enabled_.store(false);
+  live_omni_listening_.store(false);
+  live_omni_processing_.store(false);
+  stop_live_speech_transcription_timer();
+  if (voice_button_ && GTK_IS_TOGGLE_BUTTON(voice_button_)) {
+    g_signal_handlers_block_by_func(voice_button_,
+                                    (gpointer)G_CALLBACK(on_voice_button_toggled),
+                                    this);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    g_signal_handlers_unblock_by_func(
+        voice_button_, (gpointer)G_CALLBACK(on_voice_button_toggled), this);
+  }
+  {
+    std::lock_guard<std::mutex> lock(live_mutex_);
+    pending_live_chunks_.clear();
+    live_audio_buffer_.clear();
+    live_audio_read_pos_ = 0;
+    live_audio_sample_rate_ = 0;
+    live_audio_channels_ = 0;
+    live_utterance_active_ = false;
+    live_utterance_voice_ms_ = 0;
+    live_utterance_silence_ms_ = 0;
+    live_utterance_audio_.clear();
+    live_noise_floor_ = 0.0;
+    live_noise_floor_initialized_ = false;
+  }
+  is_recording_ = false;
 
   // Stop video capture
   if (video_capture_) {
@@ -3073,9 +3684,9 @@ void ChatView::stop_recording() {
       // If icon object is invalid, recreate it
       std::cout << "Warning: video_off_image_ is invalid, recreating icon"
                 << std::endl;
-      std::string icon_path_base = "src/gui/";
+      std::string icon_path = duorou_resolve_gui_resource("video-off.png");
       video_off_image_ = gtk_picture_new_for_filename(
-          (icon_path_base + "video-off.png").c_str());
+          icon_path.c_str());
       if (!video_off_image_) {
         video_off_image_ = gtk_label_new("stop");
       }
@@ -3310,7 +3921,26 @@ void ChatView::reset_state() {
     voice_audio_channels_ = 0;
   }
   if (voice_button_ && GTK_IS_TOGGLE_BUTTON(voice_button_)) {
+    g_signal_handlers_block_by_func(voice_button_,
+                                    (gpointer)G_CALLBACK(on_voice_button_toggled),
+                                    this);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(voice_button_), FALSE);
+    g_signal_handlers_unblock_by_func(
+        voice_button_, (gpointer)G_CALLBACK(on_voice_button_toggled), this);
+  }
+  {
+    std::lock_guard<std::mutex> lock(live_mutex_);
+    pending_live_chunks_.clear();
+    live_audio_buffer_.clear();
+    live_audio_read_pos_ = 0;
+    live_audio_sample_rate_ = 0;
+    live_audio_channels_ = 0;
+    live_utterance_active_ = false;
+    live_utterance_voice_ms_ = 0;
+    live_utterance_silence_ms_ = 0;
+    live_utterance_audio_.clear();
+    live_noise_floor_ = 0.0;
+    live_noise_floor_initialized_ = false;
   }
 
   // reset button status
@@ -3711,6 +4341,57 @@ void ChatView::on_voice_button_toggled(GtkToggleButton *toggle_button,
     return;
   }
   const bool active = gtk_toggle_button_get_active(toggle_button);
+  if (chat_view->is_recording_) {
+    if (chat_view->current_model_is_mnn_omni()) {
+      if (active) {
+        chat_view->live_omni_listening_.store(true);
+        chat_view->live_omni_processing_.store(false);
+        chat_view->live_inference_enabled_.store(false);
+        {
+          std::lock_guard<std::mutex> lock(chat_view->live_mutex_);
+          chat_view->pending_live_chunks_.clear();
+          chat_view->live_audio_buffer_.clear();
+          chat_view->live_audio_read_pos_ = 0;
+          chat_view->live_audio_sample_rate_ = 0;
+          chat_view->live_audio_channels_ = 0;
+          chat_view->live_utterance_active_ = false;
+          chat_view->live_utterance_voice_ms_ = 0;
+          chat_view->live_utterance_silence_ms_ = 0;
+          chat_view->live_utterance_audio_.clear();
+          chat_view->live_noise_floor_ = 0.0;
+          chat_view->live_noise_floor_initialized_ = false;
+        }
+      } else {
+        chat_view->live_omni_listening_.store(false);
+        chat_view->live_omni_processing_.store(false);
+        chat_view->live_inference_enabled_.store(false);
+        {
+          std::lock_guard<std::mutex> lock(chat_view->live_mutex_);
+          chat_view->pending_live_chunks_.clear();
+          chat_view->live_audio_buffer_.clear();
+          chat_view->live_audio_read_pos_ = 0;
+          chat_view->live_audio_sample_rate_ = 0;
+          chat_view->live_audio_channels_ = 0;
+          chat_view->live_utterance_active_ = false;
+          chat_view->live_utterance_voice_ms_ = 0;
+          chat_view->live_utterance_silence_ms_ = 0;
+          chat_view->live_utterance_audio_.clear();
+          chat_view->live_noise_floor_ = 0.0;
+          chat_view->live_noise_floor_initialized_ = false;
+        }
+      }
+    } else {
+      if (active) {
+        chat_view->voice_qa_enabled_.store(true);
+        chat_view->ensure_voice_qa_worker_started();
+        chat_view->start_live_speech_transcription_timer();
+      } else {
+        chat_view->voice_qa_enabled_.store(false);
+        chat_view->stop_live_speech_transcription_timer();
+      }
+    }
+    return;
+  }
   if (active) {
     chat_view->start_voice_recording();
   } else {
@@ -3757,6 +4438,29 @@ void ChatView::append_stream_text(const std::string &delta, bool finished) {
     streaming_buffer_.clear();
     is_streaming_ = false;
     voice_response_tts_ = false;
+    if (current_model_is_mnn_omni()) {
+      live_omni_processing_.store(false);
+      live_inference_enabled_.store(false);
+      if (live_omni_listening_.load()) {
+        std::lock_guard<std::mutex> lock(live_mutex_);
+        pending_live_chunks_.clear();
+        live_audio_buffer_.clear();
+        live_audio_read_pos_ = 0;
+        live_audio_sample_rate_ = 0;
+        live_audio_channels_ = 0;
+        live_utterance_active_ = false;
+        live_utterance_voice_ms_ = 0;
+        live_utterance_silence_ms_ = 0;
+        live_utterance_audio_.clear();
+        live_noise_floor_ = 0.0;
+        live_noise_floor_initialized_ = false;
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(voice_qa_response_mutex_);
+      voice_qa_waiting_response_ = false;
+    }
+    voice_qa_response_cv_.notify_all();
     schedule_try_send_live_chunks();
   }
 }

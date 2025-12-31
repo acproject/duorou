@@ -1,25 +1,29 @@
 #ifndef DUOROU_GUI_MAIN_WINDOW_H
 #define DUOROU_GUI_MAIN_WINDOW_H
 
-#if defined(__has_include) && __has_include(<gtk/gtk.h>)
+#if __has_include(<gtk/gtk.h>)
 #include <gtk/gtk.h>
+#if !defined(DUOROU_HAS_GTK)
 #define DUOROU_HAS_GTK 1
-#else
+#endif
+#endif
+
+#ifndef DUOROU_HAS_GTK
 #define DUOROU_HAS_GTK 0
-// GTK 占位类型，便于在未安装 GTK 头文件的环境下编译通过
 typedef void* GtkWidget;
 typedef void* GtkWindow;
 typedef void* GtkDialog;
 typedef void* GtkGestureClick;
+typedef void* GtkGesture;
+typedef void* GtkButton;
 typedef void* gpointer;
 typedef int gint;
 typedef double gdouble;
 typedef int gboolean;
 typedef unsigned int guint;
-// 额外的占位类型以便信号回调声明
 typedef void* GObject;
 typedef void* GParamSpec;
- typedef void* GFile;
+typedef void* GFile;
 
  // 常用 GTK 类型转换宏占位
  #ifndef GTK_WINDOW
@@ -36,6 +40,15 @@ typedef void* GParamSpec;
  #endif
  #ifndef GTK_PANED
  #define GTK_PANED(x) (x)
+ #endif
+ #ifndef GTK_BUTTON
+ #define GTK_BUTTON(x) (x)
+ #endif
+ #ifndef GTK_WIDGET
+ #define GTK_WIDGET(x) (x)
+ #endif
+ #ifndef G_OBJECT
+ #define G_OBJECT(x) (x)
  #endif
 
  // 常用 GTK4 函数占位（编辑器/索引器友好，运行时无影响）
@@ -63,6 +76,9 @@ typedef void* GParamSpec;
  #endif
  #ifndef gtk_box_append
  #define gtk_box_append(...) ((void)0)
+ #endif
+ #ifndef gtk_box_remove
+ #define gtk_box_remove(...) ((void)0)
  #endif
 
  #ifndef gtk_stack_new
@@ -98,11 +114,50 @@ typedef void* GParamSpec;
  #ifndef gtk_widget_set_visible
  #define gtk_widget_set_visible(...) ((void)0)
  #endif
+ #ifndef gtk_widget_set_size_request
+ #define gtk_widget_set_size_request(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_add_css_class
+ #define gtk_widget_add_css_class(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_set_hexpand
+ #define gtk_widget_set_hexpand(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_set_halign
+ #define gtk_widget_set_halign(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_set_valign
+ #define gtk_widget_set_valign(...) ((void)0)
+ #endif
+ #ifndef gtk_widget_get_first_child
+ #define gtk_widget_get_first_child(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_widget_get_next_sibling
+ #define gtk_widget_get_next_sibling(...) ((GtkWidget*)nullptr)
+ #endif
  #ifndef gtk_widget_hide
  #define gtk_widget_hide(...) ((void)0)
  #endif
  #ifndef gtk_widget_show
  #define gtk_widget_show(...) ((void)0)
+ #endif
+ #ifndef gtk_button_new
+ #define gtk_button_new(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_button_new_with_label
+ #define gtk_button_new_with_label(...) ((GtkWidget*)nullptr)
+ #endif
+ #ifndef gtk_button_set_child
+ #define gtk_button_set_child(...) ((void)0)
+ #endif
+ #ifndef gtk_gesture_click_new
+ #define gtk_gesture_click_new(...) ((GtkGesture*)nullptr)
+ #endif
+ #ifndef gtk_widget_add_controller
+ #define gtk_widget_add_controller(...) ((void)0)
+ #endif
+ #ifndef gtk_gesture_single_set_button
+ #define gtk_gesture_single_set_button(...) ((void)0)
  #endif
 
  // CSS/Display/GLib 占位
@@ -127,6 +182,15 @@ typedef void* GParamSpec;
  #endif
  #ifndef g_object_unref
  #define g_object_unref(...) ((void)0)
+ #endif
+ #ifndef g_strdup
+ #define g_strdup(...) ((char*)nullptr)
+ #endif
+ #ifndef g_free
+ #define g_free(...) ((void)0)
+ #endif
+ #ifndef GDK_BUTTON_SECONDARY
+ #define GDK_BUTTON_SECONDARY 3
  #endif
 
  // 信号占位
