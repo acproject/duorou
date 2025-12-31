@@ -275,9 +275,8 @@ public:
       std::cout << "ScreenCaptureKit desktop capture initialized successfully" << std::endl;
       return true;
     }
-    std::cout << "ScreenCaptureKit initialization failed, using simulated data" << std::endl;
-    std::cout << "Initialize macOS desktop capture (simplified version)" << std::endl;
-    return true;
+    std::cout << "ScreenCaptureKit initialization failed" << std::endl;
+    return false;
 #elif defined(__linux__)
     std::cout << "Initialize Linux desktop capture (simplified version)" << std::endl;
     return true;

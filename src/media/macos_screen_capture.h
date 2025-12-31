@@ -12,6 +12,7 @@ namespace media {
 
 // macOS ScreenCaptureKit interface functions
 bool check_screen_recording_permission();
+bool ensure_macos_microphone_permission(int timeout_ms = 2000);
 bool initialize_macos_screen_capture();
 bool start_macos_screen_capture(
     std::function<void(const VideoFrame &)> callback, int window_id = -1);

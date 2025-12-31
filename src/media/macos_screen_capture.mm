@@ -5,19 +5,24 @@
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <algorithm>
+#include <atomic>
+#include <cstring>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <thread>
 
 static std::function<void(const duorou::media::VideoFrame &)> g_frame_callback;
 static SCStream *g_stream = nil;
-static bool g_is_capturing = false;
 static id<SCStreamDelegate> g_delegate = nil;
-static int g_consecutive_failures = 0;
+static std::mutex g_state_mutex;
+static std::atomic<bool> g_is_capturing{false};
+static std::atomic<int> g_consecutive_failures{0};
 static const int MAX_CONSECUTIVE_FAILURES = 10; // Restart stream after 10 consecutive failures
 static std::chrono::steady_clock::time_point g_last_success_time =
     std::chrono::steady_clock::now();
-static bool g_needs_restart = false;
+static std::atomic<bool> g_needs_restart{false};
 
 @interface ScreenCaptureDelegate : NSObject <SCStreamDelegate, SCStreamOutput>
 @end
@@ -27,18 +32,31 @@ static bool g_needs_restart = false;
 - (void)stream:(SCStream *)stream
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                    ofType:(SCStreamOutputType)type {
-  @try {
+  @autoreleasepool {
+    @try {
     if (type != SCStreamOutputTypeScreen) {
       return;
     }
 
     // Check if still capturing and callback function validity
-    if (!g_is_capturing || !g_frame_callback) {
+    if (!g_is_capturing.load()) {
+      return;
+    }
+
+    std::function<void(const duorou::media::VideoFrame &)> callback;
+    SCStream *current_stream = nil;
+    {
+      std::lock_guard<std::mutex> lock(g_state_mutex);
+      callback = g_frame_callback;
+      current_stream = g_stream;
+    }
+
+    if (!callback) {
       return;
     }
 
     // Check if stream is still valid
-    if (!stream || stream != g_stream) {
+    if (!stream || stream != current_stream) {
       std::cout << "ScreenCaptureKit: 收到来自无效stream的回调" << std::endl;
       return;
     }
@@ -69,9 +87,9 @@ static bool g_needs_restart = false;
 
     CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!imageBuffer) {
-      g_consecutive_failures++;
+      const int failures = g_consecutive_failures.fetch_add(1) + 1;
       std::cout << "ScreenCaptureKit: 无法获取图像缓冲区 (连续失败: "
-                << g_consecutive_failures << "/" << MAX_CONSECUTIVE_FAILURES
+                << failures << "/" << MAX_CONSECUTIVE_FAILURES
                 << ")" << std::endl;
 
       // Check for attachment data
@@ -96,18 +114,18 @@ static bool g_needs_restart = false;
       }
 
       // Check if stream restart is needed
-      if (g_consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
         std::cout << "ScreenCaptureKit: 连续失败次数过多，标记需要重启流..."
                   << std::endl;
-        g_needs_restart = true;
-        g_consecutive_failures = 0; // Reset counter
+        g_needs_restart.store(true);
+        g_consecutive_failures.store(0);
       }
 
       return;
     }
 
     // Successfully obtained image buffer, reset failure counter
-    g_consecutive_failures = 0;
+    g_consecutive_failures.store(0);
     g_last_success_time = std::chrono::steady_clock::now();
 
     // Check pixel buffer validity
@@ -142,32 +160,49 @@ static bool g_needs_restart = false;
                 << lockResult << std::endl;
       return;
     }
-    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
-    void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+    bool unlocked = false;
+    try {
+      size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+      void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+      if (!baseAddress || bytesPerRow == 0) {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+        return;
+      }
 
-    duorou::media::VideoFrame frame;
-    frame.width = static_cast<int>(width);
-    frame.height = static_cast<int>(height);
-    frame.channels = 4; // BGRA
-    frame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count() /
-                      1000.0;
+      duorou::media::VideoFrame frame;
+      frame.width = static_cast<int>(width);
+      frame.height = static_cast<int>(height);
+      frame.channels = 4;
+      frame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count() /
+                        1000.0;
 
-    size_t dataSize = height * bytesPerRow;
-    frame.data.resize(dataSize);
-    std::memcpy(frame.data.data(), baseAddress, dataSize);
+      size_t dataSize = height * bytesPerRow;
+      frame.data.resize(dataSize);
+      std::memcpy(frame.data.data(), baseAddress, dataSize);
 
-    CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+      CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+      unlocked = true;
 
-    // Call callback directly in current thread to reduce thread switching overhead
-    // ScreenCaptureKit already processes frame data in dedicated queue
-    if (g_frame_callback && g_is_capturing) {
-      g_frame_callback(frame);
+      if (g_is_capturing.load()) {
+        callback(frame);
+      }
+    } catch (const std::exception &e) {
+      if (!unlocked) {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+      }
+      std::cout << "ScreenCaptureKit C++异常: " << e.what() << std::endl;
+    } catch (...) {
+      if (!unlocked) {
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+      }
+      std::cout << "ScreenCaptureKit 未知C++异常" << std::endl;
     }
   } @catch (NSException *exception) {
-    std::cout << "ScreenCaptureKit 回调异常: " <<
-        [[exception description] UTF8String] << std::endl;
+    std::cout << "ScreenCaptureKit 回调异常: "
+              << [[exception description] UTF8String] << std::endl;
+  }
   }
 }
 
@@ -178,7 +213,7 @@ static bool g_needs_restart = false;
   } else {
     std::cout << "ScreenCaptureKit stream stopped" << std::endl;
   }
-  g_is_capturing = false;
+  g_is_capturing.store(false);
 }
 
 // SCStreamOutput and SCStreamDelegate share the same method implementation
@@ -189,45 +224,76 @@ namespace duorou {
 namespace media {
 
 // Forward declarations
-bool start_macos_screen_capture(
-    std::function<void(const VideoFrame &)> callback);
+bool check_screen_recording_permission();
+bool ensure_macos_microphone_permission(int timeout_ms);
+bool initialize_macos_screen_capture();
+bool start_macos_screen_capture(std::function<void(const VideoFrame &)> callback,
+                                int window_id);
 void stop_macos_screen_capture();
+bool is_macos_screen_capture_running();
+void cleanup_macos_screen_capture();
+void update_macos_screen_capture_window(int window_id);
+bool is_macos_camera_available();
 
 bool check_screen_recording_permission() {
   if (@available(macOS 12.3, *)) {
-    // Try to get shareable content to check permissions
     __block bool permission_granted = false;
-    __block bool check_completed = false;
-
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     [SCShareableContent
         getShareableContentWithCompletionHandler:^(
             SCShareableContent *_Nullable content, NSError *_Nullable error) {
           if (error) {
-            std::cout << "屏幕录制权限检查失败: " <<
-                [[error localizedDescription] UTF8String] << std::endl;
+            std::cout << "屏幕录制权限检查失败: "
+                      << [[error localizedDescription] UTF8String] << std::endl;
             permission_granted = false;
-          } else if (content.displays.count > 0) {
-            std::cout << "屏幕录制权限检查通过" << std::endl;
+          } else if (content && content.displays.count > 0) {
             permission_granted = true;
           } else {
             std::cout << "没有找到可用的显示器，可能权限不足" << std::endl;
             permission_granted = false;
           }
-          check_completed = true;
+          dispatch_semaphore_signal(sem);
         }];
 
-    // Wait for permission check to complete (maximum 2 seconds)
-    int wait_count = 0;
-    while (!check_completed && wait_count < 200) {
-      [[NSRunLoop currentRunLoop]
-          runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-      wait_count++;
+    dispatch_time_t wait_time =
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC));
+    if (dispatch_semaphore_wait(sem, wait_time) != 0) {
+      std::cout << "屏幕录制权限检查超时" << std::endl;
+      return false;
     }
-
     return permission_granted;
   } else {
     std::cout << "ScreenCaptureKit requires macOS 12.3 or higher" << std::endl;
     return false;
+  }
+}
+
+bool ensure_macos_microphone_permission(int timeout_ms) {
+  @autoreleasepool {
+    AVAuthorizationStatus status =
+        [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (status == AVAuthorizationStatusAuthorized) {
+      return true;
+    }
+    if (status == AVAuthorizationStatusDenied ||
+        status == AVAuthorizationStatusRestricted) {
+      return false;
+    }
+
+    __block BOOL granted = NO;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
+                             completionHandler:^(BOOL ok) {
+                               granted = ok;
+                               dispatch_semaphore_signal(sem);
+                             }];
+    const int wait_ms = timeout_ms > 0 ? timeout_ms : 0;
+    dispatch_time_t wait_time =
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)wait_ms * NSEC_PER_MSEC);
+    if (dispatch_semaphore_wait(sem, wait_time) != 0) {
+      return false;
+    }
+    return granted == YES;
   }
 }
 
@@ -241,7 +307,10 @@ bool initialize_macos_screen_capture() {
       return false;
     }
 
-    g_delegate = [[ScreenCaptureDelegate alloc] init];
+    {
+      std::lock_guard<std::mutex> lock(g_state_mutex);
+      g_delegate = [[ScreenCaptureDelegate alloc] init];
+    }
     std::cout << "ScreenCaptureKit initialization successful" << std::endl;
     return true;
   } else {
@@ -253,29 +322,35 @@ bool initialize_macos_screen_capture() {
 bool start_macos_screen_capture(
     std::function<void(const VideoFrame &)> callback, int window_id) {
   if (@available(macOS 12.3, *)) {
+    if (!check_screen_recording_permission()) {
+      return false;
+    }
+
     // Check if restart is needed
-    if (g_needs_restart && g_is_capturing) {
+    if (g_needs_restart.load() && g_is_capturing.load()) {
       std::cout << "ScreenCaptureKit: Restart needed, stopping current stream..."
                 << std::endl;
       stop_macos_screen_capture();
-      g_needs_restart = false;
+      g_needs_restart.store(false);
       // Wait a short time for the stop operation to complete
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    if (g_is_capturing && !g_needs_restart) {
+    if (g_is_capturing.load() && !g_needs_restart.load()) {
       std::cout << "ScreenCaptureKit is already running" << std::endl;
       return true;
     }
 
     // Ensure cleanup of previous stream
-    if (g_stream) {
-      std::cout << "Cleaning up previous ScreenCaptureKit stream..." << std::endl;
+    std::cout << "Starting ScreenCaptureKit..." << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(g_state_mutex);
+      g_frame_callback = callback;
+      if (!g_delegate) {
+        g_delegate = [[ScreenCaptureDelegate alloc] init];
+      }
       g_stream = nil;
     }
-
-    std::cout << "Starting ScreenCaptureKit..." << std::endl;
-    g_frame_callback = callback;
 
     // Ensure ScreenCaptureKit operations are executed on main thread
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -293,13 +368,13 @@ bool start_macos_screen_capture(
                   [[error localizedDescription] UTF8String] << std::endl;
               std::cout << "Error code: " << error.code << std::endl;
               std::cout << "Error domain: " << [error.domain UTF8String] << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
 
             if (!content || content.displays.count == 0) {
               std::cout << "No available displays found" << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
 
@@ -308,7 +383,7 @@ bool start_macos_screen_capture(
             SCDisplay *display = content.displays.firstObject;
             if (!display) {
               std::cout << "Unable to get first display" << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
 
@@ -348,7 +423,7 @@ bool start_macos_screen_capture(
             
             if (!filter) {
               std::cout << "Failed to create content filter" << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
             std::cout << "Content filter created successfully" << std::endl;
@@ -363,7 +438,7 @@ bool start_macos_screen_capture(
             config.pixelFormat = kCVPixelFormatType_32BGRA;
             config.queueDepth = 3;      // Increase cache depth for more buffer space
             config.showsCursor = YES;   // Show mouse cursor
-            config.capturesAudio = YES; // Enable audio capture
+            config.capturesAudio = NO;
             config.scalesToFit = YES;   // Allow scaling to fit configured dimensions
             config.includeChildWindows = YES;          // Include child windows
             config.colorSpaceName = kCGColorSpaceSRGB; // Explicitly specify color space
@@ -371,12 +446,22 @@ bool start_macos_screen_capture(
             std::cout << "Stream configuration created successfully" << std::endl;
 
             std::cout << "Creating ScreenCaptureKit stream..." << std::endl;
-            g_stream = [[SCStream alloc] initWithFilter:filter
-                                          configuration:config
-                                               delegate:g_delegate];
+            id<SCStreamDelegate> delegate = nil;
+            {
+              std::lock_guard<std::mutex> lock(g_state_mutex);
+              delegate = g_delegate;
+            }
+
+            SCStream *stream_obj = [[SCStream alloc] initWithFilter:filter
+                                                      configuration:config
+                                                           delegate:delegate];
+            {
+              std::lock_guard<std::mutex> lock(g_state_mutex);
+              g_stream = stream_obj;
+            }
             if (!g_stream) {
               std::cout << "Failed to create ScreenCaptureKit stream" << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
             std::cout << "ScreenCaptureKit stream created successfully" << std::endl;
@@ -388,7 +473,7 @@ bool start_macos_screen_capture(
             // Add stream output to receive video data
             NSError *outputError = nil;
             BOOL outputAdded =
-                [g_stream addStreamOutput:(id<SCStreamOutput>)g_delegate
+                [g_stream addStreamOutput:(id<SCStreamOutput>)delegate
                                      type:SCStreamOutputTypeScreen
                        sampleHandlerQueue:videoQueue
                                     error:&outputError];
@@ -398,7 +483,7 @@ bool start_macos_screen_capture(
                                               UTF8String]
                                         : "Unknown error")
                         << std::endl;
-              g_is_capturing = false;
+              g_is_capturing.store(false);
               return;
             }
             std::cout << "ScreenCaptureKit output added successfully" << std::endl;
@@ -421,16 +506,16 @@ bool start_macos_screen_capture(
                       std::cout << "Error code: " << error.code << std::endl;
                       std::cout << "Error domain: " << [error.domain UTF8String]
                                 << std::endl;
-                      g_is_capturing = false;
+                      g_is_capturing.store(false);
                     } else {
                       std::cout << "ScreenCaptureKit started successfully, receiving screen data"
                                 << std::endl;
-                      g_is_capturing = true;
+                      g_is_capturing.store(true);
                     }
                   } @catch (NSException *exception) {
                     std::cout << "startCaptureWithCompletionHandler exception: " <<
                         [[exception description] UTF8String] << std::endl;
-                    g_is_capturing = false;
+                    g_is_capturing.store(false);
                   }
                 }];
 
@@ -442,19 +527,19 @@ bool start_macos_screen_capture(
                     std::cout
                         << "ScreenCaptureKit startup timeout (3 seconds), assuming successful start"
                         << std::endl;
-                    g_is_capturing = true;
+                    g_is_capturing.store(true);
                   }
                 });
           } @catch (NSException *exception) {
             std::cout << "getShareableContentWithCompletionHandler exception: " <<
                 [[exception description] UTF8String] << std::endl;
-            g_is_capturing = false;
+            g_is_capturing.store(false);
           }
         }];
       } @catch (NSException *exception) {
         std::cout << "ScreenCaptureKit startup exception: " <<
             [[exception description] UTF8String] << std::endl;
-        g_is_capturing = false;
+        g_is_capturing.store(false);
       }
     });
 
@@ -467,10 +552,16 @@ bool start_macos_screen_capture(
 
 void stop_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
-    if (g_stream && g_is_capturing) {
-      g_is_capturing = false; // Immediately set to false to avoid duplicate calls
+    SCStream *stream = nil;
+    {
+      std::lock_guard<std::mutex> lock(g_state_mutex);
+      stream = g_stream;
+    }
+
+    if (stream && g_is_capturing.load()) {
+      g_is_capturing.store(false);
       dispatch_async(dispatch_get_main_queue(), ^{
-        [g_stream stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
+        [stream stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
           if (error) {
             std::cout << "Error stopping ScreenCaptureKit: " <<
                 [[error localizedDescription] UTF8String] << std::endl;
@@ -483,7 +574,7 @@ void stop_macos_screen_capture() {
   }
 }
 
-bool is_macos_screen_capture_running() { return g_is_capturing; }
+bool is_macos_screen_capture_running() { return g_is_capturing.load(); }
 
 void cleanup_macos_screen_capture() {
   if (@available(macOS 12.3, *)) {
@@ -491,27 +582,29 @@ void cleanup_macos_screen_capture() {
 
     // Use static mutex to prevent concurrent cleanup
     static std::mutex cleanup_mutex;
-    static bool cleanup_completed = false;
 
     std::lock_guard<std::mutex> lock(cleanup_mutex);
 
-    // Check if cleanup has already been performed
-    if (cleanup_completed) {
-      std::cout << "macOS screen capture resources already cleaned up, skipping" << std::endl;
-      return;
+    // Clear callback function first to prevent calls during cleanup
+    {
+      std::lock_guard<std::mutex> state_lock(g_state_mutex);
+      g_frame_callback = nullptr;
     }
 
-    // Clear callback function first to prevent calls during cleanup
-    g_frame_callback = nullptr;
-
     // Ensure capture is stopped
-    if (g_stream && g_is_capturing) {
+    SCStream *stream = nil;
+    {
+      std::lock_guard<std::mutex> state_lock(g_state_mutex);
+      stream = g_stream;
+    }
+
+    if (stream && g_is_capturing.load()) {
       std::cout << "Stopping screen capture stream..." << std::endl;
 
       if ([NSThread isMainThread]) {
         // If on main thread, call stop method directly
-        if (g_stream) {
-          [g_stream
+        if (stream) {
+          [stream
               stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
                 if (error) {
                   std::cout << "Error stopping capture: " <<
@@ -519,7 +612,7 @@ void cleanup_macos_screen_capture() {
                 } else {
                   std::cout << "Screen capture stream stopped" << std::endl;
                 }
-                g_is_capturing = false;
+                g_is_capturing.store(false);
               }];
         }
         // Give a brief delay to allow stop operation to execute
@@ -527,8 +620,8 @@ void cleanup_macos_screen_capture() {
       } else {
         // If not on main thread, stop asynchronously but don't wait for completion
         dispatch_async(dispatch_get_main_queue(), ^{
-          if (g_stream) {
-            [g_stream
+          if (stream) {
+            [stream
                 stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
                   if (error) {
                     std::cout << "Error stopping capture: " <<
@@ -536,7 +629,7 @@ void cleanup_macos_screen_capture() {
                   } else {
                     std::cout << "Screen capture stream stopped" << std::endl;
                   }
-                  g_is_capturing = false;
+                  g_is_capturing.store(false);
                 }];
           }
         });
@@ -546,47 +639,47 @@ void cleanup_macos_screen_capture() {
     }
     
     // Ensure state is correct
-    g_is_capturing = false;
+    g_is_capturing.store(false);
+    g_needs_restart.store(false);
+    g_consecutive_failures.store(0);
+    g_last_success_time = std::chrono::steady_clock::now();
 
     // Safely clean up resources, avoiding deadlock
     if ([NSThread isMainThread]) {
       // If already on main thread, clean up directly
-      if (g_stream) {
+      {
+        std::lock_guard<std::mutex> state_lock(g_state_mutex);
         g_stream = nil;
         std::cout << "Screen capture stream cleaned up" << std::endl;
       }
 
-      if (g_delegate) {
+      {
+        std::lock_guard<std::mutex> state_lock(g_state_mutex);
         g_delegate = nil;
         std::cout << "Screen capture delegate cleaned up" << std::endl;
       }
     } else {
       // If not on main thread, use async cleanup but don't wait for completion to avoid deadlock
       dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_stream) {
+        {
+          std::lock_guard<std::mutex> state_lock(g_state_mutex);
           g_stream = nil;
-          std::cout << "Screen capture stream cleaned up" << std::endl;
-        }
-
-        if (g_delegate) {
           g_delegate = nil;
-          std::cout << "Screen capture delegate cleaned up" << std::endl;
         }
+        std::cout << "Screen capture stream cleaned up" << std::endl;
+        std::cout << "Screen capture delegate cleaned up" << std::endl;
       });
       
       // Give a brief delay to allow cleanup task to execute, but don't block
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-
-    // Mark cleanup as completed
-    cleanup_completed = true;
     std::cout << "macOS screen capture resource cleanup completed" << std::endl;
   }
 }
 
 void update_macos_screen_capture_window(int window_id) {
   if (@available(macOS 12.3, *)) {
-    if (!g_stream || !g_is_capturing) {
+    if (!g_is_capturing.load()) {
       std::cout << "Screen capture not running, cannot update window" << std::endl;
       return;
     }
@@ -595,6 +688,17 @@ void update_macos_screen_capture_window(int window_id) {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       @try {
+        SCStream *stream = nil;
+        {
+          std::lock_guard<std::mutex> lock(g_state_mutex);
+          stream = g_stream;
+        }
+
+        if (!stream || !g_is_capturing.load()) {
+          std::cout << "Screen capture not running, cannot update window" << std::endl;
+          return;
+        }
+
         [SCShareableContent getShareableContentWithCompletionHandler:^(
             SCShareableContent *_Nullable content, NSError *_Nullable error) {
           @try {
@@ -646,7 +750,7 @@ void update_macos_screen_capture_window(int window_id) {
             }
 
             // Update stream filter
-            [g_stream updateContentFilter:filter completionHandler:^(NSError *_Nullable error) {
+            [stream updateContentFilter:filter completionHandler:^(NSError *_Nullable error) {
               if (error) {
                 std::cout << "Failed to update content filter: " <<
                     [[error localizedDescription] UTF8String] << std::endl;

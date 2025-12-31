@@ -2982,6 +2982,26 @@ void ChatView::start_desktop_capture() {
   }
   initializing = true;
 
+#ifdef __APPLE__
+  if (!media::check_screen_recording_permission()) {
+    std::cout << "Screen recording permission not granted" << std::endl;
+    if (video_record_button_) {
+      updating_button_state_ = true;
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
+                                   FALSE);
+      if (video_off_image_) {
+        gtk_button_set_child(GTK_BUTTON(video_record_button_), video_off_image_);
+        gtk_widget_set_tooltip_text(GTK_WIDGET(video_record_button_),
+                                    "Start video recording/desktop capture");
+      }
+      updating_button_state_ = false;
+    }
+    add_message("Error: Screen recording permission not granted. Please allow duorou (or your Terminal) in System Settings > Privacy & Security > Screen Recording.", false);
+    initializing = false;
+    return;
+  }
+#endif
+
   // Ensure previous resources are cleaned up
   if (video_capture_) {
     std::cout << "Stopping previous video capture..." << std::endl;
@@ -3124,6 +3144,44 @@ void ChatView::start_desktop_capture() {
   if (video_capture_->initialize(media::VideoSource::DESKTOP_CAPTURE)) {
     if (video_capture_->start_capture()) {
       // Initialize microphone audio capture
+#ifdef __APPLE__
+      if (!media::ensure_macos_microphone_permission()) {
+        std::cout << "Microphone permission not granted" << std::endl;
+        if (video_capture_) {
+          try {
+            video_capture_->stop_capture();
+          } catch (const std::exception &) {
+          }
+          video_capture_.reset();
+        }
+        if (audio_capture_) {
+          audio_capture_->stop_capture();
+          audio_capture_.reset();
+        }
+        if (enhanced_video_window_) {
+          try {
+            enhanced_video_window_->hide();
+          } catch (const std::exception &) {
+          }
+        }
+        if (video_record_button_) {
+          updating_button_state_ = true;
+          gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
+                                       FALSE);
+          if (video_off_image_) {
+            gtk_button_set_child(GTK_BUTTON(video_record_button_),
+                                 video_off_image_);
+            gtk_widget_set_tooltip_text(
+                GTK_WIDGET(video_record_button_),
+                "Start video recording/desktop capture");
+          }
+          updating_button_state_ = false;
+        }
+        add_message("Error: Microphone permission not granted. Please allow duorou in System Settings > Privacy & Security > Microphone.", false);
+        initializing = false;
+        return;
+      }
+#endif
       bool audio_started = false;
       for (int sr : {16000, 48000, 44100}) {
         audio_capture_->set_sample_rate(sr);
@@ -3430,6 +3488,43 @@ void ChatView::start_camera_capture() {
   if (video_capture_->initialize(media::VideoSource::CAMERA, 0)) {
     if (video_capture_->start_capture()) {
       // Initialize microphone audio capture
+#ifdef __APPLE__
+      if (!media::ensure_macos_microphone_permission()) {
+        std::cout << "Microphone permission not granted" << std::endl;
+        if (video_capture_) {
+          try {
+            video_capture_->stop_capture();
+          } catch (const std::exception &) {
+          }
+          video_capture_.reset();
+        }
+        if (audio_capture_) {
+          audio_capture_->stop_capture();
+          audio_capture_.reset();
+        }
+        if (enhanced_video_window_) {
+          try {
+            enhanced_video_window_->hide();
+          } catch (const std::exception &) {
+          }
+        }
+        if (video_record_button_) {
+          updating_button_state_ = true;
+          gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(video_record_button_),
+                                       FALSE);
+          if (video_off_image_) {
+            gtk_button_set_child(GTK_BUTTON(video_record_button_),
+                                 video_off_image_);
+            gtk_widget_set_tooltip_text(
+                GTK_WIDGET(video_record_button_),
+                "Start video recording/desktop capture");
+          }
+          updating_button_state_ = false;
+        }
+        add_message("Error: Microphone permission not granted. Please allow duorou in System Settings > Privacy & Security > Microphone.", false);
+        return;
+      }
+#endif
       bool audio_started = false;
       for (int sr : {16000, 48000, 44100}) {
         audio_capture_->set_sample_rate(sr);
